@@ -1,0 +1,6 @@
+import type { Map as LibreMap } from 'maplibre-gl';
+import type { Position } from './VehicleController';
+// Project the configured start onto a nearby drivable road once, never while driving.
+export function roadStart(map:LibreMap,source:string,origin:Position,blocked:(p:Position,h:number)=>boolean){const sx=111319.49*Math.cos(origin[1]*Math.PI/180),sy=111319.49;let best:{position:Position;heading:number;distance:number}|undefined;
+for(const f of map.querySourceFeatures(source,{sourceLayer:'transportation'})){if(!['motorway','trunk','primary','secondary','tertiary','minor','service'].includes(f.properties.class))continue;const lines=f.geometry.type==='LineString'?[f.geometry.coordinates]:f.geometry.type==='MultiLineString'?f.geometry.coordinates:[];for(const line of lines)for(let i=1;i<line.length;i++){const a=line[i-1],b=line[i],ax=(a[0]-origin[0])*sx,ay=(a[1]-origin[1])*sy,dx=(b[0]-a[0])*sx,dy=(b[1]-a[1])*sy,t=Math.max(0,Math.min(1,-(ax*dx+ay*dy)/(dx*dx+dy*dy||1))),x=ax+t*dx,y=ay+t*dy,distance=Math.hypot(x,y);if(distance>150||(best&&distance>=best.distance))continue;const position:Position=[origin[0]+x/sx,origin[1]+y/sy],heading=Math.atan2(dx,dy);if(!blocked(position,heading))best={position,heading,distance};}}
+return best;}
