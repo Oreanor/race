@@ -47,7 +47,11 @@ type Opening = { mesh: Placement['mesh']; glass: Placement['mesh']; w: number; h
 
 function openingFor(recipe: BuildingRecipe, simple: boolean, store: boolean): Opening {
   if (store && !simple) return { mesh: 'store', glass: 'storeGlass', w: PIECES.store.w, h: PIECES.store.h };
-  if (simple) return { mesh: 'windowSimple', glass: 'glassSimple', w: PIECES.window.w, h: PIECES.window.h };
+  if (simple) {
+    const width = recipe.window === 'wide' ? 1.55 : recipe.window === 'narrow' ? 0.62 : 1;
+    const height = recipe.window === 'wide' ? 0.9 : recipe.window === 'narrow' ? 1.06 : 1;
+    return { mesh: 'windowSimple', glass: 'glassSimple', w: PIECES.window.w * width, h: PIECES.window.h * height };
+  }
   if (recipe.window === 'narrow') return { mesh: 'window', glass: 'glass', w: PIECES.window.w * 0.62, h: PIECES.window.h * 1.06 };
   if (recipe.window === 'wide') return { mesh: 'window', glass: 'glass', w: PIECES.window.w * 1.55, h: PIECES.window.h * 0.9 };
   return { mesh: 'window', glass: 'glass', w: PIECES.window.w, h: PIECES.window.h };

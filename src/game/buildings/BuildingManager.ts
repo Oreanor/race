@@ -1,5 +1,6 @@
-import { BufferAttribute, BufferGeometry, Color, DirectionalLight, HemisphereLight, InstancedBufferAttribute, InstancedMesh, Matrix4, Mesh, MeshLambertMaterial, type DataTexture, type Scene } from 'three';
+import { BufferAttribute, BufferGeometry, Color, DirectionalLight, HemisphereLight, InstancedBufferAttribute, InstancedMesh, Matrix4, Mesh, MeshBasicMaterial, MeshLambertMaterial, type DataTexture, type Scene } from 'three';
 import { installFade } from '../../rendering/buildingFade.ts';
+import { HOUSE_PALETTE } from './BuildingStyles.ts';
 import { BuildingCache } from './BuildingCache.ts';
 import { chooseLod } from './BuildingLOD.ts';
 import { createPieceGeometries, writePointMatrix, type WallModel } from './BuildingGeometry.ts';
@@ -125,13 +126,13 @@ export class BuildingManager {
   private models = new Map<string, Recorded>();
   private dirty = new Set<string>();
   private cache = new BuildingCache<BuildingRecipe>();
-  private view: BuildingView = { detail: 'high', architecture: 'auto', region: '', colors: ['#e7d7c3'], originKey: '' };
+  private view: BuildingView = { detail: 'high', architecture: 'auto', region: '', colors: HOUSE_PALETTE, originKey: '' };
   private focus = { x: 0, z: 0 };
   private roofsDirty = false;
   private roofMesh: Mesh | null = null;
   private roofGhost: Mesh | null = null;
-  private roofMaterial: MeshLambertMaterial;
-  private roofGhostMaterial: MeshLambertMaterial;
+  private roofMaterial: MeshBasicMaterial;
+  private roofGhostMaterial: MeshBasicMaterial;
   private primed = false;
   private scanX = Infinity;
   private scanZ = Infinity;
@@ -141,7 +142,7 @@ export class BuildingManager {
   constructor(private scene: Scene, fadeTexture: DataTexture) {
     this.frameMaterial = new MeshLambertMaterial({ color: 0xffffff, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -4 });
     this.glassMaterial = new MeshLambertMaterial({ color: 0xffffff, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -8 });
-    this.roofMaterial = new MeshLambertMaterial({ vertexColors: true, side: 2, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -8 });
+    this.roofMaterial = new MeshBasicMaterial({ vertexColors: true, side: 2, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -8 });
     this.roofGhostMaterial = this.roofMaterial.clone();
     installFade(this.frameMaterial, fadeTexture, false);
     installFade(this.glassMaterial, fadeTexture, false);
@@ -221,7 +222,7 @@ export class BuildingManager {
     }
     const dx = x - this.scanX;
     const dz = z - this.scanZ;
-    if (dx * dx + dz * dz > 36) {
+    if (dx * dx + dz * dz > 225) {
       this.scanX = x;
       this.scanZ = z;
       for (const model of this.models.values()) {

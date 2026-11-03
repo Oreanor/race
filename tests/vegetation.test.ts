@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { planVegetation, ThicketCollision, type VegetationInput } from '../src/game/Vegetation.ts';
+import { planVegetation, PLANT_CAP, ThicketCollision, type VegetationInput } from '../src/game/Vegetation.ts';
 import type { MapFeature } from '../src/game/WaterCollisionController.ts';
 const M=111319.49;
 const p=(x:number,y:number): [number,number]=>[x/M,y/M];
@@ -37,17 +37,61 @@ test('sports fields stay empty and shrub zones contain only bushes',()=>{
   const shrubs=run({green:[feature([ring(-100,-100,200,200)],'shrubbery')]});
   assert.ok(shrubs.length>0);assert.ok(shrubs.every(p=>p.bush));
 });
-test('woods and parks are a mass while lawns stay a scatter',()=>{
-  const wood=run({green:[feature([ring(-60,-60,120,120)],'wood')]}).length;
-  const park=run({green:[feature([ring(-60,-60,120,120)],'park')]}).length;
-  const grass=run({green:[feature([ring(-60,-60,120,120)],'grass')]}).length;
-  assert.ok(wood>400&&park>400);
-  assert.ok(grass>15&&grass<wood/3);
+test('parks use individual trees and bushes rather than a solid mass',()=>{
+  const wood=run({green:[feature([ring(-60,-60,120,120)],'wood')]});
+  const park=run({green:[feature([ring(-60,-60,120,120)],'park')]});
+  for (const plants of [wood, park]) {
+    assert.ok(plants.length > 30);
+    assert.ok(plants.every(plant => !('mass' in plant)));
+    assert.ok(plants.some(plant => plant.bush));
+    assert.ok(plants.some(plant => !plant.bush));
+    assert.deepEqual(new Set(plants.filter(plant => !plant.bush).map(plant => plant.variant)).size, 3);
+  }
 });
-test('trees beside the car stay when a huge forest would otherwise overflow',()=>{
+test('a large forest is capped and remains individual plants',()=>{
   const plants=run({green:[feature([ring(-220,-220,440,440)],'wood')]});
-  const beside=plants.filter(p=>Math.hypot(p.x-120,p.z)<18);
-  assert.ok(beside.length>6);
+  assert.ok(plants.length <= PLANT_CAP);
+  assert.ok(plants.every(plant => !('mass' in plant)));
+});
+test('forests extend farther with a sparse outer ring and a lower plant budget',()=>{
+  const plants=run({green:[feature([ring(-800,-800,1600,1600)],'wood')]});
+  const distances=plants.map(plant=>Math.hypot(plant.x,plant.z));
+  assert.ok(plants.length <= PLANT_CAP);
+  assert.ok(distances.some(distance=>distance>600&&distance<=700));
+});
+test('roadside planting skips roads and obstacles',()=>{
+  const plants=run({
+    green:[],
+    obstacles:[feature([ring(-10,-20,20,40)],'building')],
+    roads:[{geometry:{type:'LineString',coordinates:[p(-110,-80),p(110,-80)]},properties:{class:'primary'}}],
+  });
+  assert.ok(plants.length > 5);
+  assert.ok(plants.every(plant => Math.abs(-plant.z + 80) >= 17));
+  assert.ok(plants.every(plant => !(Math.abs(plant.x) < 10 && Math.abs(-plant.z) < 20)));
+});
+test('boulevard rows place plants on both sides with even spacing and several tree types',()=>{
+  const plants=run({
+    green:[],
+    roads:[{geometry:{type:'LineString',coordinates:[p(-100,0),p(100,0)]},properties:{class:'primary'}}],
+  });
+  const roadside = plants.filter(plant => plant.key.startsWith('r:'));
+  assert.ok(roadside.length > 10);
+  assert.ok(roadside.some(plant => -plant.z < 0));
+  assert.ok(roadside.some(plant => -plant.z > 0));
+  assert.ok(roadside.some(plant => plant.bush));
+  assert.ok(roadside.some(plant => !plant.bush && plant.variant === 0));
+  assert.ok(roadside.some(plant => !plant.bush && plant.variant === 1));
+  assert.ok(roadside.some(plant => !plant.bush && plant.variant === 2));
+});
+test('roadside plant identity does not depend on road feature order',()=>{
+  const first={geometry:{type:'LineString',coordinates:[p(-100,-30),p(100,-30)]},properties:{class:'primary'}};
+  const second={geometry:{type:'LineString',coordinates:[p(-100,30),p(100,30)]},properties:{class:'primary'}};
+  const forward=run({green:[],roads:[first,second]});
+  const reversed=run({green:[],roads:[second,first]});
+  assert.deepEqual(
+    [...forward].filter(plant=>plant.key.startsWith('r:')).sort((a,b)=>a.key.localeCompare(b.key)),
+    [...reversed].filter(plant=>plant.key.startsWith('r:')).sort((a,b)=>a.key.localeCompare(b.key)),
+  );
 });
 test('a park stops the car except on the road through it',()=>{
   const thicket=new ThicketCollision();
@@ -58,4 +102,16 @@ test('a park stops the car except on the road through it',()=>{
   assert.equal(thicket.blocked([0,0],[40/M,0]),false);
   thicket.update([0,0],[feature([ring(-80,-80,160,160)],'grass')],[]);
   assert.equal(thicket.blocked([0,0],[0,30/M]),false);
+});
+test('a park blocks the car footprint before its center crosses the boundary',()=>{
+  const thicket=new ThicketCollision();
+  thicket.update([0,0],[feature([ring(10,-20,60,40)],'park')],[]);
+  assert.equal(thicket.blocked(p(8.5,0),p(9.2,0)),true);
+  assert.equal(thicket.blocked(p(8,0),p(8.5,0)),false);
+});
+test('a car inside a forest can head toward the edge but not deeper into it',()=>{
+  const thicket=new ThicketCollision();
+  thicket.update([0,0],[feature([ring(-80,-80,160,160)],'park')],[]);
+  assert.equal(thicket.blocked([0,30/M],[0,40/M]),false);
+  assert.equal(thicket.blocked([0,30/M],[0,20/M]),true);
 });

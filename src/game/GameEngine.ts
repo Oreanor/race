@@ -7,8 +7,9 @@ import { ThicketCollision } from './Vegetation';
 import { WaterCollisionController, type MapFeature } from './WaterCollisionController';
 import * as maplibregl from 'maplibre-gl';
 import type { Map as LibreMap } from 'maplibre-gl';
-import { palettes, mapConfig, type Palette, type City, type Car, vehicleConfig } from '@/config/vehicle.config';
+import { mapConfig, type City, type Car, vehicleConfig } from '@/config/vehicle.config';
 import { cameraConfig, zoomForDistance } from '@/config/camera.config';
+import { HOUSE_PALETTE } from './buildings/BuildingStyles';
 import { VehicleController, offsetPosition } from './VehicleController';
 import { vehicleLayer } from '@/rendering/VehicleLayer';
 import { cityLayer, type BuildingPart } from '@/rendering/CityBuildings';
@@ -17,11 +18,9 @@ import { collapseCopies, footprintKey, keepVisibleParts, retainNearParts } from 
 
 export type Quality = 'low' | 'medium' | 'high';
 export type Settings = {
-  palette: Palette;
   terrain: boolean;
   follow: boolean;
   sensitivity: number;
-  volume: number;
   quality: Quality;
   buildingDetail: BuildingDetail;
   architecture: ArchitectureSetting;
@@ -30,10 +29,10 @@ export type Settings = {
 function roadColor(id: string) {
   const pedestrian = /path|pedestrian|foot|cycle/.test(id);
   const casing = /casing/.test(id);
-  if (pedestrian) return casing ? '#e2d0ae' : '#f6e7c8';
-  if (/motorway|trunk|primary/.test(id)) return casing ? '#d9d3c8' : '#46586a';
-  if (/secondary|tertiary/.test(id)) return casing ? '#e4ddd2' : '#63788b';
-  return casing ? '#eee6da' : '#6c8191';
+  if (pedestrian) return casing ? '#d5d0c6' : '#c4c1ba';
+  if (/motorway|trunk|primary/.test(id)) return casing ? '#d2cec5' : '#9d9e99';
+  if (/secondary|tertiary/.test(id)) return casing ? '#d6d2c9' : '#aaaba5';
+  return casing ? '#dbd7ce' : '#b5b5af';
 }
 
 const LABEL_LAYER = /^(highway-name-|water_name_|waterway_line_label)/;
@@ -68,9 +67,9 @@ function paintCity(map: LibreMap, layer: { id: string; type: string }) {
   }
   else if (layer.type === 'symbol') map.setLayoutProperty(layer.id, 'visibility', 'none');
   else if (layer.id === 'building') { map.setLayoutProperty(layer.id, 'visibility', 'visible'); map.setPaintProperty(layer.id, 'fill-opacity', 0); }
-  else if (layer.type === 'background') map.setPaintProperty(layer.id, 'background-color', '#f6f5ee');
+  else if (layer.type === 'background') map.setPaintProperty(layer.id, 'background-color', '#dcdad3');
   else if (layer.type === 'fill' && /park|grass|wood|farmland|pitch|cemetery/.test(layer.id)) map.setPaintProperty(layer.id, 'fill-color', /wood/.test(layer.id) ? '#69a577' : '#b1d59b');
-  else if (layer.type === 'fill' && /residential/.test(layer.id)) map.setPaintProperty(layer.id, 'fill-color', '#f5eee4');
+  else if (layer.type === 'fill' && /residential/.test(layer.id)) map.setPaintProperty(layer.id, 'fill-color', '#e5e2da');
   else if (layer.type === 'fill' && /school|hospital/.test(layer.id)) map.setPaintProperty(layer.id, 'fill-color', '#f8dfda');
   else if (layer.type === 'fill' && /water/.test(layer.id)) map.setPaintProperty(layer.id, 'fill-color', '#52b8ca');
   else if (layer.type === 'line' && /waterway/.test(layer.id)) map.setPaintProperty(layer.id, 'line-color', '#369fb7');
@@ -78,8 +77,9 @@ function paintCity(map: LibreMap, layer: { id: string; type: string }) {
     map.setPaintProperty(layer.id, 'line-color', roadColor(layer.id));
     const pedestrian = /path|pedestrian|foot|cycle/.test(layer.id);
     const major = /motorway|trunk|primary/.test(layer.id);
-    const casing = /casing/.test(layer.id) ? 1.45 : 1;
-    const width = (zoom: number) => (pedestrian ? 0.55 : major ? 1.7 : 1) * casing * zoom;
+    const casing = /casing/.test(layer.id) ? 1.04 : 1;
+    const pavement = pedestrian ? 2 : 5.5;
+    const width = (zoom: number) => (pedestrian ? 0.55 : major ? 1.7 : 1) * casing * pavement * zoom;
     map.setPaintProperty(layer.id, 'line-width', ['interpolate', ['linear'], ['zoom'], 13, width(0.7), 16, width(2.2), 18, width(6), 20.2, width(16)]);
   }
 }
@@ -114,6 +114,10 @@ export class GameEngine {
   hudTime = 0;
   dragging = false;
   private introCameraKey = '';
+  private spawnMarker: maplibregl.Marker | null = null;
+  private defaultSpawn: { position: [number, number]; heading: number } | null = null;
+  private customSpawn: { position: [number, number]; heading: number } | null = null;
+  onSpawnSet: (position: [number, number] | null) => void = () => {};
   private host: HTMLElement;
   private mapShown = false;
   private bootAt = 0;
@@ -141,6 +145,7 @@ export class GameEngine {
   private greenedTerrain: boolean | null = null;
   private remembered = new Map<string, { part: BuildingPart; measured: boolean }>();
   private retained = new Map<string, BuildingPart>();
+  private featureReadFailures = new Set<string>();
   private region: string;
   get booted() { return this.mapShown; }
   constructor(el: HTMLElement, city: City, car: Car, settings: Settings, private hud: (speed: number, distance: number, scale: number, fps: number) => void, private status: (s: string) => void) {
@@ -177,6 +182,7 @@ export class GameEngine {
       if (this.disposed) return;
       this.decorate();
       this.map.addSource('elevation', { type: 'raster-dem', ...mapConfig.dem });
+      // Keep map labels below custom 3D geometry so buildings can occlude them.
       this.city = cityLayer(city.coords, parts => {
         this.collisions.update(this.vehicle.position, parts.map(part => part.rings));
       });
@@ -184,12 +190,19 @@ export class GameEngine {
       this.vegetation = vegetationLayer(city.coords);
       this.map.addLayer(this.vegetation);
       this.map.addLayer(vehicleLayer(car, this.renderVehicle, () => this.altitude, () => this.modelPitch, () => this.modelRoll, () => this.carScale, (text) => this.say(text)));
-      this.liftLabels();
+      this.applyLabelVisibility();
       this.applySettings(this.settings);
       this.ready = true;
       this.map.setCenterClampedToGround(false);
       this.collisionDirty = true;
       this.say('Ставим машину…');
+      // Map click → set custom spawn
+      this.map.on('click', (e) => {
+        if (!this.driving && this.mapShown) this.setSpawnFromClick(e.lngLat);
+      });
+      this.map.on('move', () => {
+        if (!this.driving && this.mapShown) this.collisionDirty = true;
+      });
     });
     const listen = (target: EventTarget, event: string, fn: EventListener, options?: AddEventListenerOptions) => {
       target.addEventListener(event, fn, options);
@@ -239,13 +252,6 @@ export class GameEngine {
     const source = Object.entries(style.sources).find(([, item]) => item.type === 'vector')?.[0];
     if (!source) return;
     this.sourceId = source;
-  }
-
-  liftLabels() {
-    for (const layer of this.map.getStyle().layers) {
-      if (LABEL_LAYER.test(layer.id) && this.map.getLayer(layer.id)) this.map.moveLayer(layer.id);
-    }
-    this.applyLabelVisibility();
   }
 
   labelsOn = true;
@@ -303,7 +309,7 @@ export class GameEngine {
     hideBasemapBuildings(this.map);
     const ratio = settings.quality === 'low' ? 1 : settings.quality === 'medium' ? 1.25 : Math.min(window.devicePixelRatio || 1, 1.5);
     this.map.setPixelRatio(ratio);
-    this.city?.configure({ colors: palettes[settings.palette], detail: settings.buildingDetail, architecture: settings.architecture, region: this.region });
+    this.city?.configure({ detail: settings.buildingDetail, architecture: settings.architecture, region: this.region });
     if (terrainChanged) { this.collisionDirty = true; this.syncedAt = null; }
   }
 
@@ -322,10 +328,76 @@ export class GameEngine {
     this.pitch = cameraConfig.pitch;
   }
 
-  buildingsNear(parts: BuildingPart[]) {
-    const focus = this.vehicle.position;
-    const show = 620 ** 2;
-    const keep = 900 ** 2;
+  setSpawnFromClick(lngLat: { lng: number; lat: number }) {
+    if (!this.sourceId) return;
+    const origin: [number, number] = [lngLat.lng, lngLat.lat];
+    const start = roadStart(this.map, this.sourceId, origin, (position, heading) => this.collisions.blocked(position, position, heading));
+    const position: [number, number] = start ? start.position : origin;
+    const heading = start ? start.heading : this.vehicle.heading;
+    this.customSpawn = { position, heading };
+    this.vehicle.position = [...position];
+    this.vehicle.heading = heading;
+    this.bearing = heading * 180 / Math.PI;
+    this.renderVehicle.reset(this.vehicle);
+    this.collisionDirty = true;
+    if (this.settings.terrain) {
+      const ground = this.map.queryTerrainElevation(position);
+      if (ground != null) this.altitude = ground;
+    }
+    this.placeSpawnMarker(position);
+    this.onSpawnSet(position);
+  }
+
+  private placeSpawnMarker(position: [number, number] | null) {
+    if (!position) {
+      this.spawnMarker?.remove();
+      this.spawnMarker = null;
+      return;
+    }
+    if (!this.spawnMarker) {
+      const el = document.createElement('div');
+      el.className = 'spawn-marker';
+      el.innerHTML = `<svg width="30" height="42" viewBox="0 0 30 42" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M15 0C6.716 0 0 6.716 0 15c0 10.5 15 27 15 27S30 25.5 30 15C30 6.716 23.284 0 15 0z" fill="#263d38"/><circle cx="15" cy="15" r="6" fill="#e5f1a5"/></svg>`;
+      this.spawnMarker = new maplibregl.Marker({ element: el, anchor: 'bottom' })
+        .setLngLat(position)
+        .addTo(this.map);
+    } else {
+      this.spawnMarker.setLngLat(position);
+    }
+    const element = this.spawnMarker.getElement();
+    if (element) element.style.display = this.driving ? 'none' : '';
+  }
+
+  clearCustomSpawn() {
+    this.customSpawn = null;
+    if (this.defaultSpawn) {
+      this.vehicle.position = [...this.defaultSpawn.position];
+      this.vehicle.heading = this.defaultSpawn.heading;
+      this.bearing = this.defaultSpawn.heading * 180 / Math.PI;
+      this.renderVehicle.reset(this.vehicle);
+      this.accumulator = 0;
+      this.collisionDirty = true;
+      this.collisionTime = 0;
+      this.placeSpawnMarker(this.defaultSpawn.position);
+      if (this.mapShown) this.map.jumpTo(this.introView());
+    } else {
+      this.placeSpawnMarker(null);
+    }
+    this.onSpawnSet(null);
+  }
+
+  getSpawnPosition(): [number, number] {
+    return this.customSpawn ? [this.customSpawn.position[0], this.customSpawn.position[1]] : [this.vehicle.position[0], this.vehicle.position[1]];
+  }
+
+  getSpawnHeading(): number {
+    return this.customSpawn ? this.customSpawn.heading : this.vehicle.heading;
+  }
+
+  buildingsNear(parts: BuildingPart[], focus: [number, number] = this.vehicle.position) {
+    const show = (this.driving ? 900 : 1600) ** 2;
+    const keep = (this.driving ? 1100 : 2000) ** 2;
+    const maxBuildings = this.driving ? 650 : 2500;
     const cos = Math.cos(focus[1] * Math.PI / 180);
     const nearest = (part: BuildingPart) => {
       let best = Infinity;
@@ -341,7 +413,7 @@ export class GameEngine {
     const next = new Set<string>();
     const visible: BuildingPart[] = [];
     for (const item of ranked) {
-      if (visible.length >= 420) break;
+      if (visible.length >= maxBuildings) break;
       const retain = this.shownBuildings.has(item.part.key) ? item.distance < keep : item.distance < show;
       if (!retain) continue;
       next.add(item.part.key);
@@ -370,6 +442,9 @@ export class GameEngine {
     this.host.style.opacity = '1';
     this.onBoot(true);
     this.say('Машина готова');
+    // Enable drag-pan and click for the intro screen
+    this.map.dragPan.enable();
+    this.map.scrollZoom.enable();
   }
 
   private settleBoot() {
@@ -377,7 +452,11 @@ export class GameEngine {
     const waited = performance.now() - this.bootAt;
     if (!this.spawnResolved) {
       this.say('Ставим машину…');
-      if (waited > 12000) this.spawnResolved = true;
+      if (waited > 12000) {
+        this.spawnResolved = true;
+        this.defaultSpawn = { position: [...this.vehicle.position], heading: this.vehicle.heading };
+        this.placeSpawnMarker(this.defaultSpawn.position);
+      }
       return;
     }
     if (this.settings.terrain) {
@@ -439,6 +518,10 @@ export class GameEngine {
     this.accumulator = 0;
     this.renderVehicle.reset(this.vehicle);
     if (!value) {
+      if (this.spawnMarker) {
+        const el = this.spawnMarker.getElement();
+        if (el) el.style.display = '';
+      }
       const moving = this.approachFrom != null;
       this.approach = 0;
       this.approachFrom = null;
@@ -450,9 +533,28 @@ export class GameEngine {
           this.map.jumpTo(view);
         }
         this.introCameraKey = 'locked';
+        // Re-enable map drag for intro
+        this.map.dragPan.enable();
+        this.map.scrollZoom.enable();
       }
       return;
     }
+    if (this.spawnMarker) {
+      const el = this.spawnMarker.getElement();
+      if (el) el.style.display = 'none';
+    }
+    // Apply custom spawn before driving starts
+    if (fromMenu && this.customSpawn) {
+      this.vehicle.position = [...this.customSpawn.position];
+      this.vehicle.heading = this.customSpawn.heading;
+      this.bearing = this.customSpawn.heading * 180 / Math.PI;
+      this.spawnResolved = true;
+      this.renderVehicle.reset(this.vehicle);
+      this.accumulator = 0;
+    }
+    // Disable map interactivity while driving
+    this.map.dragPan.disable();
+    this.map.scrollZoom.disable();
     if (!fromMenu) return;
     const center = this.map.getCenter();
     this.approachFrom = { lng: center.lng, lat: center.lat, zoom: this.map.getZoom(), pitch: this.map.getPitch(), bearing: this.map.getBearing() };
@@ -557,18 +659,40 @@ export class GameEngine {
       }
     }
     if (!this.spawnResolved) {
-      const start = roadStart(this.map, this.sourceId, this.vehicle.position, (position, heading) => this.collisions.blocked(position, position, heading));
-      if (start) {
-        this.vehicle.position = start.position;
-        this.vehicle.heading = start.heading;
-        this.bearing = start.heading * 180 / Math.PI;
+      if (this.customSpawn) {
+        // Use the player-chosen spawn point
+        if (!this.defaultSpawn) {
+          this.defaultSpawn = { position: [...this.vehicle.position], heading: this.vehicle.heading };
+        }
+        this.vehicle.position = [...this.customSpawn.position];
+        this.vehicle.heading = this.customSpawn.heading;
+        this.bearing = this.customSpawn.heading * 180 / Math.PI;
         this.spawnResolved = true;
         this.renderVehicle.reset(this.vehicle);
         this.accumulator = 0;
-      } else if (++this.spawnWaits > 12) this.spawnResolved = true;
+        this.placeSpawnMarker(this.customSpawn.position);
+      } else {
+        const start = roadStart(this.map, this.sourceId, this.vehicle.position, (position, heading) => this.collisions.blocked(position, position, heading));
+        if (start) {
+          this.defaultSpawn = { position: [...start.position], heading: start.heading };
+          this.vehicle.position = start.position;
+          this.vehicle.heading = start.heading;
+          this.bearing = start.heading * 180 / Math.PI;
+          this.spawnResolved = true;
+          this.renderVehicle.reset(this.vehicle);
+          this.accumulator = 0;
+          this.placeSpawnMarker(start.position);
+        } else if (++this.spawnWaits > 12) {
+          this.spawnResolved = true;
+          this.defaultSpawn = { position: [...this.vehicle.position], heading: this.vehicle.heading };
+          this.placeSpawnMarker(this.defaultSpawn.position);
+        }
+      }
     }
-    const focus = this.vehicle.position;
+    const center = this.map.getCenter();
+    const focus: [number, number] = this.driving ? this.vehicle.position : [center.lng, center.lat];
     const cos = Math.cos(focus[1] * Math.PI / 180);
+    const retainRadius = this.driving ? 1050 : 2200;
     const unique = collapseCopies(retainNearParts(keepVisibleParts(parts), this.retained.values(), (part) => {
       let best = Infinity;
       for (const point of part.rings[0] ?? []) {
@@ -578,16 +702,25 @@ export class GameEngine {
         if (distance < best) best = distance;
       }
       return best;
-    }, 1050 ** 2));
-    const visible = this.buildingsNear(unique);
+    }, retainRadius ** 2));
+    const visible = this.buildingsNear(unique, focus);
     if (visible.length) {
       this.retained = new Map(visible.map((part) => [part.key, part]));
-      this.city?.sync(visible, this.settings.terrain, this.vehicle.position);
-      this.syncedAt = [this.vehicle.position[0], this.vehicle.position[1]];
+      this.city?.sync(visible, this.settings.terrain, focus);
+      this.syncedAt = [focus[0], focus[1]];
     }
     const read = (layer: string) => {
-      try { return this.map.querySourceFeatures(this.sourceId, { sourceLayer: layer }) as unknown as MapFeature[]; }
-      catch { return [] as MapFeature[]; }
+      try {
+        const features = this.map.querySourceFeatures(this.sourceId, { sourceLayer: layer }) as MapFeature[];
+        this.featureReadFailures.delete(layer);
+        return features;
+      } catch (error) {
+        if (!this.featureReadFailures.has(layer)) {
+          this.featureReadFailures.add(layer);
+          console.error(`Failed to read map source layer "${layer}"`, error);
+        }
+        return [] as MapFeature[];
+      }
     };
     const waterFeatures = read('water');
     const roadFeatures = read('transportation');
@@ -597,16 +730,19 @@ export class GameEngine {
     this.thicket.update(this.vehicle.position, green, roadFeatures);
     const greened = this.greenedAt;
     const movedGreen = greened ? Math.hypot((focus[0] - greened[0]) * 111319.49 * cos, (focus[1] - greened[1]) * 111319.49) : Infinity;
-    if (movedGreen > 70 || this.greenedTerrain !== this.settings.terrain) {
+    if (movedGreen > 45 || this.greenedTerrain !== this.settings.terrain) {
       this.greenedAt = [focus[0], focus[1]];
       this.greenedTerrain = this.settings.terrain;
+      const aheadMeters = this.driving ? 80 : 0;
+      const headingRad = this.renderVehicle.heading;
+      const greenFocus: [number, number] = aheadMeters > 0 ? offsetPosition(focus, Math.sin(headingRad) * aheadMeters, Math.cos(headingRad) * aheadMeters) : [...focus];
       this.vegetation?.sync({
         green,
         obstacles: [...waterFeatures,
           ...landuse.filter(feature => /^(pitch|playground|track|stadium|parking)$/.test(String(feature.properties?.class ?? ''))),
           ...unique.map(part => ({ geometry: { type: 'Polygon', coordinates: part.rings } }))],
         roads: roadFeatures,
-        focus: [...focus],
+        focus: greenFocus,
       }, this.settings.terrain);
     }
     this.worldFresh = true;
@@ -619,13 +755,14 @@ export class GameEngine {
     this.last = now;
     this.noteFrame(now);
     if (!this.ready) return;
-    if ((this.collisionDirty || !this.water.covers(this.vehicle.position)) && now - this.collisionTime > 350 && this.sourceId) {
-      const origin = this.syncedAt;
-      const cos = Math.cos(this.vehicle.position[1] * Math.PI / 180);
-      const moved = origin ? Math.hypot((this.vehicle.position[0] - origin[0]) * 111319.49 * cos, (this.vehicle.position[1] - origin[1]) * 111319.49) : Infinity;
-      const hold = !this.collisionDirty && this.driving && this.spawnResolved && this.water.covers(this.vehicle.position) && moved < 50;
-      if (hold) { this.collisionDirty = false; }
-      else this.collectWorld(now);
+    const origin = this.syncedAt;
+    const cos = Math.cos(this.vehicle.position[1] * Math.PI / 180);
+    const center = this.map.getCenter();
+    const checkPoint: [number, number] = this.driving ? this.vehicle.position : [center.lng, center.lat];
+    const moved = origin ? Math.hypot((checkPoint[0] - origin[0]) * 111319.49 * cos, (checkPoint[1] - origin[1]) * 111319.49) : Infinity;
+    const needCollect = this.collisionDirty || !this.water.covers(this.vehicle.position) || moved >= 40;
+    if (needCollect && now - this.collisionTime > 200 && this.sourceId) {
+      this.collectWorld(now);
     }
     if (this.driving && !document.hidden) {
       this.accumulator += dt;
@@ -709,8 +846,10 @@ export class GameEngine {
       this.hud(this.vehicle.speed * 3.6, this.vehicle.distance, this.carScale, this.fps);
     }
     const bootBudget = !this.mapShown && this.spawnResolved ? 24 : 20;
-    const budget = !this.spawnResolved ? 0 : this.driving ? (this.worldFresh ? 0 : 1) : bootBudget;
-    this.city?.follow(this.renderVehicle.position, this.driving ? this.altitude + 1.2 : null, budget, this.bearing * Math.PI / 180);
+    const budget = !this.spawnResolved ? 0 : this.driving ? (this.worldFresh ? 0 : 1) : (this.mapShown ? 36 : bootBudget);
+    const mapCenter = this.map.getCenter();
+    const cityFocus: [number, number] = this.driving ? this.renderVehicle.position : [mapCenter.lng, mapCenter.lat];
+    this.city?.follow(cityFocus, this.driving ? this.altitude + 1.2 : null, budget, this.driving);
     this.worldFresh = false;
     if (!this.mapShown) this.settleBoot();
     this.map.triggerRepaint();
@@ -719,6 +858,7 @@ export class GameEngine {
   dispose() {
     this.disposed = true;
     cancelAnimationFrame(this.frame);
+    this.spawnMarker?.remove();
     this.cleanups.forEach((fn) => fn());
     this.map.remove();
   }

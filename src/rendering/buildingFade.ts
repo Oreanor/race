@@ -11,6 +11,7 @@ export type FadeMap = {
   current: Float32Array;
   texture: DataTextureType;
   dirty: boolean;
+  activeSlots: number;
 };
 
 export function createFadeMap(): FadeMap {
@@ -22,7 +23,7 @@ export function createFadeMap(): FadeMap {
   texture.magFilter = NearestFilter;
   texture.minFilter = NearestFilter;
   texture.needsUpdate = true;
-  return { data, current, texture, dirty: false };
+  return { data, current, texture, dirty: false, activeSlots: 0 };
 }
 
 export function paintSlot(fade: FadeMap, slot: number, ghost: boolean) {
@@ -31,9 +32,12 @@ export function paintSlot(fade: FadeMap, slot: number, ghost: boolean) {
   const now = fade.current[slot] ?? 1;
   const next = Math.abs(target - now) < 0.03 ? target : now + (target - now) * 0.28;
   if (next !== now) {
+    const wasActive = now < 0.99;
+    const isActive = next < 0.99;
     fade.current[slot] = next;
     fade.data[slot] = Math.max(0, Math.min(255, Math.round(next * 255)));
     fade.dirty = true;
+    if (wasActive !== isActive) fade.activeSlots += isActive ? 1 : -1;
   }
   return next < 0.985;
 }
@@ -41,6 +45,7 @@ export function paintSlot(fade: FadeMap, slot: number, ghost: boolean) {
 export function resetFade(fade: FadeMap) {
   fade.data.fill(255);
   fade.current.fill(1);
+  fade.activeSlots = 0;
   fade.dirty = true;
   fade.texture.needsUpdate = true;
   fade.dirty = false;

@@ -6,6 +6,16 @@ export type BuildingDetail = 'off' | 'low' | 'medium' | 'high';
 export type RoofKind = 'flat' | 'gable' | 'hip' | 'tile';
 export type WindowKind = 'eu' | 'narrow' | 'wide';
 
+export const portuguesePastel = {
+  name: 'Portuguese Pastel',
+  wallColors: ['#F5E8DA', '#F0D8C8', '#DDE8D8', '#D8E2EC', '#F2DFAE', '#E9D6BD'],
+  roofColors: ['#D77A5B', '#C9684C', '#B85B43', '#994B39'],
+  windowColors: ['#70BCE8', '#4D9BD1'],
+  frameColor: '#F4EEE3',
+} as const;
+
+export const HOUSE_PALETTE = portuguesePastel.wallColors;
+
 export type BuildingFacts = {
   id: number;
   key: string;
@@ -44,11 +54,8 @@ type StyleSpec = {
   floorHeight: number;
   window: WindowKind;
   sill: number;
-  frame: string;
-  glass: string;
   door: string;
   trim: string;
-  roof: string;
   metal: string;
   accent: string;
   roofs: Record<RoofKind, number>;
@@ -58,31 +65,31 @@ type StyleSpec = {
 const STYLES: Record<StyleId, StyleSpec> = {
   european: {
     floorHeight: 3.25, window: 'eu', sill: 0.58,
-    frame: '#f4efe4', glass: '#314862', door: '#6d4034', trim: '#efe6d8', roof: '#c96648', metal: '#8a8680', accent: '#c46a4a',
+    door: '#6d4034', trim: '#efe6d8', metal: '#8a8680', accent: '#c46a4a',
     roofs: { flat: 0.22, gable: 0.46, hip: 0.22, tile: 0.1 },
     chance: { balcony: 0.36, shutter: 0.2, awning: 0.26, cornice: 0.9, band: 0.42, downspout: 0.55, vent: 0.12, chimney: 0.42, storefront: 0.1 },
   },
   portuguese: {
     floorHeight: 3.05, window: 'narrow', sill: 0.62,
-    frame: '#fff6ea', glass: '#3c6474', door: '#7b4e30', trim: '#fff5e8', roof: '#db734b', metal: '#8d8680', accent: '#e0a15a',
+    door: '#7b4e30', trim: '#fff5e8', metal: '#8d8680', accent: '#e0a15a',
     roofs: { flat: 0.12, gable: 0.28, hip: 0.18, tile: 0.42 },
     chance: { balcony: 0.44, shutter: 0.36, awning: 0.2, cornice: 0.66, band: 0.6, downspout: 0.4, vent: 0.08, chimney: 0.3, storefront: 0.14 },
   },
   modern: {
     floorHeight: 3.45, window: 'wide', sill: 0.4,
-    frame: '#eef1f3', glass: '#276389', door: '#32373c', trim: '#d5dbe0', roof: '#8197a3', metal: '#9aa3ab', accent: '#d8dee4',
+    door: '#32373c', trim: '#d5dbe0', metal: '#9aa3ab', accent: '#d8dee4',
     roofs: { flat: 0.9, gable: 0.1, hip: 0, tile: 0 },
     chance: { balcony: 0.18, shutter: 0, awning: 0.16, cornice: 0.16, band: 0.1, downspout: 0.18, vent: 0.48, chimney: 0.02, storefront: 0.24 },
   },
   brick: {
     floorHeight: 3.2, window: 'eu', sill: 0.56,
-    frame: '#f3e7d6', glass: '#2d3d4e', door: '#4e382e', trim: '#f6e9da', roof: '#b95748', metal: '#7e7872', accent: '#a36848',
+    door: '#4e382e', trim: '#f6e9da', metal: '#7e7872', accent: '#a36848',
     roofs: { flat: 0.3, gable: 0.5, hip: 0.14, tile: 0.06 },
     chance: { balcony: 0.12, shutter: 0.06, awning: 0.16, cornice: 0.88, band: 0.72, downspout: 0.6, vent: 0.16, chimney: 0.34, storefront: 0.08 },
   },
   commercial: {
     floorHeight: 3.6, window: 'wide', sill: 0.36,
-    frame: '#f5f6f4', glass: '#286887', door: '#3c4450', trim: '#e3e6e4', roof: '#728d9a', metal: '#8e969c', accent: '#d07a48',
+    door: '#3c4450', trim: '#e3e6e4', metal: '#8e969c', accent: '#d07a48',
     roofs: { flat: 0.84, gable: 0.16, hip: 0, tile: 0 },
     chance: { balcony: 0.05, shutter: 0, awning: 0.74, cornice: 0.38, band: 0.14, downspout: 0.32, vent: 0.42, chimney: 0.02, storefront: 0.9 },
   },
@@ -121,35 +128,9 @@ export function mixHex(from: string, to: string, amount: number) {
   return `#${a.map((channel, index) => Math.round(channel * (1 - amount) + b[index] * amount).toString(16).padStart(2, '0')).join('')}`;
 }
 
-export function shadeHex(hex: string, shade: number) {
-  if (shade === 1) return hex;
-  return mixHex(hex, shade > 1 ? '#ffffff' : '#345a82', 0.07);
-}
-
 function vary(hex: string, seed: number, amount: number) {
   const t = unitRand(seed);
   return mixHex(hex, t > 0.5 ? '#ffffff' : '#345a82', amount * (t > 0.5 ? (t - 0.5) * 2 : (0.5 - t) * 2));
-}
-
-function roofFor(wall: string, style: StyleId) {
-  const value = Number.parseInt(wall.slice(1), 16);
-  const red = (value >> 16) & 255;
-  const green = (value >> 8) & 255;
-  const blue = value & 255;
-  const luma = (red * 0.3 + green * 0.59 + blue * 0.11) / 255;
-  const sink = luma > 0.72 ? 0.34 : luma < 0.28 ? 0.18 : 0.46;
-  const ink = style === 'modern' || style === 'commercial' ? '#1a242c' : '#2a160f';
-  return mixHex(mixHex(wall, ink, sink), '#fff6ea', 0.1);
-}
-
-const BRICK_ROOFS = ['#c4533a', '#d26648', '#b84432', '#e07852', '#a63e2c'];
-
-function brickRoof(seed: number) {
-  const base = BRICK_ROOFS[indexFor(BRICK_ROOFS.length, seed)];
-  const t = unitRand(seed ^ 0x51);
-  const toward = t > 0.5 ? '#f2a088' : '#8a3022';
-  const amount = 0.16 * (t > 0.5 ? (t - 0.5) * 2 : (0.5 - t) * 2);
-  return mixHex(base, toward, amount);
 }
 
 function regionWeights(region: string): [StyleId, number][] {
@@ -205,8 +186,8 @@ export function createRecipe(facts: BuildingFacts, palette: readonly string[], s
   let floors = facts.levels && facts.levels > 0 ? Math.round(facts.levels) : Math.max(1, Math.round(clear / style.floorHeight));
   while (floors > 1 && clear / floors < 2.35) floors--;
   floors = Math.max(1, Math.min(40, floors));
-  const slot = (seed % Math.max(1, palette.length)) * 3 + (seed % 3);
-  const wall = shadeHex(palette[seed % Math.max(1, palette.length)] ?? '#e7d7c3', seed % 3);
+  const slot = indexFor(palette.length, seed);
+  const wall = palette[slot] ?? '#e7d7c3';
   const roll = (salt: number) => unitRand(seed ^ salt);
   const features = {
     balcony: roll(0x11) < style.chance.balcony && floors > 1,
@@ -220,25 +201,26 @@ export function createRecipe(facts: BuildingFacts, palette: readonly string[], s
     storefront: roll(0x99) < style.chance.storefront,
   };
   const roofKind = chooseRoof(styleId, seed, facts.roofShape ?? '', floors, clear);
+  const window = style.window === 'wide' || roll(0xa6) < 0.38 ? 'wide' : style.window;
   return {
     seed,
     style: styleId,
     floors,
     floorHeight: style.floorHeight,
-    window: style.window,
+    window,
     roofKind,
     features,
     slot,
     colors: {
       wall,
-      frame: vary(style.frame, seed ^ 1, 0.05),
-      glass: vary(style.glass, seed ^ 2, 0.07),
+      frame: portuguesePastel.frameColor,
+      glass: portuguesePastel.windowColors[indexFor(portuguesePastel.windowColors.length, seed ^ 0x6d2b79f5)],
       door: vary(style.door, seed ^ 3, 0.06),
       trim: vary(style.trim, seed ^ 4, 0.05),
       metal: style.metal,
       plinth: mixHex(wall, '#365879', 0.14),
       accent: vary(style.accent, seed ^ 5, 0.05),
-      roof: roofKind === 'flat' ? roofFor(wall, styleId) : brickRoof(seed),
+      roof: portuguesePastel.roofColors[indexFor(portuguesePastel.roofColors.length, seed ^ 0x51f0c3)],
     },
   };
 }

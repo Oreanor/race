@@ -28,7 +28,7 @@ function merge(parts: BufferGeometry[]) {
   return geometry;
 }
 
-function windowFrame(w: number, h: number, d: number, mullion: boolean) {
+function windowFrame(w: number, h: number, d: number) {
   const t = Math.min(0.085, w * 0.1, h * 0.07);
   const parts = [
     box(t, h, d, -w / 2 + t / 2, 0, 0),
@@ -37,7 +37,7 @@ function windowFrame(w: number, h: number, d: number, mullion: boolean) {
     box(Math.max(0.04, w - t * 2), t, d, 0, -h / 2 + t / 2, 0),
     box(w * 0.94, 0.05, d * 0.55, 0, -h / 2 + 0.045, d * 0.16),
   ];
-  if (mullion && w > 0.55 && h > 0.75) {
+  if (w > 0.55 && h > 0.75) {
     parts.push(box(t * 0.62, h - t * 2 - 0.04, d * 0.34, 0, 0.02, d * 0.24));
     parts.push(box(w - t * 2 - 0.04, t * 0.55, d * 0.34, 0, h * 0.04, d * 0.24));
   }
@@ -93,11 +93,11 @@ export function createPieceGeometries(): Record<MeshName, BufferGeometry> {
   const chimney = PIECES.chimney;
   const vent = PIECES.vent;
   return {
-    window: windowFrame(window.w, window.h, window.d, true),
+    window: windowFrame(window.w, window.h, window.d),
     glass: windowGlass(window.w, window.h, window.d),
-    windowSimple: windowFrame(simple.w, simple.h, simple.d, false),
+    windowSimple: windowFrame(simple.w, simple.h, simple.d),
     glassSimple: windowGlass(simple.w, simple.h, simple.d),
-    store: windowFrame(store.w, store.h, store.d, true),
+    store: windowFrame(store.w, store.h, store.d),
     storeGlass: windowGlass(store.w, store.h, store.d),
     door: doorFrame(door.w, door.h, door.d),
     doorPanel: doorPanel(door.w, door.h, door.d),

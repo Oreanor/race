@@ -135,7 +135,7 @@ export function vehicleLayer(car: Car, vehicle: Pose, height: () => number, pitc
   rim.position.set(-4, 12, -8);
   scene.add(rim);
   const haze = smokeTexture();
-  const puffs = Array.from({ length: 40 }, () => {
+  const puffs = Array.from({ length: 20 }, () => {
     const mesh = puffMesh(haze);
     scene.add(mesh);
     return { mesh, place: [0, 0] as Position, east: 0, north: 0, up: 0, born: 0, life: 1, size: 0.4, active: false };
@@ -180,13 +180,17 @@ export function vehicleLayer(car: Car, vehicle: Pose, height: () => number, pitc
         root.add(model);
         status('Машина готова');
         map.triggerRepaint();
-      }).catch(() => status('Резервная модель · GLB недоступен'));
+      }).catch((error: unknown) => {
+        if (disposed) return;
+        console.error('Failed to load vehicle model', error);
+        status('Резервная модель · GLB недоступен');
+      });
     },
     render(_gl, args) {
       const now = performance.now();
       const dt = lastFrame ? Math.min(0.05, (now - lastFrame) / 1000) : 0;
       lastFrame = now;
-      if (vehicle.throttle && now - lastSpawn > 75) {
+      if (vehicle.throttle && now - lastSpawn > 150) {
         lastSpawn = now;
         spawn(1, now);
         spawn(-1, now);

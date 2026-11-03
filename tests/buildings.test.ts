@@ -1,11 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createRecipe, indexFor } from '../src/game/buildings/BuildingStyles.ts';
+import { createRecipe, HOUSE_PALETTE, indexFor, portuguesePastel } from '../src/game/buildings/BuildingStyles.ts';
 import { chooseLod } from '../src/game/buildings/BuildingLOD.ts';
 import { facadeBands, layoutFacade, pieceExtents } from '../src/game/buildings/FacadeGenerator.ts';
 import { buildRoof, canPitch } from '../src/game/buildings/RoofGenerator.ts';
+import { PIECES } from '../src/game/buildings/pieces.ts';
 import { collapseCopies, footprintKey, keepVisibleParts, resolveWalls, retainNearParts } from '../src/game/buildings/wallOverlap.ts';
 import { buildingBlocksView } from '../src/game/buildings/viewOcclusion.ts';
+import { createFadeMap, paintSlot, resetFade } from '../src/rendering/buildingFade.ts';
 
 const palette = ['#f0c43a', '#7a6fe0', '#4aa3e8', '#ef6f93', '#f08a3c', '#63c47a'];
 
@@ -61,23 +63,26 @@ test('short walls and odd heights do not emit a partial window', () => {
   }
 });
 
-test('triangular roofs are red brick and flat roofs stay with the wall', () => {
-  const channels = (hex: string) => {
-    const value = Number.parseInt(hex.slice(1), 16);
-    return [(value >> 16) & 255, (value >> 8) & 255, value & 255];
-  };
+test('buildings use the Portuguese Pastel palette on walls, roofs and windows', () => {
   let pitched = 0;
+  const walls = new Set<string>();
+  const roofs = new Set<string>();
+  const windows = new Set<string>();
   for (let n = 0; n < 40; n++) {
-    const made = createRecipe({ id: n, key: `house-${n}`, height: 12, base: 0 }, ['#74f0c4'], 'european', 'Portugal');
-    const [red, green, blue] = channels(made.colors.roof);
-    if (made.roofKind === 'flat') {
-      assert.ok(green > red, made.colors.roof);
-    } else {
-      pitched++;
-      assert.ok(red > green + 40 && red > blue + 40, `${made.roofKind} ${made.colors.roof}`);
-    }
+    const made = createRecipe({ id: n, key: `house-${n}`, height: 12, base: 0 }, HOUSE_PALETTE, 'european', 'Portugal');
+    assert.ok(HOUSE_PALETTE.includes(made.colors.wall as typeof HOUSE_PALETTE[number]));
+    assert.ok(portuguesePastel.roofColors.includes(made.colors.roof as typeof portuguesePastel.roofColors[number]));
+    assert.ok(portuguesePastel.windowColors.includes(made.colors.glass as typeof portuguesePastel.windowColors[number]));
+    assert.equal(made.colors.frame, portuguesePastel.frameColor);
+    walls.add(made.colors.wall);
+    roofs.add(made.colors.roof);
+    windows.add(made.colors.glass);
+    if (made.roofKind !== 'flat') pitched++;
   }
   assert.ok(pitched > 20);
+  assert.deepEqual([...walls].sort(), [...HOUSE_PALETTE].sort());
+  assert.deepEqual([...roofs].sort(), [...portuguesePastel.roofColors].sort());
+  assert.deepEqual([...windows].sort(), [...portuguesePastel.windowColors].sort());
 });
 
 test('the same building keeps its style after a reload', () => {
@@ -85,6 +90,22 @@ test('the same building keeps its style after a reload', () => {
   const second = createRecipe({ id: 7, key: '7:10:1:2', height: 14, base: 0, kind: 'house' }, palette, 'auto', 'Portugal');
   assert.deepEqual(first, second);
   assert.equal(createRecipe({ id: 7, key: '7:10:1:2', height: 14, base: 0 }, palette, 'portuguese', 'Portugal').style, 'portuguese');
+});
+
+test('many Portuguese homes use double-width windows and keep them at low detail', () => {
+  const recipes = Array.from({ length: 100 }, (_, id) =>
+    createRecipe({ id, key: `portuguese-house-${id}`, height: 12, base: 0 }, HOUSE_PALETTE, 'portuguese', 'Portugal'),
+  );
+  const wide = recipes.filter((item) => item.window === 'wide');
+  assert.ok(wide.length >= 25 && wide.length <= 50);
+
+  const made = wide[0];
+  assert.ok(made);
+  const windows = layoutFacade(10, 0, 0, 12, made, {
+    lod: 1, detail: 'high', door: false, front: false, downspout: false,
+  }).filter((piece) => piece.mesh === 'windowSimple');
+  assert.ok(windows.length > 0);
+  assert.ok(windows.every((piece) => Math.abs(PIECES.window.w * piece.sx - PIECES.window.w * 1.55) < 1e-6));
 });
 
 test('lod stays put inside the hysteresis band', () => {
@@ -213,6 +234,19 @@ test('a house on the sightline fades and one beside the street stays solid', () 
   assert.equal(buildingBlocksView(house, 0, 18, 24, 0, 1.2, 0), true);
   assert.equal(buildingBlocksView(house, 0, 30, 24, 0, 28, 0), false);
   assert.equal(buildingBlocksView(house, 18, 10, 0, 28, 1.2, 0), false);
+});
+
+test('building fade tracks active slots without scanning the full texture', () => {
+  const fade = createFadeMap();
+  assert.equal(fade.activeSlots, 0);
+  assert.equal(paintSlot(fade, 1, true), true);
+  assert.equal(fade.activeSlots, 1);
+  assert.equal(paintSlot(fade, 2, true), true);
+  assert.equal(fade.activeSlots, 2);
+  for (let i = 0; i < 60; i++) paintSlot(fade, 1, false);
+  assert.equal(fade.activeSlots, 1);
+  resetFade(fade);
+  assert.equal(fade.activeSlots, 0);
 });
 
 test('shared-wall ownership does not depend on which cell is built first', () => {

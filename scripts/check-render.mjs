@@ -1,6 +1,9 @@
 import {spawn} from 'node:child_process';
 import {writeFile} from 'node:fs/promises';
-const browser=spawn('C:/Program Files/Google/Chrome/Application/chrome.exe',['--headless=new','--use-angle=swiftshader','--enable-unsafe-swiftshader','--remote-debugging-port=9338','--user-data-dir=C:/work/race/.browser-render-check','--no-first-run','--no-default-browser-check','--window-size=1440,1000','about:blank'],{windowsHide:true,stdio:'ignore'});
+import os from 'node:os';
+import path from 'node:path';
+const userDataDir = path.join(os.tmpdir(), 'race-browser-render-check');
+const browser=spawn('C:/Program Files/Google/Chrome/Application/chrome.exe',['--headless=new','--use-angle=swiftshader','--enable-unsafe-swiftshader','--remote-debugging-port=9338',`--user-data-dir=${userDataDir}`,'--no-first-run','--no-default-browser-check','--window-size=1440,1000','about:blank'],{windowsHide:true,stdio:'ignore'});
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 let ws;
 try {

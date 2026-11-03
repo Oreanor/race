@@ -1,3 +1,5 @@
 node_modules/
 .next/
 *.tsbuildinfo
+.browser-render-check/
+render-check*.png

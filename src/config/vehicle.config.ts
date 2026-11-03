@@ -15,8 +15,6 @@ export const cities = [
 ];
 export type City = typeof cities[number];
 export type Car = typeof cars[number];
-export const palettes = { Pastel:['#f6dfad','#efc565','#f0a18a','#91bfd4','#b3cda3','#fff0d5'], Vibrant:['#ffab98','#74f0c4','#ffe56a','#c8b6ff','#92dbff','#ffb8d8'] };
-export type Palette = keyof typeof palettes;
 export const mapConfig = {
   style: 'https://tiles.openfreemap.org/styles/liberty',
   dem: {
@@ -27,5 +25,3 @@ export const mapConfig = {
     attribution: 'Рельеф © <a href="https://github.com/tilezen/joerd/blob/master/docs/attribution.md">Mapzen</a>, AWS Open Data',
   },
 };
-
-
