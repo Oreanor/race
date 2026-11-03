@@ -1,0 +1,18 @@
+/*************************************************************************
+* ADOBE CONFIDENTIAL
+* ___________________
+*
+*  Copyright 2015 Adobe Systems Incorporated
+*  All Rights Reserved.
+*
+* NOTICE:  All information contained herein is, and remains
+* the property of Adobe Systems Incorporated and its suppliers,
+* if any.  The intellectual and technical concepts contained
+* herein are proprietary to Adobe Systems Incorporated and its
+* suppliers and are protected by all applicable intellectual property laws,
+* including trade secret and or copyright laws.
+* Dissemination of this information or reproduction of this material
+* is strictly forbidden unless prior written permission is obtained
+* from Adobe Systems Incorporated.
+**************************************************************************/
+import{floodgate as e}from"./floodgate.js";import{dcLocalStorage as t}from"../common/local-storage.js";import{setExperimentCodeForAnalytics as i,removeExperimentCodeForAnalytics as n}from"../common/experimentUtils.js";import{checkUserLocaleEnabled as r,safeParseFeatureFlag as a}from"./gsuite/util.js";import{CACHE_PURGE_SCHEME as o}from"./constant.js";import{analytics as l}from"../common/analytics.js";import{loggingApi as d}from"../common/loggingApi.js";const m="dc-cv-lightweight-embedded-viewer",s="dc-cv-lightweight-embedded-viewer-control";function c(e){l.event("DCBrowserExt:LightweightViewer:Enabled",{surface:"lightweight_viewer",workflow:e},{frequency:"monthly",uniqueIdentifier:{props:["prop6"]}})}async function g(){const[t,i]=await Promise.all([e.hasFlag(m,o.NO_CALL),e.hasFlag(s,o.NO_CALL)]);let n={};t?n=a(m):i&&(n=a(s));return{flagEnabled:t,controlFlagEnabled:i,lightweightEmbeddedViewerMeta:n,isUserLocaleEnabled:r(n.enLocaleEnabled,n.nonEnLocaleEnabled)}}async function h(e,r,a){const{flagEnabled:o,controlFlagEnabled:l,lightweightEmbeddedViewerMeta:d,isUserLocaleEnabled:m}=await g();if(!m)return;!function({flagEnabled:e,controlFlagEnabled:t,isUserLocaleEnabled:r}){e&&r?(n("LEVC"),i("LEV"),c("challenger")):t&&r?(n("LEV"),i("LEVC"),c("control")):(n("LEV"),n("LEVC"))}({flagEnabled:o,controlFlagEnabled:l,isUserLocaleEnabled:m});const s="false"!==t.getItem("lightweight-embedded-viewer"),h=!!chrome.mimeHandler?.setMimeHandlerOptions,f=Number.isFinite(d.widthThreshold)?d.widthThreshold:800,w=Number.isFinite(d.heightThreshold)?d.heightThreshold:450,b="number"!=typeof e||e>=f,E="number"!=typeof r||r>=w,p=!function(e,t){if(!e||!Array.isArray(t))return!1;const i=e.toLowerCase().trim();return t.some(e=>{const t=String(e).toLowerCase().trim();return!!t&&(i===t||i.endsWith(`.${t}`))})}(a,d.excludedDomains);return h&&o&&s&&m&&b&&E&&p}async function f(){if(!chrome.mimeHandler?.setMimeHandlerOptions)return n("LEV"),void n("LEVC");try{const e=await async function(){return"false"!==(await t.getItemAsync("lightweight-embedded-viewer"))["lightweight-embedded-viewer"]}(),i=await(chrome.mimeHandler.getMimeHandlerOptions?.("application/pdf"));e||!1===i?.canEmbed||await chrome.mimeHandler.setMimeHandlerOptions("application/pdf",{canEmbed:!1});const n=await g();if(e){const e=!(!n.flagEnabled||!n.isUserLocaleEnabled);i?.canEmbed!==e&&await chrome.mimeHandler.setMimeHandlerOptions("application/pdf",{canEmbed:e})}}catch(e){d.error({message:"Failed to update lightweight embedded viewer canEmbed",error:e?.message})}}export{h as lightweightPDFViewerConfig,f as updateLightweightEmbeddedViewerCanEmbed};

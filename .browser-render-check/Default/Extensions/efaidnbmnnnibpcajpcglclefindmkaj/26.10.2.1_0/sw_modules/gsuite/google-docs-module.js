@@ -1,0 +1,18 @@
+/*************************************************************************
+* ADOBE CONFIDENTIAL
+* ___________________
+*
+*  Copyright 2015 Adobe Systems Incorporated
+*  All Rights Reserved.
+*
+* NOTICE:  All information contained herein is, and remains
+* the property of Adobe Systems Incorporated and its suppliers,
+* if any.  The intellectual and technical concepts contained
+* herein are proprietary to Adobe Systems Incorporated and its
+* suppliers and are protected by all applicable intellectual property laws,
+* including trade secret and or copyright laws.
+* Dissemination of this information or reproduction of this material
+* is strictly forbidden unless prior written permission is obtained
+* from Adobe Systems Incorporated.
+**************************************************************************/
+import{viewerModuleUtils as e}from"../viewer-module-utils.js";import{util as o}from"../util.js";import{floodgate as t}from"../floodgate.js";import{loggingApi as a}from"../../common/loggingApi.js";import{checkUserLocaleEnabled as n}from"./util.js";import{resolveInactiveTabChallenger as r}from"../direct-verb-inactive-tab-utils.js";import{SECURE_IPC_FLAG as s,isSecureIpcSurfaceEnabled as i}from"../main-world-ipc/module.js";const c=e=>{try{return JSON.parse(t.getFeatureMeta(e))}catch(o){return a.error({context:"Google Docs",message:`Failure in parsing FeatureFlag ${e}`,error:o.message||o.toString()}),{validPaths:["document","spreadsheets","presentation"],selectors:{touchPointContainer:["docs-titlebar-buttons"],docTitle:["docs-title-input"]}}}},l={document:{treatmentFlag:"dc-cv-google-docs-convert-to-pdf-touch-point",preferenceKey:"acrobat-touch-point-in-google-docs",surfaceNameTranslationKey:"surfaceNameGoogleDocs"},spreadsheets:{treatmentFlag:"dc-cv-google-sheets-convert-to-pdf-touch-point",preferenceKey:"acrobat-touch-point-in-google-sheets",surfaceNameTranslationKey:"surfaceNameGoogleSheets"},presentation:{treatmentFlag:"dc-cv-google-slides-convert-to-pdf-touch-point",preferenceKey:"acrobat-touch-point-in-google-slides",surfaceNameTranslationKey:"surfaceNameGoogleSlides"}};async function g(a,g,T){await e.initializeViewerVariables(T);const{docType:d}=a,u=l[d];let m=!1,p=!1,f={},v=!1;const h=await t.hasFlag(s);if(u){const e=!o.isAcrobatTouchPointEnabled(u.preferenceKey),a=await t.hasFlag(u.treatmentFlag);a&&(f=c("dc-cv-google-docs-convert-to-pdf-selectors"));const s=a&&c(u.treatmentFlag),i=a&&n(s?.isEnLocaleEnabled,s?.isNonEnLocaleEnabled)&&!e;m=i,p=!!s?.tooltipEnabled,i&&(v=await r(d))}const b=o.getTranslation("gmailConvertToPdf"),P=o.getTranslation("convertToPDFTouchPointTooltip"),y=o.getTranslation("convertToPdfToastMessage"),F=o.getTranslation("convertingTooltip"),N=o.getTranslation("convertingTouchPointText"),E=o.getTranslation("convertToPdfErrorToastMessage"),K=o.getTranslation("convertToPdfTabCloseErrorToastMessage"),j=o.getTranslation("tryAgain"),D=u?.surfaceNameTranslationKey?o.getTranslation(u.surfaceNameTranslationKey):"",w={enableConvertToPDFTouchPoint:m,enableTooltip:p,...f,text:{acrobatTouchPointTooltip:P,acrobatTouchPointText:b,convertToPdfToastMessage:y,convertingTooltip:F,convertingTouchPointText:N,convertToPdfErrorToastMessage:E,convertToPdfTabCloseErrorToastMessage:K,tryAgain:j,surfaceName:D},inactiveTabDirectVerbProcessingEnabled:v,secureIpcForGdocsInject:h&&i("gdocs_inject")};if(a?.surfaceNameTranslationKey){const e=o.getTranslation(a?.fteDocTypeNameKey||"fteDocTypeNameFile");w.text.touchPointFTE={title:o.getTranslation("convertToPDFFTEHeading",e),description:o.getTranslation("convertToPDFFTEBody",o.getTranslation(a?.surfaceNameTranslationKey)),button:o.getTranslation("closeButton")}}g(w)}export{g as googleDocsInit};

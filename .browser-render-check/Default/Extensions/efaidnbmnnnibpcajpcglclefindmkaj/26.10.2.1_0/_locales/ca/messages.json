@@ -1,0 +1,1825 @@
+{
+   "ConvertVerbDescription": {
+      "message": "Utilitzar el format PDF com a origen o destí de conversió."
+   },
+   "Disable": {
+      "message": "Inhabilita"
+   },
+   "EditVerbDescription": {
+      "message": "Reordenar, girar o suprimir pàgines del fitxer PDF."
+   },
+   "Enable": {
+      "message": "Habilita"
+   },
+   "LearnMoreURL": {
+      "message": "https://helpx.adobe.com/acrobat/kb/acrobat-pro-aip-for-chrome.html"
+   },
+   "LearnMoreURLEdge": {
+      "message": "https://helpx.adobe.com/acrobat/kb/acrobat-pro-aip-for-edge.html"
+   },
+   "LocalFileAccessAndSummaryCoachmarkButton": {
+      "message": "Activa els resums"
+   },
+   "LocalFileAccessAndSummaryCoachmarkSubtext": {
+      "message": "Subjecte als crèdits disponibles"
+   },
+   "acrobatEmbeddedTouchPointPreferenceDescription": {
+      "message": "Es pot utilitzar la drecera per obrir PDF a l'extensió, i així editar-los, resumir-los, desar-los i molt més amb facilitat."
+   },
+   "acrobatEmbeddedTouchPointPreferenceTitle": {
+      "message": "Mostra la drecera d'Acrobat als PDF web incrustats"
+   },
+   "acrobatGdriveTripleDotMenuTouchPointText": {
+      "message": "Open with Acrobat"
+   },
+   "acrobatGmailFteToolTipButton": {
+      "message": "D'acord"
+   },
+   "acrobatGmailFteToolTipDescription": {
+      "message": "Edit, convert, comment & sign - right in Chrome with Acrobat"
+   },
+   "acrobatGmailFteToolTipTitle": {
+      "message": "Open this PDF in Acrobat"
+   },
+   "acrobatGsuiteFteToolTipButton": {
+      "message": "Entesos"
+   },
+   "acrobatGsuiteFteToolTipButtonDV": {
+      "message": "OK"
+   },
+   "acrobatGsuiteFteToolTipButtonNonDV": {
+      "message": "OK"
+   },
+   "acrobatGsuiteFteToolTipDescription": {
+      "message": "Edit, convert, comment & sign - right in Chrome with Acrobat"
+   },
+   "acrobatGsuiteFteToolTipDescriptionDV": {
+      "message": "Try PDF tools like edit, comment, convert, and e-sign from $surfaceName$ by making Acrobat your default PDF viewer.",
+      "placeholders": {
+         "surfaceName": {
+            "content": "$1"
+         }
+      }
+   },
+   "acrobatGsuiteFteToolTipDescriptionNonDV": {
+      "message": "Try Acrobat PDF tools like edit, comment, convert, and e-sign — right from $surfaceName$.",
+      "placeholders": {
+         "surfaceName": {
+            "content": "$1"
+         }
+      }
+   },
+   "acrobatGsuiteFteToolTipTitle": {
+      "message": "Open this PDF in Acrobat"
+   },
+   "acrobatGsuiteFteToolTipTitleDV": {
+      "message": "Open all PDFs in Adobe Acrobat"
+   },
+   "acrobatGsuiteFteToolTipTitleNonDV": {
+      "message": "Open this PDF in Adobe Acrobat"
+   },
+   "acrobatGsuiteTouchPointPreferenceDescription": {
+      "message": "Add Acrobat icons to Gmail and Google Drive to quickly open PDFs in Acrobat and access PDF tools."
+   },
+   "acrobatGsuiteTouchPointPreferenceTitle": {
+      "message": "Integrate Acrobat into Gmail and Google Drive"
+   },
+   "acrobatLinkedInPDFTouchPointPreferenceDescription": {
+      "message": "Integreu Acrobat amb llocs web, com ara Gmail, Google Drive, Outlook i LinkedIn, per accedir fàcilment a les eines de PDF."
+   },
+   "acrobatTouchPointInOtherSitesPrefDescription": {
+      "message": "Integreu Acrobat amb llocs web, com ara Gmail, Google Drive, Outlook, LinkedIn i més, per accedir fàcilment a les eines de PDF."
+   },
+   "acrobatTouchPointInOtherSitesPreferenceDescription": {
+      "message": "Integrate Acrobat with websites, including Gmail and Google Drive, for easy access to PDF tools."
+   },
+   "acrobatTouchPointInOtherSitesPreferenceTitle": {
+      "message": "Mostra les opcions d'Acrobat en altres llocs web"
+   },
+   "acrobatTouchPointInOtherSurfacesPreferenceDescription": {
+      "message": "Integrate Acrobat with websites, including Gmail, Google Drive, and Outlook for easy access to PDF tools."
+   },
+   "addEffectsImageContextMenuV2ChatGPT": {
+      "message": "Afegeix efectes"
+   },
+   "addWebpageToExistingPdfSpaceContextMenu": {
+      "message": "Afegeix una pàgina web a un espai PDF existent..."
+   },
+   "addWebpageToExistingStudySpaceContextMenu": {
+      "message": "Afegeix una pàgina web a un espai d’estudiant existent..."
+   },
+   "addWebpageToNewPdfSpaceContextMenu": {
+      "message": "Afegeix la pàgina web a un espai de PDF nou..."
+   },
+   "addWebpageToNewStudySpaceContextMenu": {
+      "message": "Afegeix una pàgina web a un espai d'estudiants nou..."
+   },
+   "addWebpageToProjectContextMenuTitle": {
+      "message": "Afegeix a un espai PDF..."
+   },
+   "addWebpageToProjectFailed": {
+      "message": "No s'ha pogut afegir la pàgina web a l'espai PDF"
+   },
+   "addWebpageToProjectFailedStudy": {
+      "message": "No s'ha pogut afegir la pàgina web a Student Space"
+   },
+   "addWebpageToProjectIngestionStarted": {
+      "message": "Afegim aquesta pàgina web a PDF Space. Rebreu una notificació quan estigui a punt."
+   },
+   "addWebpageToProjectIngestionStartedStudy": {
+      "message": "Afegim aquesta pàgina web a Student Space. Rebreu una notificació quan estigui a punt."
+   },
+   "addWebpageToProjectSuccess": {
+      "message": "S'ha afegit la pàgina web a $collectionName$",
+      "placeholders": {
+         "collectionName": {
+            "content": "$1"
+         }
+      }
+   },
+   "addWebpageToProjectViewAction": {
+      "message": "Mostra el PDF Space"
+   },
+   "addWebpageToProjectViewActionStudy": {
+      "message": "Visualitza l'espai de l'alumnat"
+   },
+   "addWebpageUpsellContactAdminMessage": {
+      "message": "Poseu-vos en contacte amb l'administrador perquè habiliti aquesta funció."
+   },
+   "adobeAcrobatParentMenuTitle": {
+      "message": "Adobe Acrobat: creeu i editeu PDF i PDF Spaces"
+   },
+   "adobeAcrobatParentMenuTitleStudySpace": {
+      "message": "Adobe Acrobat: creació i edició de PDF i Student Spaces"
+   },
+   "adobeYoloErrorMessage": {
+      "message": "L'enllaç no és vàlid"
+   },
+   "adobeYoloMessage": {
+      "message": "S'està iniciant la sessió a Acrobat..."
+   },
+   "aiAcBody": {
+      "message": "Quickly summarize webpages and get key insights using Acrobat AI Assistant."
+   },
+   "aiAcHeader": {
+      "message": "Do more with your Acrobat extension"
+   },
+   "analyticsOptinTitle": {
+      "message": "Envieu dades d'ús"
+   },
+   "appearancePrefDesc": {
+      "message": "Canvieu entre el tema fosc i clar"
+   },
+   "appearancePrefOp1": {
+      "message": "Utilitza la configuració del sistema"
+   },
+   "appearancePrefOp2": {
+      "message": "Dark mode"
+   },
+   "appearancePrefOp3": {
+      "message": "Light mode"
+   },
+   "appearancePrefTitle": {
+      "message": "Configuració del mode fosc"
+   },
+   "askAIAssistant": {
+      "message": "Demaneu-ho a l’assistent d’IA"
+   },
+   "askAIAssistantContextMenu": {
+      "message": "Pregunteu a l'Assistent d'IA sobre la pàgina web"
+   },
+   "askAIAssistantSelectedContent": {
+      "message": "Demaneu-ho a l’assistent d’IA"
+   },
+   "askAssistantBannerContentText": {
+      "message": "Get fast summaries and key insights with AI Assistant on webpages."
+   },
+   "askAssistantBannerTitle": {
+      "message": "AI Assistant for webpages"
+   },
+   "attachmentCardConvertingTooltip": {
+      "message": "S’està convertint el fitxer i s’obre en una pestanya nova quan finalitza"
+   },
+   "autoEnhanceImageContextMenuV2ChatGPT": {
+      "message": "Millora automàtica"
+   },
+   "bypassGenAIWebpageEligibilityDescription": {
+      "message": "Quan s'activa, les funcions de GenAI estan disponibles a totes les pàgines web, independentment de les comprovacions d'elegibilitat. Aquesta configuració només està disponible per a usuaris interns d'Adobe."
+   },
+   "bypassGenAIWebpageEligibilityTitle": {
+      "message": "Activa AI Assistant per a pàgines web a totes les pàgines"
+   },
+   "canQuesBriefOverview": {
+      "message": "Provide a brief overview of this article"
+   },
+   "canQuesCreateFAQ": {
+      "message": "Create an FAQ list based on this info"
+   },
+   "canQuesDraftEmail": {
+      "message": "Draft an email summarizing the key points"
+   },
+   "canQuesImpTopics": {
+      "message": "List all important topics and keywords"
+   },
+   "canQuesSummarise": {
+      "message": "Summarize this article"
+   },
+   "cancel": {
+      "message": "Cancel·la"
+   },
+   "chatgptCanvasConvertToPDF": {
+      "message": "Converteix a PDF"
+   },
+   "chatgptCanvasConvertToPDFTooltip": {
+      "message": "Converteix i obre a Acrobat"
+   },
+   "chatgptCanvasFteDescription": {
+      "message": "Convertiu els xats a PDF amb Acrobat i editeu-los al navegador."
+   },
+   "chatgptCanvasFteTitle": {
+      "message": "Convertiu a PDF amb Adobe Acrobat"
+   },
+   "chatgptConvertToPDF": {
+      "message": "Convertiu el xat a PDF"
+   },
+   "chatgptConvertToPDFFteDescription": {
+      "message": "Convertiu els xats a PDF amb Acrobat i editeu-los al navegador."
+   },
+   "chatgptConvertToPDFFteTitle": {
+      "message": "Convertiu a PDF amb Adobe Acrobat"
+   },
+   "chatgptConvertToPDFTooltip": {
+      "message": "Converteix i obre a Acrobat"
+   },
+   "chatgptDeepResearchDefaultTitle": {
+      "message": "ChatGPT Deep Research"
+   },
+   "chatgptDefaultTitleText": {
+      "message": "ChatGPT"
+   },
+   "chatgptLongChatInterrupt": {
+      "message": "S'ha interromput el desplaçament. Torneu-ho a provar sense fer clic, desplaçar-vos ni canviar de pestanya."
+   },
+   "chatgptLongChatPhase1Desc": {
+      "message": "Aquesta pàgina es desplaça automàticament per carregar el xat complet abans de convertir-lo a PDF."
+   },
+   "chatgptLongChatPhase1Title": {
+      "message": "S'ha detectat una conversa llarga..."
+   },
+   "chatgptLongChatPhase2Desc": {
+      "message": "No feu clic, no us desplaceu ni canvieu de pestanya. Això cancel·la el procés."
+   },
+   "chatgptLongChatPhase2Title": {
+      "message": "S’està carregant la conversa..."
+   },
+   "chatgptLongChatPhase3Desc": {
+      "message": "La conversió comença en una pestanya nova."
+   },
+   "chatgptLongChatPhase3Title": {
+      "message": "Ja gairebé està..."
+   },
+   "chatgptResponseExportToPDF": {
+      "message": "Converteix a PDF"
+   },
+   "chatgptResponseExportToPDFTooltip": {
+      "message": "Convertiu aquesta resposta a PDF per editar-la o compartir-la."
+   },
+   "chatgptResponseFteDescription": {
+      "message": "Converteix les respostes de ChatGPT en PDF directament amb l’extensió d’Adobe Acrobat."
+   },
+   "chatgptResponseFteTitle": {
+      "message": "Converteix qualsevol resposta en un PDF"
+   },
+   "closeButton": {
+      "message": "Tanca"
+   },
+   "clusterBeta": {
+      "message": "Beta"
+   },
+   "clusterDevelop": {
+      "message": "Desenvolupa"
+   },
+   "clusterRelease": {
+      "message": "Publica"
+   },
+   "conversionErrorDescription": {
+      "message": "Informeu-ne i revisem què ha anat malament."
+   },
+   "conversionErrorDocumentTitle": {
+      "message": "Error"
+   },
+   "conversionErrorGoToAcrobat": {
+      "message": "Ves a Acrobat"
+   },
+   "conversionErrorReportError": {
+      "message": "Informa d'un error"
+   },
+   "conversionErrorTitle": {
+      "message": "No s'ha pogut convertir el fitxer"
+   },
+   "convertToPDFFTEBody": {
+      "message": "Convertiu $surfaceName$ a PDF directament amb l'extensió Adobe Acrobat i accediu a eines per editar, signar i molt més.",
+      "placeholders": {
+         "surfaceName": {
+            "content": "$1"
+         }
+      }
+   },
+   "convertToPDFFTEHeading": {
+      "message": "Converteix aquest $docTypeName$ en un PDF",
+      "placeholders": {
+         "docTypeName": {
+            "content": "$1"
+         }
+      }
+   },
+   "convertToPDFTouchPointTooltip": {
+      "message": "Converteix i obre a Acrobat"
+   },
+   "convertToPdf": {
+      "message": "Converteix a PDF"
+   },
+   "convertToPdfErrorToastMessage": {
+      "message": "No es pot convertir el fitxer a PDF."
+   },
+   "convertToPdfPasswordProtectedError": {
+      "message": "Els fitxers protegits amb contrasenya no es poden convertir a PDF"
+   },
+   "convertToPdfTabCloseErrorToastMessage": {
+      "message": "No s'ha pogut convertir el fitxer. Mantingueu oberta la pestanya d'Acrobat durant la conversió i torneu-ho a provar."
+   },
+   "convertToPdfToastMessage": {
+      "message": "Ara s'està convertint el fitxer. Mantingueu oberta la pestanya d'Acrobat i rebreu una notificació quan estigui llest."
+   },
+   "convertToPdfUsingAcrobatTooltip": {
+      "message": "Convertiu el document a PDF amb Acrobat"
+   },
+   "convertWebpageToPDFContextMenu": {
+      "message": "Convertiu una pàgina web a PDF"
+   },
+   "convertedTabTitle": {
+      "message": "Fitxer convertit"
+   },
+   "convertingInNewTabKeepOpenTooltip": {
+      "message": "S'està convertint en una pestanya nova. Manteniu oberta la pestanya d'Acrobat."
+   },
+   "convertingTabTitle": {
+      "message": "S’està convertint el fitxer"
+   },
+   "convertingTooltip": {
+      "message": "El fitxer s'està convertint en una pestanya nova. Us avisarem quan estigui llest."
+   },
+   "convertingTouchPointText": {
+      "message": "En conversió..."
+   },
+   "cropAndResizeImageContextMenuV2ChatGPT": {
+      "message": "Retalla i canvia la mida"
+   },
+   "cropImageContextMenu": {
+      "message": "Crop Image"
+   },
+   "dcWebBookmarkTitle": {
+      "message": "Inici d’Adobe Acrobat"
+   },
+   "directFlowErrorTabTitle": {
+      "message": "Error"
+   },
+   "directFlowNotificationButtonText": {
+      "message": "Ves al fitxer"
+   },
+   "directFlowNotificationTitle": {
+      "message": "El fitxer està llest"
+   },
+   "directFlowNotificationTitlePlural": {
+      "message": "Els fitxers ja estan a punt"
+   },
+   "doNotShowButton": {
+      "message": "No ho tornis a mostrar"
+   },
+   "domainPreferenceTitle": {
+      "message": "Websites where AI Assistant FAB is hidden"
+   },
+   "downloadBannerContinue": {
+      "message": "Turn on"
+   },
+   "downloadBannerText": {
+      "message": "Open all downloaded PDFs in Acrobat by setting the app as default PDF viewer in Chrome"
+   },
+   "editImageContextMenu": {
+      "message": "Edit Image"
+   },
+   "editImageMoreOptionsFteDescription": {
+      "message": "Convertiu imatges en PDF o editeu-les directament al navegador amb Acrobat i Adobe Express."
+   },
+   "editImageMoreOptionsFteTitle": {
+      "message": "Converteix i edita imatges"
+   },
+   "editMegaVerbText": {
+      "message": "Editar"
+   },
+   "effectsImageContextMenu": {
+      "message": "Apply Effects"
+   },
+   "embeddedPDFHideIconForNow": {
+      "message": "Hide icon for now"
+   },
+   "embeddedPDFManagePreferences": {
+      "message": "Gestiona les preferències"
+   },
+   "embeddedPDFOpenInAcrobatTooltip": {
+      "message": "Open in Acrobat"
+   },
+   "embeddedPDFOpenPDFInAcrobat": {
+      "message": "Open PDF in Acrobat"
+   },
+   "embeddedPDFTouchPointFTEBody": {
+      "message": "Editeu, resumiu i molt més des de l'extensió d'Acrobat. Podeu amagar aquesta drecera en qualsevol moment a Preferències."
+   },
+   "embeddedPDFTouchPointFTEHeader": {
+      "message": "Obre aquest PDF a Adobe Acrobat"
+   },
+   "enableGenAIFeaturesDescription": {
+      "message": "Your file will be processed in the cloud to deliver a generative AI capability when you use a generative AI feature. Turning off this feature prevents your file from being processed and disables generative AI. You can reactivate it anytime."
+   },
+   "enableGenAIFeaturesTitle": {
+      "message": "Enable Generative AI features in Acrobat"
+   },
+   "envDev": {
+      "message": "Des."
+   },
+   "envLocalDev": {
+      "message": "Desenvolupament local"
+   },
+   "envProd": {
+      "message": "Producció"
+   },
+   "envStage": {
+      "message": "Etapa"
+   },
+   "envTest": {
+      "message": "Prova"
+   },
+   "errorBoundaryDescription": {
+      "message": "S'ha produït un error inesperat. Torneu-ho a provar."
+   },
+   "errorBoundaryRetryButton": {
+      "message": "Torna-ho a provar"
+   },
+   "errorBoundaryTitle": {
+      "message": "S’ha produït un error"
+   },
+   "explainSelectedContent": {
+      "message": "Explica amb IA"
+   },
+   "expressContextualFteCtaLabel": {
+      "message": "Close"
+   },
+   "expressContextualFteDescription": {
+      "message": "Retalleu, suprimiu el fons, ajusteu els colors i molt més a Adobe Acrobat, amb tecnologia d’Adobe Express."
+   },
+   "expressContextualFteTitle": {
+      "message": "Editeu imatges de manera ràpida i senzilla"
+   },
+   "expressDropdownMenuTitle": {
+      "message": "Adobe Acrobat"
+   },
+   "expressDropdownMenuTooltip": {
+      "message": "Easily crop, remove background and more. Powered by Adobe Express."
+   },
+   "expressEditImageParentContextMenu": {
+      "message": "Edit Image"
+   },
+   "expressEditImagePoweredByExpressContextMenu": {
+      "message": "Amb la tecnologia d'Adobe Express"
+   },
+   "expressExportOptionsDownloadLabel": {
+      "message": "Download"
+   },
+   "expressExportOptionsSaveLabel": {
+      "message": "Desa"
+   },
+   "expressFTEDescription": {
+      "message": "Right click to crop, remove background, or reimagine an image using AI."
+   },
+   "expressFTEFooter": {
+      "message": "Via \u003Cb>Adobe Acrobat\u003C/b>"
+   },
+   "expressFTETitle": {
+      "message": "Edit image with Adobe Express"
+   },
+   "expressHideforSession": {
+      "message": "Amaga-ho ara"
+   },
+   "expressManageinSettings": {
+      "message": "Preferències"
+   },
+   "expressPopoverFTEDescription": {
+      "message": "Right-click on any online image to quickly remove the background, crop, or reimagine it using AI with Adobe Express"
+   },
+   "expressPopoverFTETitle": {
+      "message": "Edit images right in your browser"
+   },
+   "expressPublishModalTitle": {
+      "message": "Downloading image..."
+   },
+   "expressTouchpointPreferenceDescription": {
+      "message": "Adobe Acrobat extension lets you edit images with Adobe Express. Turning off this feature will remove this capability. You can reactivate it any time."
+   },
+   "expressTouchpointPreferenceTitle": {
+      "message": "Enable Adobe Express actions in Acrobat"
+   },
+   "extensionMenuTitle": {
+      "message": "Extensió d'Acrobat - Drecera a totes les eines PDF"
+   },
+   "fabHomeTooltipFteText": {
+      "message": "Descobriu el nou espai d'Acrobat al navegador"
+   },
+   "fabNudgeLabelArticleAbout": {
+      "message": "De què tracta aquest article?"
+   },
+   "fabNudgeLabelKeyFigures": {
+      "message": "Quines són les xifres clau?"
+   },
+   "fabNudgeLabelKeyTakeaways": {
+      "message": "Quines són les conclusions clau?"
+   },
+   "fabNudgeLabelKeyTerms": {
+      "message": "Què signifiquen els termes clau?"
+   },
+   "fabNudgeLabelMainThemes": {
+      "message": "Quins són els temes principals?"
+   },
+   "fabNudgeLabelPageAbout": {
+      "message": "De què tracta aquesta pàgina?"
+   },
+   "fabNudgeLabelSimplify": {
+      "message": "Ho podeu simplificar?"
+   },
+   "fabNudgePromptArticleKeyTakeaways": {
+      "message": "Quines són les idees clau d'aquest article?"
+   },
+   "fabNudgePromptArticleMainThemes": {
+      "message": "Quins són els temes o arguments principals d'aquest article?"
+   },
+   "fabNudgePromptArticleSimplify": {
+      "message": "Expliqueu aquest article amb un llenguatge planer i senzill."
+   },
+   "fabNudgePromptArticleSummary": {
+      "message": "Resumiu de què tracta aquest article."
+   },
+   "fabNudgePromptKeyFigures": {
+      "message": "Extraieu els fets, les xifres i les dates clau d'aquesta pàgina."
+   },
+   "fabNudgePromptKeyTerms": {
+      "message": "Identifiqueu i definiu els termes clau o la terminologia especialitzada d’aquesta pàgina."
+   },
+   "fabNudgePromptPageKeyTakeaways": {
+      "message": "Quines són les idees clau d'aquesta pàgina?"
+   },
+   "fabNudgePromptPageMainThemes": {
+      "message": "Quins són els temes o arguments principals d’aquesta pàgina?"
+   },
+   "fabNudgePromptPageSimplify": {
+      "message": "Expliqueu aquesta pàgina amb un llenguatge planer i senzill."
+   },
+   "fabNudgePromptPageSummary": {
+      "message": "Resumiu de què tracta aquesta pàgina."
+   },
+   "fabPillAskAI": {
+      "message": "Pregunteu a la IA sobre la pàgina"
+   },
+   "fabPillConvertToPDF": {
+      "message": "Converteix a PDF"
+   },
+   "fabPillSummarize": {
+      "message": "Resumeix amb IA"
+   },
+   "fabPillsFteHeaderText": {
+      "message": "Aprofiteu més l'extensió Acrobat"
+   },
+   "fabPillsHeaderText": {
+      "message": "Adobe Acrobat"
+   },
+   "failToastText": {
+      "message": "An unexpected error has occurred, please try again later."
+   },
+   "fileReadyTabTitle": {
+      "message": "El fitxer està llest"
+   },
+   "frictionlesOfflineMessage": {
+      "message": "Poseu-vos en contacte amb l'administrador de xarxa per reprendre la connexió"
+   },
+   "frictionlessWidgetErrorGeneric": {
+      "message": "S'ha produït un error durant la càrrega. Torneu-ho a provar."
+   },
+   "frictionlessWidgetErrorInitFailed": {
+      "message": "No s'ha pogut inicialitzar el giny. Torneu-ho a provar."
+   },
+   "frictionlessWidgetErrorLoadFailed": {
+      "message": "El giny no s'ha pogut carregar. Comprova la connexió i torna-ho a provar."
+   },
+   "frictionlessWidgetErrorLoading": {
+      "message": "Error en carregar el giny"
+   },
+   "frictionlessWidgetErrorTimeout": {
+      "message": "No es pot carregar aquesta secció"
+   },
+   "frictionlessWidgetErrorTimeoutMessage": {
+      "message": "La sol·licitud triga més del que s'esperava."
+   },
+   "frictionlessWidgetErrorUnableToLoad": {
+      "message": "No s'ha pogut carregar"
+   },
+   "frictionlessWidgetErrorUnsupportedFormat": {
+      "message": "no és en un format admès"
+   },
+   "frictionlessWidgetErrorUploadFailed": {
+      "message": "S'ha produït un error en pujar el fitxer"
+   },
+   "frictionlessWidgetNoConnectionTitle": {
+      "message": "Sense connexió"
+   },
+   "frictionlessWidgetOfflineMessage": {
+      "message": "Comproveu la connexió a Internet i torneu-ho a provar."
+   },
+   "frictionlessWidgetOfflineRetryInfo": {
+      "message": "Ho tornem a intentar automàticament quan torneu a estar en línia."
+   },
+   "frictionlessWidgetOfflineTitle": {
+      "message": "Esteu fora de línia"
+   },
+   "frictionlessWidgetRetryButton": {
+      "message": "Reintenta-ho"
+   },
+   "fteDocTypeNameFile": {
+      "message": "al fitxer"
+   },
+   "fteDocTypeNamePresentation": {
+      "message": "presentació"
+   },
+   "fteDocTypeNameSheet": {
+      "message": "full"
+   },
+   "fteOwnershipSideRedCardContent": {
+      "message": "Configureu Acrobat com a lector de PDF predeterminat i comenteu, empleneu formularis, signeu i molt més directament a Chrome."
+   },
+   "fteSideCardPrimaryHeader": {
+      "message": "Utilitzeu Acrobat"
+   },
+   "fteSideCardSecondaryHeader": {
+      "message": "directament a Chrome"
+   },
+   "gDriveDVPAppListCoachMarkContent": {
+      "message": "Enable the checkbox 'Use by default' to directly open Google Drive PDFs in Acrobat from next time"
+   },
+   "gDriveDVPCoachMarkTitle": {
+      "message": "Set Acrobat as default viewer"
+   },
+   "gDriveDVPManageAppCoachMarkContent": {
+      "message": "Feu clic a 'Gestiona les aplicacions' per veure, comentar i editar PDF obrint tots els PDF de Google Drive a Acrobat directament"
+   },
+   "gSuiteDVPAddOnDefaultDesc": {
+      "message": "Acrobat Add On is now set as default"
+   },
+   "gdriveConvertToPdfFteToolTipDescription": {
+      "message": "Convertiu fitxers de Google Drive a PDF i editeu-los directament al navegador. No cal baixar res."
+   },
+   "gdriveConvertToPdfFteToolTipTitle": {
+      "message": "Convertiu fitxers a PDF amb Acrobat"
+   },
+   "gdriveEditPdf": {
+      "message": "Edició de PDF"
+   },
+   "gdriveEditPdfFteToolTipDescription": {
+      "message": "Proveu eines de PDF com ara editar, comentar, convertir i signar electrònicament, directament des del navegador."
+   },
+   "gdriveEditPdfFteToolTipTitle": {
+      "message": "Edició de PDF a Acrobat"
+   },
+   "gdriveImplicitDVFTEBody": {
+      "message": "Obriu PDF a l’extensió d’Acrobat des de la icona de Google Drive. Al menú Més (...), a Acrobat, definiu-ho com a opció per defecte."
+   },
+   "gdriveImplicitDVFTEHeader": {
+      "message": "Consulteu PDF a Acrobat en qualsevol moment"
+   },
+   "gdriveImplicitDVNotification": {
+      "message": "Els PDF s’obren a Google Drive."
+   },
+   "geminiChatFteDescription": {
+      "message": "Convertiu els xats en PDF amb Adobe Acrobat i editeu-los al navegador."
+   },
+   "geminiChatFteTitle": {
+      "message": "Converteix a PDF amb Adobe Acrobat"
+   },
+   "geminiChatNotLoadedToastButtonText": {
+      "message": "Continua igualment"
+   },
+   "geminiChatNotLoadedToastMessage": {
+      "message": "Alguns missatges no s’hi inclouen. Desplaceu-vos fins a la part superior per convertir el xat complet."
+   },
+   "geminiConvertToPDFChatTouchpointHoverTooltip": {
+      "message": "Obriu aquest xat a Acrobat"
+   },
+   "geminiConvertToPDFChatTouchpointText": {
+      "message": "Convertiu el xat a PDF"
+   },
+   "geminiConvertToPDFResponseTouchpointText": {
+      "message": "Converteix a PDF"
+   },
+   "geminiDefaultTitleText": {
+      "message": "Gemini"
+   },
+   "geminiResponseFteDescription": {
+      "message": "Convertiu les respostes de Gemini a PDF directament amb l'extensió d'Adobe Acrobat."
+   },
+   "geminiResponseFteTitle": {
+      "message": "Converteix aquesta resposta en un PDF"
+   },
+   "genAIFabPreferenceDescription": {
+      "message": "Always display Al Assistant button at the edge of your browser window."
+   },
+   "genAIFabPreferenceTitle": {
+      "message": "Al Assistant button"
+   },
+   "generativeFillImageContextMenu": {
+      "message": "Generative Fill"
+   },
+   "genericDVPCoachMarkContent": {
+      "message": "Click on 'Manage Apps', then scroll down to Acrobat Add On and click on 'Use by default' checkbox"
+   },
+   "getInsight": {
+      "message": "Get insights with Acrobat AI Assistant"
+   },
+   "gmailAcrobatToolsFteDescription": {
+      "message": "Edit, compress, and convert your files — right from your browser."
+   },
+   "gmailAcrobatToolsTouchPoint": {
+      "message": "Open PDF tools"
+   },
+   "gmailAcrobatToolsTouchPointFTEHeader": {
+      "message": "PDF tools for your attachments"
+   },
+   "gmailConvertEmailToPDF": {
+      "message": "Converteix a PDF"
+   },
+   "gmailConvertEmailToPDFFteDescription": {
+      "message": "Convertiu el cos del correu electrònic a PDF sense adjunts i baixeu el fitxer."
+   },
+   "gmailConvertEmailToPDFFteTitle": {
+      "message": "Convertiu aquest correu electrònic en un PDF"
+   },
+   "gmailConvertEmailToPDFTooltip": {
+      "message": "Convertiu el correu electrònic a PDF"
+   },
+   "gmailConvertToPdf": {
+      "message": "Converteix a PDF"
+   },
+   "gmailConvertToPdfFteToolTipDescription": {
+      "message": "Convertiu fitxers de Gmail en PDF i editeu-los directament al navegador. No cal cap descàrrega."
+   },
+   "gmailConvertToPdfFteToolTipTitle": {
+      "message": "Convertiu fitxers a PDF amb Acrobat"
+   },
+   "gmailEditPdf": {
+      "message": "Edició de PDF"
+   },
+   "gmailEditPdfFteToolTipDescription": {
+      "message": "Proveu eines de PDF com ara editar, comentar, convertir i signar electrònicament, directament des del navegador."
+   },
+   "gmailEditPdfFteToolTipTitle": {
+      "message": "Editeu PDF a Acrobat"
+   },
+   "gmailImplicitDVFTEBody": {
+      "message": "Obriu els PDF a l'extensió d'Acrobat des de la icona de Gmail. Configureu-ho com a opció per defecte al menú Més (...) d'Acrobat."
+   },
+   "gmailImplicitDVFTEHeader": {
+      "message": "Visualitzeu els PDF a Acrobat sempre que vulgueu"
+   },
+   "gmailImplicitDVNotification": {
+      "message": "Els fitxers adjunts PDF s'obren a Gmail."
+   },
+   "gmailPdfToolsCtaLabel": {
+      "message": "Open PDF tools"
+   },
+   "gmailPromptFTETooltip": {
+      "message": "Open PDFs in Acrobat to use tools like Edit, Sign and more"
+   },
+   "gmailToolsOfflineMessage": {
+      "message": "Check your internet connection and try again."
+   },
+   "gmailToolsOfflineTitle": {
+      "message": "You're offline"
+   },
+   "goToPreferences": {
+      "message": "Ves a les preferències"
+   },
+   "googleSheetsOrientationHeading": {
+      "message": "Orientació"
+   },
+   "googleSheetsOrientationLandscape": {
+      "message": "Horitzontal"
+   },
+   "googleSheetsOrientationPortrait": {
+      "message": "Vertical"
+   },
+   "googleSheetsScaleFitColumns": {
+      "message": "Ajusta totes les columnes en una pàgina"
+   },
+   "googleSheetsScaleFitRows": {
+      "message": "Ajusta totes les files en una pàgina"
+   },
+   "googleSheetsScaleFitSheet": {
+      "message": "Ajusteu-ho tot a una pàgina"
+   },
+   "googleSheetsScaleHeading": {
+      "message": "Escala"
+   },
+   "googleSheetsSettingsDialogTitle": {
+      "message": "Converteix a PDF"
+   },
+   "gsuiteEditWithAcrobat": {
+      "message": "Edit with Acrobat"
+   },
+   "gsuiteOpenWithAcrobat": {
+      "message": "Open in Acrobat"
+   },
+   "hideFabForDomain": {
+      "message": "Disable for this site"
+   },
+   "hideForNow": {
+      "message": "Hide for now"
+   },
+   "imageToolsContextMenuTooltip": {
+      "message": "Opcions d'edició d'Adobe Acrobat i Adobe Express"
+   },
+   "imageToolsDropdownContextMenu": {
+      "message": "Eines d'edició"
+   },
+   "imageToolsDropdownFteDescription": {
+      "message": "Convertiu les imatges a PDF amb Adobe Acrobat o editeu-les al navegador amb Adobe Express."
+   },
+   "imageToolsDropdownFteTitle": {
+      "message": "Convertiu i editeu imatges a Gmail"
+   },
+   "imageToolsDropdownFteTitleForGdrive": {
+      "message": "Convertiu i editeu imatges a Google Drive"
+   },
+   "insertObjectImageContextMenu": {
+      "message": "Insert Object"
+   },
+   "linkedInChatPDFTouchPointFTEBody": {
+      "message": "Editeu, signeu electrònicament i obteniu informació basada en IA amb Adobe Acrobat."
+   },
+   "linkedInChatPDFTouchPointFTEHeader": {
+      "message": "Proveu les eines de PDF d’Adobe Acrobat"
+   },
+   "linkedInFeedPDFTouchPointFTEBody": {
+      "message": "Editeu, resumiu i molt més obrint aquest PDF a l’extensió d’Acrobat."
+   },
+   "linkedInFeedPDFTouchPointFTEHeader": {
+      "message": "Obre aquest PDF a Adobe Acrobat"
+   },
+   "linkedInOpenInAcrobat": {
+      "message": "Obre a l'Acrobat"
+   },
+   "linkedInSummarizePDF": {
+      "message": "Resumeix el PDF"
+   },
+   "localFileAccessAndSummaryCoachmarkDescription": {
+      "message": "Aconseguiu un resum ràpid amb IA en permetre que Acrobat accedeixi al fitxer."
+   },
+   "localFileAccessAndSummaryCoachmarkHeader": {
+      "message": "Obteniu un resum d'aquest document"
+   },
+   "localFileAnimationCoachmarkDescription": {
+      "message": "Permeteu l'accés als URL de fitxer per obrir fitxers des d'aquest dispositiu a l'extensió d'Acrobat."
+   },
+   "localFileAnimationCoachmarkHeader": {
+      "message": "Només falta un pas i ja ho teniu."
+   },
+   "localFileBlockingPageOpenInChrome": {
+      "message": "Open this file in Chrome"
+   },
+   "localFileBlockingPageTitle": {
+      "message": "Enable Acrobat Extension"
+   },
+   "localFileOptionDesc": {
+      "message": "Concediu accés a l'extensió d'Acrobat als URL dels fitxers locals per obrir tots els PDF a Acrobat a Chrome."
+   },
+   "localFileOptionTitle": {
+      "message": "Obrir PDF locals a Acrobat"
+   },
+   "localFilePromptContinueButton": {
+      "message": "Continue"
+   },
+   "localFilePromptDescription": {
+      "message": "Let Acrobat access files from this device for immediate access to all your tools so you can edit PDFs, convert files, and e-sign in a snap."
+   },
+   "localFilePromptHeader": {
+      "message": "Open in Acrobat to edit, sign, and more"
+   },
+   "localFileSummaryCoachmarkHeader": {
+      "message": "Ja gairebé ho teniu. Permeteu que Acrobat accedeixi als URL dels fitxers per habilitar els resums."
+   },
+   "localFteContinue": {
+      "message": "Aneu a configuració"
+   },
+   "localFteDescription": {
+      "message": "Aprofiteu al màxim l'extensió d'Acrobat i feu-la servir per obrir tots els PDF. Activeu Permet l'accés als URL del fitxer a la configuració de l'extensió."
+   },
+   "localFteDontShowAgainText": {
+      "message": "No ho tornis a mostrar"
+   },
+   "localFteTitle": {
+      "message": "Canvieu a Acrobat per obrir els fitxers locals"
+   },
+   "magicScanButtonText": {
+      "message": "Puja amb Adobe Scan"
+   },
+   "magicScanConfirmCancel": {
+      "message": "Cancel·la"
+   },
+   "magicScanConfirmDesc": {
+      "message": "“$filename$” es carrega directament en aquest lloc web des del dispositiu mòbil",
+      "placeholders": {
+         "filename": {
+            "content": "$1"
+         }
+      }
+   },
+   "magicScanConfirmSkip": {
+      "message": "No ho tornis a mostrar"
+   },
+   "magicScanConfirmTitle": {
+      "message": "Confirma la pujada"
+   },
+   "magicScanConfirmUpload": {
+      "message": "Confirma"
+   },
+   "magicScanExpiresIn": {
+      "message": "Temps restant:"
+   },
+   "magicScanOffline": {
+      "message": "Sembla que el dispositiu no està en línia. Connecteu-vos a internet i torneu-ho a provar."
+   },
+   "magicScanOverlayDescription": {
+      "message": "Escanegeu aquest codi QR amb la càmera del telèfon o de la tauleta per pujar fitxers directament des del dispositiu mòbil."
+   },
+   "magicScanOverlayInstructions": {
+      "message": "Apunteu la càmera del telèfon a aquest codi per començar."
+   },
+   "magicScanOverlayTitle": {
+      "message": "Escaneja per pujar des del mòbil"
+   },
+   "magicScanPreparing": {
+      "message": "S’està preparant el document…"
+   },
+   "magicScanRefreshLabel": {
+      "message": "Actualitza"
+   },
+   "magicScanReloadQR": {
+      "message": "Feu clic per tornar a carregar el codi QR"
+   },
+   "magicScanSessionClaimed": {
+      "message": "S'ha escanejat el codi QR. Continueu al dispositiu mòbil."
+   },
+   "magicScanStartAgain": {
+      "message": "Torneu a començar."
+   },
+   "magicScanStatusExpired": {
+      "message": "El codi QR ha caducat."
+   },
+   "magicScanStatusFailed": {
+      "message": "L’escaneig ha fallat. Torneu-ho a provar."
+   },
+   "msWordConvertToPdfFTEBody": {
+      "message": "Convertiu documents de Microsoft Word a PDF amb l’extensió d’Adobe Acrobat. Aconseguiu eines per editar, signar i molt més."
+   },
+   "msWordConvertToPdfFTETitle": {
+      "message": "Convertiu aquest document a PDF"
+   },
+   "msWordSaveChangesTooltip": {
+      "message": "Premeu $shortcut$ per desar els canvis abans de continuar.",
+      "placeholders": {
+         "shortcut": {
+            "content": "$1"
+         }
+      }
+   },
+   "neverDisplayFab": {
+      "message": "Never display"
+   },
+   "openInAcrobat": {
+      "message": "Open In Acrobat"
+   },
+   "optionsFailurePrompt": {
+      "message": "No podem desar els canvis. Torneu-ho a provar més endavant"
+   },
+   "optionsSuccessPrompt": {
+      "message": "Les preferències s'han desat correctament"
+   },
+   "optionsSuccessPromptReloadRequired": {
+      "message": "Preference would be reflected only after reload"
+   },
+   "outlookAttachmentErrorDescription": {
+      "message": "Something went wrong. Go back to Outlook and try again."
+   },
+   "outlookAttachmentErrorDocumentTitle": {
+      "message": "Error"
+   },
+   "outlookAttachmentErrorGoToOutlook": {
+      "message": "Go to Outlook"
+   },
+   "outlookAttachmentErrorTitle": {
+      "message": "We couldn't open this attachment"
+   },
+   "outlookErrorToastDescription": {
+      "message": "Something went wrong. Please close the file and try again."
+   },
+   "outlookErrorToastTitle": {
+      "message": "Unable to open file"
+   },
+   "outlookImplicitDVNotification": {
+      "message": "Els fitxers PDF adjunts s’obren ara a Outlook. Per obrir-los a Acrobat, seleccioneu la icona d’Acrobat."
+   },
+   "outlookPDFTouchPointFTEBody": {
+      "message": "Edit, summarize, and sign PDFs by opening them in Acrobat."
+   },
+   "outlookPDFTouchPointFTEHeader": {
+      "message": "Open this PDF in Adobe Acrobat"
+   },
+   "outlookPDFTouchPointTooltip": {
+      "message": "Obre a l'Acrobat"
+   },
+   "paywallCreditsExpiredToastMessage": {
+      "message": "Els crèdits gratuïts d’aquest mes han caducat. Subscriviu-vos per continuar."
+   },
+   "pdfOpenInAcrobatContextMenu": {
+      "message": "Obre a l'Acrobat"
+   },
+   "pdfOwnerShipDmbConfirmBtn": {
+      "message": "Continua"
+   },
+   "pdfOwnerShipSideRedCardConfirmBtn": {
+      "message": "Continua"
+   },
+   "pdfOwnershipDefSideCardcontent": {
+      "message": "Configureu Adobe Acrobat com a lector de PDF predeterminat i consulteu, comenteu, empleneu formularis i signeu documents."
+   },
+   "pdfOwnershipExploreAcrobat": {
+      "message": "Utilitza Acrobat a Chrome"
+   },
+   "pdfOwnershipExploreAcrobatEdge": {
+      "message": "Utilitzar Acrobat a Microsoft Edge"
+   },
+   "pdfOwnershipExploreOptionsDescription": {
+      "message": "Make Acrobat the default PDF viewer for your browser for quick access to commenting, Fill & Sign, and other PDF tools."
+   },
+   "pdfOwnershipExploreOptionsTitle": {
+      "message": "Open all PDFs in Acrobat"
+   },
+   "pdfOwnershipPromptCancel": {
+      "message": "Ara no"
+   },
+   "pdfOwnershipPromptContent": {
+      "message": "Traieu més partit als PDF a Chrome establint l'Adobe Acrobat com el vostre visor predeterminat."
+   },
+   "pdfOwnershipPromptContent2": {
+      "message": "Configureu Acrobat com a lector de PDF predeterminat per utilitzar PDF directament a Google Chrome. Comenteu-los, empleneu-los, signeu-los i proveu eines de conversió i compressió."
+   },
+   "pdfOwnershipPromptContentEdge": {
+      "message": "Establiu l’Adobe Acrobat com a visor predeterminat per traure més partit als PDF a Microsoft Edge."
+   },
+   "pdfOwnershipPromptDeny": {
+      "message": "No, gràcies"
+   },
+   "pdfOwnershipPromptOk": {
+      "message": "Estableix com a predeterminat"
+   },
+   "pdfOwnershipPromptOkFullscreen": {
+      "message": "Prova-ho ara"
+   },
+   "pdfReadyTabTitle": {
+      "message": "PDF llest"
+   },
+   "pdfToWordContextMenu": {
+      "message": "Converteix PDF a Word"
+   },
+   "pdfToolsDropdownContextMenu": {
+      "message": "Eines de PDF"
+   },
+   "pdfToolsFteTooltipButton": {
+      "message": "Tanca"
+   },
+   "pdfToolsFteTooltipDescription": {
+      "message": "Obriu els PDF directament des de Gmail i proveu eines com ara editar, comentar, convertir i signar electrònicament amb Adobe Acrobat."
+   },
+   "pdfToolsFteTooltipTitle": {
+      "message": "Descobriu una gamma d'eines de PDF"
+   },
+   "popupNoConnection": {
+      "message": "No hi ha connexió"
+   },
+   "popupOfflineMessage": {
+      "message": "Poseu-vos en contacte amb l’administrador per reprendre la connexió"
+   },
+   "preferenceAcrobatIntegrationsDescription": {
+      "message": "Definiu Acrobat com a visor de PDF per defecte per a les integracions de navegador compatibles, com ara Gmail, Google Drive i més."
+   },
+   "preferenceAcrobatIntegrationsTitle": {
+      "message": "Activeu les integracions d'Acrobat"
+   },
+   "preferenceAdobeExpressDescription": {
+      "message": "Editeu imatges amb Adobe Express des de l'extensió d'Adobe Acrobat."
+   },
+   "preferenceAdobeExpressTitle": {
+      "message": "Activeu Adobe Express a Acrobat"
+   },
+   "preferenceAdobeInternalConnectedAppDescription": {
+      "message": "Seleccioneu l'aplicació connectada de destinació per a les funcionalitats de l'extensió. Aquesta configuració només simula les vistes; és possible que la funcionalitat no funcioni correctament."
+   },
+   "preferenceAdobeInternalConnectedAppTitle": {
+      "message": "Aplicació connectada"
+   },
+   "preferenceAdobeInternalEnvironmentDescription": {
+      "message": "Seleccioneu l'entorn de destinació per a l'extensió."
+   },
+   "preferenceAdobeInternalEnvironmentTitle": {
+      "message": "Entorn de desenvolupament"
+   },
+   "preferenceAdobeInternalGenAIClusterDescription": {
+      "message": "Seleccioneu el clúster de destinació per als serveis de GenAI."
+   },
+   "preferenceAdobeInternalGenAIClusterTitle": {
+      "message": "Clúster d'IA generativa"
+   },
+   "preferenceAdobeInternalTabLabel": {
+      "message": "Intern d'Adobe"
+   },
+   "preferenceAssistantWebPageBadgeText": {
+      "message": "Beta"
+   },
+   "preferenceAssistantWebPageContent": {
+      "message": "Aconseguiu resums ràpids i informació clau amb AI Assistant a les pàgines web."
+   },
+   "preferenceAssistantWebPageTitle": {
+      "message": "Assistent d'IA per a pàgines web"
+   },
+   "preferenceAutoOpenConvertedPDFDescription": {
+      "message": "Després de convertir una pàgina web a PDF amb l'extensió Acrobat, obre automàticament el PDF convertit a Acrobat."
+   },
+   "preferenceBrowserDefaultViewershipDescription": {
+      "message": "Definiu Acrobat com a visualitzador per defecte per obrir PDF des d’enllaços en línia, Gmail, Google Drive i altres."
+   },
+   "preferenceBrowserDefaultViewershipDescriptionEdge": {
+      "message": "Definiu Acrobat com a visualitzador per defecte per obrir PDF des d'enllaços en línia."
+   },
+   "preferenceBrowserDefaultViewershipDescriptionOutlook": {
+      "message": "Definiu Acrobat com a visualitzador per defecte per obrir PDF des d’enllaços en línia, Gmail, Google Drive, Microsoft Outlook i altres."
+   },
+   "preferenceBrowserDefaultViewershipTitle": {
+      "message": "Obriu PDF a Acrobat des del navegador"
+   },
+   "preferenceChromeMimeHandlerDescription": {
+      "message": "Quan s’activa, els PDF s’obren al visor d’Adobe mitjançant el gestor MIME natiu de Chrome; l’URL original es manté a la barra d’adreces. Quan es desactiva, s’utilitza el flux de redirecció de l’extensió."
+   },
+   "preferenceChromeMimeHandlerTitle": {
+      "message": "Activa el gestor MIME"
+   },
+   "preferenceConnectedAppsTabLabel": {
+      "message": "Aplicacions connectades"
+   },
+   "preferenceDisplayThemeDescription": {
+      "message": "Seleccioneu el mode fosc o el mode clar."
+   },
+   "preferenceDisplayThemeTitle": {
+      "message": "Configuració del tema de visualització"
+   },
+   "preferenceEmbeddedPDFReloadToastLabel": {
+      "message": "PDF incrustat"
+   },
+   "preferenceEmbeddedPDFsTitle": {
+      "message": "PDF incrustat"
+   },
+   "preferenceErrorBoundaryRetry": {
+      "message": "Torna-ho a provar"
+   },
+   "preferenceErrorBoundaryTitle": {
+      "message": "S’ha produït un error"
+   },
+   "preferenceGeneralTabLabel": {
+      "message": "General"
+   },
+   "preferenceGenerativeAITabLabel": {
+      "message": "IA generativa"
+   },
+   "preferenceGoogleSearchToolsDescription": {
+      "message": "Permeteu que Acrobat recomani eines de PDF per utilitzar al navegador en funció de les cerques. No s'envien a Adobe."
+   },
+   "preferenceGoogleSearchToolsTitle": {
+      "message": "Mostra les eines d'Acrobat amb els resultats de cerca de Google"
+   },
+   "preferenceGroupAccordionTitle": {
+      "message": "Configuració avançada"
+   },
+   "preferenceHideAcrobatDomainListTitle": {
+      "message": "Llocs web on Acrobat està desactivat"
+   },
+   "preferenceHideFabDomainListTitle": {
+      "message": "Llocs web on AI Assistant està desactivat"
+   },
+   "preferenceHideSummaryBarDomainListTitle": {
+      "message": "Llocs web on s'amaga el bàner de resum de l'Assistent d'IA"
+   },
+   "preferenceLanguageDescription": {
+      "message": "Seleccioneu l'idioma preferit."
+   },
+   "preferenceLanguageTitle": {
+      "message": "Configura l'idioma"
+   },
+   "preferenceLearnerExperienceDescription": {
+      "message": "Quan s’activa, hi ha disponibles funcions orientades a l’alumnat per ajudar-vos a estudiar, aprendre i gestionar les tasques acadèmiques de manera més eficient."
+   },
+   "preferenceLearnerExperienceTitle": {
+      "message": "Activa l’experiència per a estudiants a Acrobat"
+   },
+   "preferenceLinkedInTitle": {
+      "message": "LinkedIn"
+   },
+   "preferenceOfflineModeDescription": {
+      "message": "Comproveu la connexió de la xarxa i torneu a provar-ho."
+   },
+   "preferenceOfflineModeTitle": {
+      "message": "No disponible ara mateix"
+   },
+   "preferenceOnlinePDFsTitle": {
+      "message": "PDF en línia"
+   },
+   "preferenceOpenLocalFilesDescription": {
+      "message": "Chrome gestiona aquesta opció. Activeu “Permet l’accés als URL de fitxer” per obrir PDF a Acrobat."
+   },
+   "preferenceOpenLocalFilesTitle": {
+      "message": "Obre fitxers locals a Acrobat"
+   },
+   "preferenceOpenLocalFilesTurnOffButtonLabel": {
+      "message": "Desactiva"
+   },
+   "preferenceOpenLocalFilesTurnOnButtonLabel": {
+      "message": "Activa"
+   },
+   "preferenceOptinDescription": {
+      "message": "Envia a Adobe informació sobre com utilitzeu l'extensió d'Acrobat per millorar les funcions del producte. "
+   },
+   "preferenceOptinLearnMore": {
+      "message": "Més informació"
+   },
+   "preferenceOutlookTitle": {
+      "message": "Microsoft Outlook"
+   },
+   "preferencePDFReloadToastLabel": {
+      "message": "PDF"
+   },
+   "preferencePrivacyTabLabel": {
+      "message": "Privadesa"
+   },
+   "preferenceReloadSurfaceTabsToast": {
+      "message": "Torna a carregar les pestanyes de $surface$ per aplicar aquest canvi.",
+      "placeholders": {
+         "surface": {
+            "content": "$1"
+         }
+      }
+   },
+   "preferenceSaveLocationDescription": {
+      "message": "Deseu els fitxers a l'emmagatzematge al núvol d'Adobe, deseu-los a l'ordinador o feu que el sistema us demani on voleu desar-los cada vegada."
+   },
+   "preferenceSaveLocationTitle": {
+      "message": "Defineix la ubicació per desar els fitxers"
+   },
+   "preferenceShareTextToWhatsAppDescription": {
+      "message": "Si s’activa, el visualitzador de PDF deixa de mostrar l’opció de compartir el text seleccionat a WhatsApp."
+   },
+   "preferenceShareTextToWhatsAppTitle": {
+      "message": "Desactiva l’opció “Comparteix el text a WhatsApp”"
+   },
+   "preferenceShowAIAssistantButtonDescription": {
+      "message": "Mostra sempre el botó d'Auxiliar d'IA a la vora de la finestra del navegador."
+   },
+   "preferenceShowAIAssistantButtonTitle": {
+      "message": "Mostra el botó de l'Assistent d'IA"
+   },
+   "preferenceShowAISummaryBannerDescription": {
+      "message": "Mostra sempre el bàner de resum de l'Assistent d'IA a les pàgines web quan sigui compatible."
+   },
+   "preferenceShowAISummaryBannerTitle": {
+      "message": "Mostra el bàner de resum d'AI Assistant"
+   },
+   "preferenceShowAcrobatAssistantShortcutDescription": {
+      "message": "Accediu a eines de PDF i a l’Assistent d’IA des de la vora de la finestra del navegador."
+   },
+   "preferenceShowAcrobatAssistantShortcutTitle": {
+      "message": "Mantingueu Acrobat visible al navegador"
+   },
+   "preferenceShowContextualPromptDescription": {
+      "message": "Mostra sempre les indicacions suggerides mentre navegueu per pàgines web."
+   },
+   "preferenceShowContextualPromptTitle": {
+      "message": "Suggeriments d’IA"
+   },
+   "preferenceShowFeatureGuidanceDescription": {
+      "message": "Permeteu que l'extensió Acrobat us mostri orientació sobre les actualitzacions, com utilitzar les funcions i molt més."
+   },
+   "preferenceShowFeatureGuidanceTitle": {
+      "message": "Visualització de l'ajuda de funcions"
+   },
+   "preferenceShowGenAIFabPillsTitle": {
+      "message": "Mostra opcions d’IA al tauler Assistent d’IA"
+   },
+   "preferenceShowLessText": {
+      "message": "Mostra’n menys"
+   },
+   "preferenceShowMoreText": {
+      "message": "Mostra’n més"
+   },
+   "preferenceShowNotificationsDescription": {
+      "message": "Permet que l’extensió d’Acrobat mostri notificacions sobre actualitzacions, com utilitzar funcions i molt més."
+   },
+   "preferenceShowNotificationsTitle": {
+      "message": "Mostra les notificacions"
+   },
+   "preferenceShowOpenInAcrobatShortcutCheckboxGroupFooter": {
+      "message": "La drecera d'Acrobat només apareix quan no està configurada com a visualitzador per defecte per a aquesta aplicació."
+   },
+   "preferenceShowOpenInAcrobatShortcutCheckboxGroupFooterLinkText": {
+      "message": "defineix-lo com a visualitzador per defecte"
+   },
+   "preferenceShowOpenInAcrobatShortcutDescription": {
+      "message": "Afegiu una drecera per obrir PDF a Acrobat des de Gmail, Google Drive i altres aplicacions."
+   },
+   "preferenceShowOpenInAcrobatShortcutTitle": {
+      "message": "Mostra la drecera “Obre a Acrobat” en altres aplicacions"
+   },
+   "preferenceShowSummarizeBarOnWebpagesTitle": {
+      "message": "Mostra la barra de resum a les pàgines web"
+   },
+   "preferenceShowWhatsAppShortcutTitle": {
+      "message": "Mostra la drecera “Envia a WhatsApp”"
+   },
+   "preferenceTurnOnAIFeaturesDescription": {
+      "message": "Permeteu que els fitxers es processin al núvol per utilitzar funcions d'IA generativa. Nota: si desactiveu aquesta funció, es desactiven les funcions d'IA generativa perquè s'impedeix que els fitxers es processin al núvol; la podeu tornar a activar en qualsevol moment."
+   },
+   "preferenceTurnOnAIFeaturesTitle": {
+      "message": "Activeu les funcions d'IA generativa a Acrobat"
+   },
+   "preferenceTurnOnGenAIWebpagesDescription": {
+      "message": "Accediu a l'Assistent d'IA a qualsevol pàgina web per obtenir resums i informació. Desactiveu-ho per retirar aquest accés."
+   },
+   "preferenceTurnOnGenAIWebpagesTitle": {
+      "message": "Activeu la IA generativa al navegador"
+   },
+   "preferenceWebpageConversionDescription": {
+      "message": "Actualitza la configuració per desar pàgines web com a PDF, inclosos els marges, les fonts i altres opcions de disseny."
+   },
+   "preferenceWebpageConversionTitle": {
+      "message": "Modifica la configuració de conversió de pàgines web"
+   },
+   "preferenceWhatsNewAutoOpenTitle": {
+      "message": "Activa l'obertura automàtica per a l'actualització"
+   },
+   "preferences": {
+      "message": "Preferences"
+   },
+   "productAcrobat": {
+      "message": "Acrobat"
+   },
+   "productNoApp": {
+      "message": "Cap aplicació"
+   },
+   "productReader": {
+      "message": "Reader"
+   },
+   "refreshButtonInFailToast": {
+      "message": "Actualitza"
+   },
+   "removeBackgroundImageContextMenu": {
+      "message": "Suprimeix el fons"
+   },
+   "removeBackgroundImageContextMenuV2ChatGPT": {
+      "message": "Suprimeix el fons"
+   },
+   "removeObjectImageContextMenu": {
+      "message": "Remove Object"
+   },
+   "saveLocationOp1": {
+      "message": "Pregunta-m’ho sempre"
+   },
+   "saveLocationOp2": {
+      "message": "Emmagatzematge al núvol d'Adobe"
+   },
+   "saveLocationOp3": {
+      "message": "El meu ordinador"
+   },
+   "saveLocationPreferenceDescription": {
+      "message": "Establiu una ubicació per desar els fitxers"
+   },
+   "saveLocationPreferenceTitle": {
+      "message": "Desa la ubicació del fitxer"
+   },
+   "selectFileButton": {
+      "message": "Seleccioneu un fitxer"
+   },
+   "sessionExpiredDescription": {
+      "message": "Pugeu el fitxer i torneu-ho a provar."
+   },
+   "sessionExpiredDocumentTitle": {
+      "message": "Ha caducat la sessió"
+   },
+   "sessionExpiredTitle": {
+      "message": "La sessió ha caducat"
+   },
+   "sessionExpiredToastText": {
+      "message": "La sessió ha caducat. Actualitzeu la pàgina i torneu-ho a provar."
+   },
+   "sharepointPreferenceMessage": {
+      "message": "Permet l'extracció de fitxers del SharePoint a l'Acrobat."
+   },
+   "sidepanelLoaderText": {
+      "message": "Aconseguiu resums i informació clau amb Acrobat AI Assistant"
+   },
+   "sidepanelLocationPreferenceButtonText": {
+      "message": "Change in browser settings"
+   },
+   "sidepanelLocationPreferenceDescription": {
+      "message": "Place the side panel on the left or right side of the browser window. Side panel is only available in Google Chrome 11.4 or later."
+   },
+   "sidepanelLocationPreferenceTitle": {
+      "message": "AI Assistant panel location"
+   },
+   "stripTextOpenAcrobat": {
+      "message": "Obre a l'Acrobat"
+   },
+   "stripTextOpenFillnSign": {
+      "message": "Emplena i signa a l'Acrobat"
+   },
+   "studentToolsTouchpointCheatsheet": {
+      "message": "Creeu un full de consulta ràpida"
+   },
+   "studentToolsTouchpointFabFlashcards": {
+      "message": "Crear targetes de repàs"
+   },
+   "studentToolsTouchpointFabLoading": {
+      "message": "S'està creant…"
+   },
+   "studentToolsTouchpointFabMindmap": {
+      "message": "Creeu un mapa mental"
+   },
+   "studentToolsTouchpointFabNotes": {
+      "message": "Genereu notes"
+   },
+   "studentToolsTouchpointFabQuiz": {
+      "message": "Creeu un qüestionari"
+   },
+   "studentToolsTouchpointFabStudyGuide": {
+      "message": "Creeu una guia d’estudi"
+   },
+   "studentToolsTouchpointFlashcards": {
+      "message": "Creeu targetes d’estudi a partir d’aquesta pàgina"
+   },
+   "studentToolsTouchpointFlashcardsFromFile": {
+      "message": "Crea targetes d’estudi a partir del fitxer"
+   },
+   "studentToolsTouchpointMindmap": {
+      "message": "Genereu un mapa mental"
+   },
+   "studentToolsTouchpointQuiz": {
+      "message": "Creeu un qüestionari a partir d’aquesta pàgina"
+   },
+   "studentToolsTouchpointStudyGuide": {
+      "message": "Creeu una guia d’estudi"
+   },
+   "studentToolsTouchpointStudyGuideContextMenu": {
+      "message": "Convertiu aquesta pàgina en una guia d’estudi"
+   },
+   "successToastText": {
+      "message": "PDF downloads will now open in Adobe Acrobat"
+   },
+   "summarizeWebpageContextMenu": {
+      "message": "Resumeix una pàgina web amb IA"
+   },
+   "summarizeWebpageSelectedContent": {
+      "message": "Resumeix-ho"
+   },
+   "summaryBarCloseTooltip": {
+      "message": "Amaga les opcions"
+   },
+   "summaryBarCtaLabel": {
+      "message": "Resumiu aquesta pàgina amb Acrobat AI Assistant."
+   },
+   "summaryBarDismissMenuAriaLabel": {
+      "message": "Opcions del bàner de resum d'AI Assistant"
+   },
+   "surfaceNameChatGPT": {
+      "message": "ChatGPT"
+   },
+   "surfaceNameGdrive": {
+      "message": "Google Drive"
+   },
+   "surfaceNameGemini": {
+      "message": "Gemini"
+   },
+   "surfaceNameGmail": {
+      "message": "Gmail"
+   },
+   "surfaceNameGoogleDocs": {
+      "message": "Google Docs"
+   },
+   "surfaceNameGoogleSheets": {
+      "message": "Google Sheets"
+   },
+   "surfaceNameGoogleSlides": {
+      "message": "Google Slides"
+   },
+   "surfaceNameMSWord": {
+      "message": "Microsoft Word"
+   },
+   "surfaceNameWikipedia": {
+      "message": "Wikipedia"
+   },
+   "tooltipTextDisabled": {
+      "message": "AI Assistant isn't available for this webpage"
+   },
+   "tooltipTextEnabled": {
+      "message": "Get summaries and key insights using AI Assistant"
+   },
+   "tooltipTextEnabledHome": {
+      "message": "Convertiu, editeu i treballeu amb AI Assistant directament des del navegador"
+   },
+   "tooltipTextSubText": {
+      "message": "powered by Adobe Acrobat"
+   },
+   "tryAgain": {
+      "message": "Torna-ho a provar"
+   },
+   "unsupportedFileTypeToastText": {
+      "message": "This file type isn’t supported. You can try editing another file."
+   },
+   "userLocale": {
+      "message": "Configuració regional de l’usuari"
+   },
+   "web2pdfAddButtonText": {
+      "message": "Afegir a PDF existent"
+   },
+   "web2pdfAlwaysShow": {
+      "message": "Mostra automàticament per als PDF"
+   },
+   "web2pdfAppendLinkContextMenu": {
+      "message": "Annexar destí d'enllaç amb PDF existent"
+   },
+   "web2pdfAppendPageContextMenu": {
+      "message": "Afegir pàgina web a PDF existent..."
+   },
+   "web2pdfBadVersion": {
+      "message": "Aquesta versió del Chrome no és compatible amb l'Adobe Acrobat. La versió mínima és la $version$.",
+      "placeholders": {
+         "version": {
+            "content": "$1"
+         }
+      }
+   },
+   "web2pdfBadVersionEdge": {
+      "message": "Aquesta versió d’Edge no és compatible amb Adobe Acrobat. Versió mínima: $version$",
+      "placeholders": {
+         "version": {
+            "content": "$1"
+         }
+      }
+   },
+   "web2pdfClickToOpen": {
+      "message": "Feu clic a l'enllaç següent per obrir el PDF amb l'Acrobat."
+   },
+   "web2pdfConvertButtonToolTip": {
+      "message": "Acrobat Extension - Shortcut to all your PDF tools."
+   },
+   "web2pdfConvertButtonToolTipERPReader": {
+      "message": "L’extensió de l’Acrobat Reader està deshabilitada. Poseu-vos en contacte amb l’administrador de TI."
+   },
+   "web2pdfConvertButtonToolTipReader": {
+      "message": "Obrir el PDF amb l'Acrobat Reader"
+   },
+   "web2pdfConvertLinkContextMenu": {
+      "message": "Convertir destí d'enllaç a Adobe PDF"
+   },
+   "web2pdfConvertPageContextMenu": {
+      "message": "Convertir pàgina web a Adobe PDF..."
+   },
+   "web2pdfCopyText": {
+      "message": "S'està copiant a l'Acrobat"
+   },
+   "web2pdfDestinationText": {
+      "message": "Carpeta de destinació:"
+   },
+   "web2pdfDoneButtonText": {
+      "message": "Fet"
+   },
+   "web2pdfExtnDescription": {
+      "message": "Utilitzeu Acrobat al navegador per veure, convertir, comprimir i signar PDF"
+   },
+   "web2pdfExtnDescriptionBeta": {
+      "message": "Utilitzeu Acrobat al navegador per veure, convertir, comprimir i signar PDF"
+   },
+   "web2pdfExtnDescriptionChrome": {
+      "message": "Traieu el màxim partit de Google Chrome amb les eines per a PDF d’Adobe Acrobat. Consulteu, empleneu i comenteu documents, i proveu les eines de conversió i compressió."
+   },
+   "web2pdfExtnDescriptionEdge": {
+      "message": "Aprofiteu Microsoft Edge amb les eines per a PDF d’Adobe Acrobat. Afegiu comentaris i signatures i proveu l'edició i la conversió."
+   },
+   "web2pdfExtnName": {
+      "message": "Adobe Acrobat: eines de conversió, edició i signatura de PDF"
+   },
+   "web2pdfExtnNameBeta": {
+      "message": "Adobe Acrobat Beta"
+   },
+   "web2pdfExtnNameEdge": {
+      "message": "Adobe Acrobat: eines de conversió, edició i signatura de PDF"
+   },
+   "web2pdfExtnNameStage": {
+      "message": "Adobe Acrobat Stage"
+   },
+   "web2pdfFileLockedError": {
+      "message": "No es pot desar el fitxer perquè un altre procés l'està usant."
+   },
+   "web2pdfFilename": {
+      "message": "Nom de fitxer:"
+   },
+   "web2pdfFrictionlessToggleDescription": {
+      "message": "L’extensió Adobe Acrobat recomana eines de PDF per ajudar-vos a fer la vostra tasca. La nostra recomanació es basa en el que heu cercat i passa al dispositiu; les cerques no s’envien a Adobe."
+   },
+   "web2pdfFrictionlessUrl": {
+      "message": "https://www.adobe.com/go/fl_chromeext_es"
+   },
+   "web2pdfFrictionlessUrlEdge": {
+      "message": "https://www.adobe.com/es/acrobat/online.html?x_api_client_id=edge_extension&x_api_client_location=trefoil&mv=other&mv2=edge_extension:trefoil&trackingid=HM85XB76"
+   },
+   "web2pdfHTMLJSError": {
+      "message": "Error en processar la pàgina web."
+   },
+   "web2pdfHTMLTooLarge": {
+      "message": "El contingut HTML és massa gran per poder-lo processar."
+   },
+   "web2pdfInfoHoverPopup": {
+      "message": "L’extensió Adobe Acrobat recomana eines de PDF per ajudar-vos a fer la vostra tasca. La nostra recomanació es basa en el que heu cercat i passa al dispositiu; les cerques no s’envien a Adobe. Feu clic \u003Cspan class = \"tooltip-content-settings\">aquí\u003C/span> per desactivar aquesta funció."
+   },
+   "web2pdfLoaderTitle": {
+      "message": "S’està carregant…"
+   },
+   "web2pdfMissingMac": {
+      "message": "Adobe Acrobat per a Chrome encara no està disponible per a Mac"
+   },
+   "web2pdfMissingMacEdge": {
+      "message": "Adobe Acrobat per a Microsoft Edge encara no està disponible per a Mac"
+   },
+   "web2pdfNoFoldersText": {
+      "message": "No teniu carpetes a l'emmagatzematge d'Acrobat DC."
+   },
+   "web2pdfNoWritePermissionOnSelectedFile": {
+      "message": "No teniu permís d'escriptura en el fitxer seleccionat."
+   },
+   "web2pdfOpenButtonText": {
+      "message": "Obrir a l'Acrobat"
+   },
+   "web2pdfOpenButtonTextOlder": {
+      "message": "Baixa Adobe PDF"
+   },
+   "web2pdfOpenButtonTextReader": {
+      "message": "Obre a l'Acrobat Reader"
+   },
+   "web2pdfOpenConvertedPDFDescription": {
+      "message": "Obriu automàticament el PDF convertit a Acrobat quan s'hagi completat la conversió de la pàgina web a PDF."
+   },
+   "web2pdfOpenConvertedPDFTitle": {
+      "message": "Obrir automàticament fitxers PDF convertits en Acrobat"
+   },
+   "web2pdfOpenInDCButtonText": {
+      "message": "Obrir el PDF amb l'Acrobat"
+   },
+   "web2pdfOptOut": {
+      "message": "Per millorar les característiques del producte, aquesta extensió envia a Adobe informació sobre com utilitzeu el programa."
+   },
+   "web2pdfOptOutDisabled": {
+      "message": "No s’estan compartint les vostres dades d'ús."
+   },
+   "web2pdfOptions": {
+      "message": "Opcions"
+   },
+   "web2pdfOptionsTitle": {
+      "message": "Preferències d’Adobe Acrobat"
+   },
+   "web2pdfPDFOpenFailed": {
+      "message": "No s'ha pogut obrir el PDF"
+   },
+   "web2pdfPDFOpenFailedv2": {
+      "message": "No s'ha pogut obrir"
+   },
+   "web2pdfPDFOpened": {
+      "message": "S'ha obert el PDF"
+   },
+   "web2pdfPDFOpening": {
+      "message": "S'està obrint el PDF"
+   },
+   "web2pdfPreferencesButtonText": {
+      "message": "Preferències..."
+   },
+   "web2pdfPreferencesNewText": {
+      "message": "Configuració de conversió…"
+   },
+   "web2pdfPrivacy": {
+      "message": "Quant a l'Adobe Acrobat"
+   },
+   "web2pdfReplaceWarning": {
+      "message": "ja existeix. El voleu substituir?"
+   },
+   "web2pdfSave": {
+      "message": "Desa"
+   },
+   "web2pdfSaveButton": {
+      "message": "Desa les preferències"
+   },
+   "web2pdfShowPDFTools": {
+      "message": "Mostra amb resultats de cerca de Google"
+   },
+   "web2pdfShowPDFViewerOption": {
+      "message": "Utilitza l'Acrobat com a visor de PDF predeterminat"
+   },
+   "web2pdfShowPersistentOpen": {
+      "message": "Mostra ”Obre en Acrobat”"
+   },
+   "web2pdfShowPersistentOpenAlways": {
+      "message": "Mostra sempre ”Obre en Acrobat”"
+   },
+   "web2pdfShowPersistentOpenDescription": {
+      "message": "Mostra l'opció per obrir el PDF a Acrobat cada vegada."
+   },
+   "web2pdfStatusCancelled": {
+      "message": "Conversió cancel·lada"
+   },
+   "web2pdfStatusComplete": {
+      "message": "Conversió correcta"
+   },
+   "web2pdfStatusDownloading": {
+      "message": "Baixant per a la conversió..."
+   },
+   "web2pdfStatusDownloadingPDF": {
+      "message": "S'està baixant el PDF"
+   },
+   "web2pdfStatusFailure": {
+      "message": "Error de conversió"
+   },
+   "web2pdfStatusInProgress": {
+      "message": "Conversió en curs..."
+   },
+   "web2pdfStatusUnknownFailure": {
+      "message": "Error desconegut"
+   },
+   "web2pdfStatusWaiting": {
+      "message": "Esperant la conversió..."
+   },
+   "web2pdfTitle": {
+      "message": "Adobe Acrobat"
+   },
+   "web2pdfUnsupportedAcrobatVersion": {
+      "message": "No s'ha trobat cap versió compatible de l'Acrobat. Instal·leu una \u003Ca target='_blank' href='https://acrobat.adobe.com/es/es/free-trial-download.html?trackingid=29NMCS7T&mv=other'>prova gratuïta de 7 dies\u003C/a>."
+   },
+   "web2pdfUntitledFileName": {
+      "message": "Sense títol"
+   },
+   "webpagePDFConversion": {
+      "message": "Configuració de conversió de pàgina web a PDF"
+   },
+   "webpagePDFConversionDescription": {
+      "message": "En desar pàgines web com a PDF, podeu definir-ne els marges, les fonts i altres detalls de disseny."
+   },
+   "whatsNewAutoOpenDescription": {
+      "message": "Permet que Acrobat obri automàticament una pàgina web quan hi hagi actualitzacions noves disponibles."
+   },
+   "whatsNewAutoOpenTitle": {
+      "message": "Activa l'obertura automàtica dels avisos d'actualització"
+   },
+   "wikipediaConvertToPdfFTEBody": {
+      "message": "Convertiu pàgines de la Viquipèdia en PDF i editeu-les sense sortir del navegador."
+   },
+   "wikipediaConvertToPdfFTETitle": {
+      "message": "Converteix aquesta pàgina en un PDF"
+   },
+   "wikipediaConvertToPdfHoverTooltip": {
+      "message": "Converteix aquesta pàgina de la Viquipèdia en un PDF amb Acrobat"
+   },
+   "wikipediaConvertToPdfToastMessage": {
+      "message": "S'està convertint la pàgina en un PDF. Manteniu oberta la pestanya d'Acrobat per rebre una notificació quan estigui a punt."
+   },
+   "wikipediaConvertingTooltip": {
+      "message": "S’està processant en una pestanya nova. Us avisarem quan el fitxer estigui a punt"
+   },
+   "wikipediaDefaultTitleText": {
+      "message": "Article de la Viquipèdia"
+   }
+}

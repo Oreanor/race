@@ -139,6 +139,31 @@ test('tile copies of one house collapse instead of stacking windows', () => {
   assert.deepEqual(kept.map((part) => part.key), ['0', '3']);
 });
 
+test('a smaller outline inside a block is one building, a yard house stays', () => {
+  const block: [number, number][] = [[-8.41, 40.2], [-8.41, 40.2003], [-8.4095, 40.2003], [-8.4095, 40.2]];
+  const nested: [number, number][] = [[-8.40985, 40.20008], [-8.40985, 40.20018], [-8.40968, 40.20018], [-8.40968, 40.20008]];
+  const yard: [number, number][] = [[-8.40982, 40.2001], [-8.40982, 40.20016], [-8.4097, 40.20016], [-8.4097, 40.2001]];
+  const hole: [number, number][] = [[-8.4099, 40.20006], [-8.4099, 40.2002], [-8.40962, 40.2002], [-8.40962, 40.20006]];
+  const beside: [number, number][] = [[-8.40942, 40.20008], [-8.40942, 40.20018], [-8.40928, 40.20018], [-8.40928, 40.20008]];
+  const tower = { key: 'tower', rings: [nested], base: 0, height: 40 };
+  const kept = collapseCopies([
+    { key: 'block', rings: [block], base: 0, height: 14 },
+    { key: 'nested', rings: [nested], base: 0, height: 11 },
+    { key: 'beside', rings: [beside], base: 0, height: 10 },
+  ]);
+  assert.deepEqual(kept.map((part) => part.key), ['block', 'beside']);
+  const withYard = collapseCopies([
+    { key: 'block', rings: [block, hole], base: 0, height: 14 },
+    { key: 'yard', rings: [yard], base: 0, height: 9 },
+  ]);
+  assert.deepEqual(withYard.map((part) => part.key), ['block', 'yard']);
+  const withTower = collapseCopies([
+    { key: 'block', rings: [block], base: 0, height: 12 },
+    tower,
+  ]);
+  assert.deepEqual(withTower.map((part) => part.key), ['block', 'tower']);
+});
+
 test('a house missing from one map query stays while it is still nearby', () => {
   const near = retainNearParts([{ key: 'a' }], [{ key: 'a' }, { key: 'b' }, { key: 'c' }], (part) => part.key === 'c' ? 2000 : 10, 100);
   assert.deepEqual(near.map((part) => part.key), ['a', 'b']);
@@ -201,6 +226,7 @@ import { cellDistance, deferCellReplacement } from '../src/game/buildings/cellSt
 test('streaming protects the whole nearby block but allows remote and explicit style updates',()=>{
   assert.equal(cellDistance(200,0,0,0,200),100);
   assert.equal(deferCellReplacement(100,true,true),true);
+  assert.equal(deferCellReplacement(100,true,true,20),false);
   assert.equal(deferCellReplacement(300,true,true),false);
   assert.equal(deferCellReplacement(100,false,true),false);
   assert.equal(deferCellReplacement(100,true,false),false);

@@ -99,6 +99,76 @@ function coversEdge(from: number[][], onto: number[][], slack: number) {
   return from.length > 0 && hit / from.length >= 0.6;
 }
 
+function ringArea(points: number[][]) {
+  let sum = 0;
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i];
+    const b = points[(i + 1) % points.length];
+    sum += a[0] * b[1] - b[0] * a[1];
+  }
+  return Math.abs(sum) / 2;
+}
+
+function boundsOf(points: number[][]) {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const point of points) {
+    minX = Math.min(minX, point[0]);
+    minY = Math.min(minY, point[1]);
+    maxX = Math.max(maxX, point[0]);
+    maxY = Math.max(maxY, point[1]);
+  }
+  return { minX, minY, maxX, maxY };
+}
+
+function boxesMeet(a: ReturnType<typeof boundsOf>, b: ReturnType<typeof boundsOf>, pad: number) {
+  return a.minX <= b.maxX + pad && b.minX <= a.maxX + pad && a.minY <= b.maxY + pad && b.minY <= a.maxY + pad;
+}
+
+function pointInRing(x: number, y: number, ring: number[][]) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i][0];
+    const yi = ring[i][1];
+    const xj = ring[j][0];
+    const yj = ring[j][1];
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / ((yj - yi) || 1e-9) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+function onRing(point: number[], ring: number[][], slack: number) {
+  const slack2 = slack * slack;
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i];
+    const b = ring[(i + 1) % ring.length];
+    const dx = b[0] - a[0];
+    const dy = b[1] - a[1];
+    const t = Math.max(0, Math.min(1, ((point[0] - a[0]) * dx + (point[1] - a[1]) * dy) / (dx * dx + dy * dy || 1)));
+    const ex = a[0] + t * dx - point[0];
+    const ey = a[1] + t * dy - point[1];
+    if (ex * ex + ey * ey <= slack2) return true;
+  }
+  return false;
+}
+
+function insideFootprint(point: number[], outer: number[][], holes: number[][][]) {
+  if (!pointInRing(point[0], point[1], outer) && !onRing(point, outer, 1.8)) return false;
+  for (const hole of holes) if (pointInRing(point[0], point[1], hole)) return false;
+  return true;
+}
+
+// A tile seam often repeats a house as a smaller outline on top of the block,
+// or as a part sitting inside the parent footprint.
+function buriedCopy(inner: number[][], outer: number[][], holes: number[][][]) {
+  if (inner.length < 3 || outer.length < 3) return false;
+  let hit = 0;
+  for (const point of inner) if (insideFootprint(point, outer, holes)) hit++;
+  return hit / inner.length >= 0.6;
+}
+
 function sameHouse(a: Ring, b: Ring) {
   if (a.length < 3 || b.length < 3) return false;
   // Both outlines must use one projection, independent of their first vertex.
@@ -115,10 +185,11 @@ function sameHouse(a: Ring, b: Ring) {
 // each copy paints its own windows a step to the side.
 export function collapseCopies<T extends Stacked & { key: string }>(parts: T[]): T[] {
   const info = parts.map((part) => {
-    const ring = part.rings[0] ?? [];
-    const points = outlineMeters(ring);
-    const center = centroidOf(points);
-    return { points, x: center[0], y: center[1] };
+    const latitude = part.rings[0]?.[0]?.[1] ?? 0;
+    const outer = outlineMeters(part.rings[0] ?? [], latitude);
+    const holes = part.rings.slice(1).map((ring) => outlineMeters(ring, latitude));
+    const center = centroidOf(outer);
+    return { points: outer, holes, area: ringArea(outer), bounds: boundsOf(outer), x: center[0], y: center[1] };
   });
   const buckets = new Map<string, number[]>();
   for (let i = 0; i < parts.length; i++) {
@@ -142,13 +213,24 @@ export function collapseCopies<T extends Stacked & { key: string }>(parts: T[]):
     for (let dz = -1; dz <= 1 && !drop.has(i); dz++) for (let dx = -1; dx <= 1 && !drop.has(i); dx++) {
       for (const j of buckets.get(`${cx + dx}:${cy + dz}`) ?? []) {
         if (j <= i || drop.has(j) || info[j].points.length < 3) continue;
+        if (!boxesMeet(info[i].bounds, info[j].bounds, 3)) continue;
         const gapX = info[i].x - info[j].x;
         const gapY = info[i].y - info[j].y;
-        if (gapX * gapX + gapY * gapY > 144) continue;
         const ringA = parts[i].rings[0];
         const ringB = parts[j].rings[0];
-        if (!ringA || !ringB || !sameHouse(ringA, ringB)) continue;
-        drop.add(keepIndex(i, j) === i ? j : i);
+        if (ringA && ringB && gapX * gapX + gapY * gapY <= 144 && sameHouse(ringA, ringB)) {
+          drop.add(keepIndex(i, j) === i ? j : i);
+          if (drop.has(i)) break;
+          continue;
+        }
+        const small = info[i].area <= info[j].area ? i : j;
+        const large = small === i ? j : i;
+        if (info[small].area > info[large].area * 0.92) continue;
+        if (!buriedCopy(info[small].points, info[large].points, info[large].holes)) continue;
+        const spanSmall = parts[small].height - parts[small].base;
+        const spanLarge = parts[large].height - parts[large].base;
+        if (spanSmall > spanLarge + 4) continue;
+        drop.add(small);
         if (drop.has(i)) break;
       }
     }

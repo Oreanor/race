@@ -1,3 +1,4 @@
+import { TireTracks } from './TireTracks';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { MercatorCoordinate, type CustomLayerInterface, type Map as LibreMap } from 'maplibre-gl';
@@ -142,20 +143,7 @@ export function vehicleLayer(car: Car, vehicle: Pose, height: () => number, pitc
   let cursor = 0;
   let lastSpawn = 0;
   let lastFrame = 0;
-  const trackGeo = new THREE.PlaneGeometry(0.26, 1.05);
-  trackGeo.rotateX(-Math.PI / 2);
-  const tracks = Array.from({ length: 32 }, () => {
-    const material = new THREE.MeshBasicMaterial({ color: '#2a241c', transparent: true, opacity: 0, depthWrite: false });
-    const mesh = new THREE.Mesh(trackGeo, material);
-    mesh.frustumCulled = false;
-    mesh.renderOrder = 1;
-    mesh.visible = false;
-    scene.add(mesh);
-    return { mesh, material, place: [0, 0] as Position, heading: 0, active: false };
-  });
-  let trackCursor = 0;
-  let trailFrom: Position | null = null;
-  let sinceMark = 0;
+  const tireTracks = new TireTracks(scene);
   const spawn = (side: number, now: number) => {
     const lean = pitch();
     const back = -car.length * 0.56;
@@ -205,48 +193,7 @@ export function vehicleLayer(car: Car, vehicle: Pose, height: () => number, pitc
       }
       const heading = vehicle.heading;
       const here = vehicle.position;
-      if (trailFrom) {
-        const step = eastNorth(trailFrom, here);
-        const moved = Math.hypot(step.east, step.north);
-        if (moved > 0.04 && moved < 6) {
-          sinceMark += moved;
-          if (sinceMark >= 0.62) {
-            sinceMark = 0;
-            const sized = scale();
-            const back = car.length * 0.34 * sized;
-            const side = 0.78 * sized;
-            const hx = Math.sin(heading);
-            const hz = Math.cos(heading);
-            const rx = Math.cos(heading);
-            const rz = -Math.sin(heading);
-            for (const sign of [-1, 1]) {
-              const mark = tracks[trackCursor % tracks.length];
-              trackCursor += 1;
-              mark.active = true;
-              mark.heading = heading;
-              mark.place = offsetPosition(here, -hx * back + rx * side * sign, -hz * back + rz * side * sign);
-              mark.mesh.visible = true;
-              mark.mesh.scale.setScalar(sized);
-            }
-          }
-        } else if (moved >= 6) sinceMark = 0;
-      }
-      trailFrom = [here[0], here[1]];
-      for (const mark of tracks) {
-        if (!mark.active) continue;
-        const offset = eastNorth(here, mark.place);
-        const along = offset.east * Math.sin(heading) + offset.north * Math.cos(heading);
-        const dist = Math.hypot(offset.east, offset.north);
-        if (along > 1.2 || dist > 10) {
-          mark.active = false;
-          mark.mesh.visible = false;
-          continue;
-        }
-        const fade = Math.max(0, 1 - dist / 10);
-        mark.material.opacity = 0.4 * fade * fade;
-        mark.mesh.position.set(offset.north * Math.sin(heading) - offset.east * Math.cos(heading), 0.05, offset.north * Math.cos(heading) + offset.east * Math.sin(heading));
-        mark.mesh.rotation.y = mark.heading - heading;
-      }
+      tireTracks.update(here, heading, scale(), car.length, height() + car.offset, p => map.getTerrain() ? map.queryTerrainElevation(p) : 0);
       for (const puff of puffs) {
         if (!puff.active) continue;
         const age = now - puff.born;

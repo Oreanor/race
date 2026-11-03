@@ -1,0 +1,18 @@
+/*************************************************************************
+* ADOBE CONFIDENTIAL
+* ___________________
+*
+*  Copyright 2015 Adobe Systems Incorporated
+*  All Rights Reserved.
+*
+* NOTICE:  All information contained herein is, and remains
+* the property of Adobe Systems Incorporated and its suppliers,
+* if any.  The intellectual and technical concepts contained
+* herein are proprietary to Adobe Systems Incorporated and its
+* suppliers and are protected by all applicable intellectual property laws,
+* including trade secret and or copyright laws.
+* Dissemination of this information or reproduction of this material
+* is strictly forbidden unless prior written permission is obtained
+* from Adobe Systems Incorporated.
+**************************************************************************/
+import{createPageThemeWatcher as e,detectPageTheme as t}from"./page-theme-utils.js";function o(e){return jest.spyOn(window,"getComputedStyle").mockImplementation(t=>({backgroundColor:e.backgroundColor?.(t)??"rgba(0, 0, 0, 0)",colorScheme:e.colorScheme?.(t)??""}))}describe("page-theme-utils",()=>{afterEach(()=>{jest.restoreAllMocks(),jest.useRealTimers()}),it("uses root background",()=>{o({backgroundColor:e=>e===document.body?"rgb(0, 0, 0)":"rgba(0, 0, 0, 0)"}),expect(t()).toBe("dark")}),it("walks context parent chain first",()=>{const e=document.createElement("div"),r=document.createElement("h1");e.appendChild(r),document.body.appendChild(e),o({backgroundColor:t=>t===e?"rgb(255, 255, 255)":t===document.body?"rgb(0, 0, 0)":"rgba(0, 0, 0, 0)"}),expect(t({contextEl:r})).toBe("light")}),it("reads color-scheme from html",()=>{document.documentElement.style.colorScheme="dark",expect(t()).toBe("dark")}),describe("transparent roots",()=>{const e=()=>{window.matchMedia=jest.fn(()=>({matches:!0}))};afterEach(()=>{delete window.matchMedia}),it.each(["","normal","light"])("is light on a dark OS when color-scheme is '%s'",r=>{e(),o({colorScheme:()=>r}),expect(t()).toBe("light")}),it("follows the OS when the root supports both schemes",()=>{e(),o({colorScheme:()=>"light dark"}),expect(t()).toBe("dark"),window.matchMedia=jest.fn(()=>({matches:!1})),expect(t()).toBe("light")}),it("still honours an explicit dark color-scheme on a dark OS",()=>{e(),o({colorScheme:()=>"dark"}),expect(t()).toBe("dark")}),describe("meta color-scheme",()=>{const r=e=>{const t=document.createElement("meta");t.name="color-scheme",t.content=e,document.head.appendChild(t)};afterEach(()=>{document.querySelectorAll('meta[name="color-scheme"]').forEach(e=>e.remove())}),it("follows the OS for 'light dark' even though the computed root scheme is normal",()=>{e(),o({colorScheme:()=>"normal"}),r("light dark"),expect(t()).toBe("dark")}),it("is dark for a dark-only meta on a light OS",()=>{window.matchMedia=jest.fn(()=>({matches:!1})),o({colorScheme:()=>"normal"}),r("dark"),expect(t()).toBe("dark")}),it("is light for a light-only meta on a dark OS",()=>{e(),o({colorScheme:()=>"normal"}),r("light"),expect(t()).toBe("light")})})}),it("fires onChange when root theme flips",async()=>{jest.useFakeTimers(),o({backgroundColor:e=>e===document.body&&document.body.classList.contains("night")?"rgb(0, 0, 0)":"rgb(255, 255, 255)"});const t=jest.fn(),r=e({onChange:t,debounceMs:0});r.start(),document.body.classList.add("night"),await Promise.resolve(),jest.runOnlyPendingTimers(),expect(t).toHaveBeenCalledWith("dark"),r.stop()}),it("ignores unrelated attribute churn",async()=>{jest.useFakeTimers(),o({backgroundColor:()=>"rgb(255, 255, 255)"});const t=jest.fn(),r=e({onChange:t,debounceMs:0});r.start(),document.body.setAttribute("data-x","1"),await Promise.resolve(),jest.runOnlyPendingTimers(),expect(t).not.toHaveBeenCalled(),r.stop()})});

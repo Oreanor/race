@@ -1,0 +1,18 @@
+/*************************************************************************
+* ADOBE CONFIDENTIAL
+* ___________________
+*
+*  Copyright 2015 Adobe Systems Incorporated
+*  All Rights Reserved.
+*
+* NOTICE:  All information contained herein is, and remains
+* the property of Adobe Systems Incorporated and its suppliers,
+* if any.  The intellectual and technical concepts contained
+* herein are proprietary to Adobe Systems Incorporated and its
+* suppliers and are protected by all applicable intellectual property laws,
+* including trade secret and or copyright laws.
+* Dissemination of this information or reproduction of this material
+* is strictly forbidden unless prior written permission is obtained
+* from Adobe Systems Incorporated.
+**************************************************************************/
+import{floodgate as e}from"./floodgate.js";import{dcLocalStorage as t}from"../common/local-storage.js";import{util as n}from"./util.js";import{viewerModuleUtils as o}from"./viewer-module-utils.js";import{loggingApi as i}from"../common/loggingApi.js";import{SECURE_IPC_FLAG as a,isSecureIpcSurfaceEnabled as c}from"./main-world-ipc/module.js";const r=(e,n)=>{const o="en-US"===t.getItem("locale")||"en-GB"===t.getItem("locale");return o&&e||!o&&n},l=t=>{try{return JSON.parse(e.getFeatureMeta(t))}catch(e){return i.error({context:"LinkedInTouchPoint",message:`Failure in parsing FeatureFlag ${t}`,error:e.message||e.toString()}),{}}};async function d(d,s){await t.init();const[p,h,u,g,m,F,T]=await Promise.all([e.hasFlag("dc-cv-linkedin-pdf-touch-point"),e.getFeatureMeta("dc-cv-linkedin-pdf-touch-point-updated"),e.hasFlag("dc-cv-linkedin-pdf-touch-point-control"),e.hasFlag("dc-cv-linkedin-chat-pdf-touch-point"),e.hasFlag("dc-cv-linkedin-chat-pdf-touch-point-control"),e.hasFlag("dc-cv-linkedin-chat-pdf"),e.hasFlag(a)]);try{await o.initializeViewerVariables(d)}catch(e){i.error({context:"LinkedInTouchPoint",message:"Error initializing viewer variables for LinkedIn",error:e.message||e.toString()})}const f=!n.isAcrobatTouchPointEnabled("acrobat-touch-point-in-linkedin");let k,P,b,L;p?k=l("dc-cv-linkedin-pdf-touch-point"):u&&(k=l("dc-cv-linkedin-pdf-touch-point-control")),h&&(P=l("dc-cv-linkedin-pdf-touch-point-updated")),F&&(b=l("dc-cv-linkedin-chat-pdf")),g?L=l("dc-cv-linkedin-chat-pdf-touch-point"):m&&(L=l("dc-cv-linkedin-chat-pdf-touch-point-control"));const v={...k?.selectors??{},...P?.selectors??{},...b?.selectors??{},...L?.selectors??{}},E=r(k?.enLocaleEnabled??!1,k?.nonEnLocaleEnabled??!1),I=k?.fteEnabled??!1,D=k?.tooltip??{},S=P?.maxLRUSizeForFeedPostData??6e3,j=P?.headerWaitTime??100,w=r(L?.enLocaleEnabled??!1,L?.nonEnLocaleEnabled??!1),x=L?.fteEnabled??!1,z=L?.tooltip??{},C=L?.maxLRUSizeForMessageData??6e3;return{enableLinkedinPDFTouchPoint:p&&!f&&E,enableLinkedinChatPDFTouchPoint:g&&!f&&w,enableLinkedinPDFTouchPointUpdated:h&&!f&&E,enableLinkedinChatPDFAnalytics:F,selectors:v,openInAcrobatString:n.getTranslation("gsuiteOpenWithAcrobat"),summariseTouchPointString:n.getTranslation("linkedInSummarizePDF"),fteToolTipStrings:{title:n.getTranslation("outlookPDFTouchPointFTEHeader"),description:n.getTranslation("linkedInFeedPDFTouchPointFTEBody"),button:n.getTranslation("closeButton")},chatFteToolTipStrings:{title:n.getTranslation("linkedInChatPDFTouchPointFTEHeader"),description:n.getTranslation("linkedInChatPDFTouchPointFTEBody"),button:n.getTranslation("closeButton")},enableLinkedinFeedFteTooltip:I,enableLinkedinChatFteTooltip:x,feedFteConfig:D,chatFteConfig:z,maxLRUSizeForFeedPostData:S,maxLRUSizeForMessageData:C,headerWaitTime:j,frameId:s?.frameId,secureIpcForLinkedinInject:T&&c("linkedin_inject")}}export{d as linkedinInit};

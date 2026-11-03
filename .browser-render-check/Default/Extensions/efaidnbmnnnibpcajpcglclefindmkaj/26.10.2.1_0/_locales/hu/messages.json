@@ -1,0 +1,1825 @@
+{
+   "ConvertVerbDescription": {
+      "message": "Dokumentumok átalakítása PDF-fájlból vagy PDF-fájllá."
+   },
+   "Disable": {
+      "message": "Kikapcsolás"
+   },
+   "EditVerbDescription": {
+      "message": "Oldalak átrendezése, elforgatása vagy törlése a PDF-ben."
+   },
+   "Enable": {
+      "message": "Engedélyezés"
+   },
+   "LearnMoreURL": {
+      "message": "https://helpx.adobe.com/hu/acrobat/kb/acrobat-pro-aip-for-chrome.html"
+   },
+   "LearnMoreURLEdge": {
+      "message": "https://helpx.adobe.com/hu/acrobat/kb/acrobat-pro-aip-for-edge.html"
+   },
+   "LocalFileAccessAndSummaryCoachmarkButton": {
+      "message": "Összefoglalók engedélyezése"
+   },
+   "LocalFileAccessAndSummaryCoachmarkSubtext": {
+      "message": "A rendelkezésre álló kreditek függvényében"
+   },
+   "acrobatEmbeddedTouchPointPreferenceDescription": {
+      "message": "A parancsikon használatával megnyithatja a PDF-eket a bővítményen belül a könnyű szerkesztéshez, összefoglaláshoz, mentéshez és egyebekhez."
+   },
+   "acrobatEmbeddedTouchPointPreferenceTitle": {
+      "message": "Acrobat-parancsikon megjelenítése beágyazott webes PDF-ekben"
+   },
+   "acrobatGdriveTripleDotMenuTouchPointText": {
+      "message": "Open with Acrobat"
+   },
+   "acrobatGmailFteToolTipButton": {
+      "message": "Megértettem"
+   },
+   "acrobatGmailFteToolTipDescription": {
+      "message": "Edit, convert, comment & sign - right in Chrome with Acrobat"
+   },
+   "acrobatGmailFteToolTipTitle": {
+      "message": "Open this PDF in Acrobat"
+   },
+   "acrobatGsuiteFteToolTipButton": {
+      "message": "Megértettem"
+   },
+   "acrobatGsuiteFteToolTipButtonDV": {
+      "message": "OK"
+   },
+   "acrobatGsuiteFteToolTipButtonNonDV": {
+      "message": "OK"
+   },
+   "acrobatGsuiteFteToolTipDescription": {
+      "message": "Edit, convert, comment & sign - right in Chrome with Acrobat"
+   },
+   "acrobatGsuiteFteToolTipDescriptionDV": {
+      "message": "Try PDF tools like edit, comment, convert, and e-sign from $surfaceName$ by making Acrobat your default PDF viewer.",
+      "placeholders": {
+         "surfaceName": {
+            "content": "$1"
+         }
+      }
+   },
+   "acrobatGsuiteFteToolTipDescriptionNonDV": {
+      "message": "Try Acrobat PDF tools like edit, comment, convert, and e-sign — right from $surfaceName$.",
+      "placeholders": {
+         "surfaceName": {
+            "content": "$1"
+         }
+      }
+   },
+   "acrobatGsuiteFteToolTipTitle": {
+      "message": "Open this PDF in Acrobat"
+   },
+   "acrobatGsuiteFteToolTipTitleDV": {
+      "message": "Open all PDFs in Adobe Acrobat"
+   },
+   "acrobatGsuiteFteToolTipTitleNonDV": {
+      "message": "Open this PDF in Adobe Acrobat"
+   },
+   "acrobatGsuiteTouchPointPreferenceDescription": {
+      "message": "Add Acrobat icons to Gmail and Google Drive to quickly open PDFs in Acrobat and access PDF tools."
+   },
+   "acrobatGsuiteTouchPointPreferenceTitle": {
+      "message": "Integrate Acrobat into Gmail and Google Drive"
+   },
+   "acrobatLinkedInPDFTouchPointPreferenceDescription": {
+      "message": "Integrálja az Acrobatot webhelyekkel, például a Gmaillel, a Google Drive-val, az Outlookkal és a LinkedInnel, hogy egyszerűen elérhesse a PDF-eszközöket."
+   },
+   "acrobatTouchPointInOtherSitesPrefDescription": {
+      "message": "Integrálja Acrobatot webhelyekkel (például Gmaillel, Google Drive-val, Outlookkal, LinkedInnel és másokkal), hogy könnyen elérje a PDF-eszközöket."
+   },
+   "acrobatTouchPointInOtherSitesPreferenceDescription": {
+      "message": "Integrate Acrobat with websites, including Gmail and Google Drive, for easy access to PDF tools."
+   },
+   "acrobatTouchPointInOtherSitesPreferenceTitle": {
+      "message": "Acrobat-beállítások megjelenítése más webhelyeken"
+   },
+   "acrobatTouchPointInOtherSurfacesPreferenceDescription": {
+      "message": "Integrate Acrobat with websites, including Gmail, Google Drive, and Outlook for easy access to PDF tools."
+   },
+   "addEffectsImageContextMenuV2ChatGPT": {
+      "message": "Effektek hozzáadása"
+   },
+   "addWebpageToExistingPdfSpaceContextMenu": {
+      "message": "Weboldal hozzáadása meglévő PDF-területhez..."
+   },
+   "addWebpageToExistingStudySpaceContextMenu": {
+      "message": "Weboldal hozzáadása a meglévő Student Space-hez..."
+   },
+   "addWebpageToNewPdfSpaceContextMenu": {
+      "message": "Weboldal hozzáadása új PDF-területhez..."
+   },
+   "addWebpageToNewStudySpaceContextMenu": {
+      "message": "Weboldal hozzáadása egy új Student Space-hez..."
+   },
+   "addWebpageToProjectContextMenuTitle": {
+      "message": "Hozzáadás PDF Space-hez..."
+   },
+   "addWebpageToProjectFailed": {
+      "message": "Nem sikerült a weboldalt hozzáadni a PDF Space-hez"
+   },
+   "addWebpageToProjectFailedStudy": {
+      "message": "Nem sikerült hozzáadni a weboldalt a Student Space-hez"
+   },
+   "addWebpageToProjectIngestionStarted": {
+      "message": "Hozzáadjuk ezt a weboldalt az Ön PDF Space tárhelyéhez. Értesítjük, amint elkészült."
+   },
+   "addWebpageToProjectIngestionStartedStudy": {
+      "message": "Hozzáadjuk ezt a weboldalt az Ön Student Space-éhez. Értesítjük, amint elkészült."
+   },
+   "addWebpageToProjectSuccess": {
+      "message": "Weboldal hozzáadása a következőhöz: $collectionName$",
+      "placeholders": {
+         "collectionName": {
+            "content": "$1"
+         }
+      }
+   },
+   "addWebpageToProjectViewAction": {
+      "message": "PDF-tér projekt megtekintése"
+   },
+   "addWebpageToProjectViewActionStudy": {
+      "message": "Student Space megtekintése"
+   },
+   "addWebpageUpsellContactAdminMessage": {
+      "message": "A funkció engedélyezéséhez vegye fel a kapcsolatot a rendszergazdájával."
+   },
+   "adobeAcrobatParentMenuTitle": {
+      "message": "Adobe Acrobat: PDF-ek és PDF-terek létrehozása, szerkesztése"
+   },
+   "adobeAcrobatParentMenuTitleStudySpace": {
+      "message": "Adobe Acrobat: PDF-ek létrehozása, szerkesztése és Tanulói terek"
+   },
+   "adobeYoloErrorMessage": {
+      "message": "Sajnáljuk, ez a link érvénytelen"
+   },
+   "adobeYoloMessage": {
+      "message": "Bejelentkezés az Acrobatba..."
+   },
+   "aiAcBody": {
+      "message": "Quickly summarize webpages and get key insights using Acrobat AI Assistant."
+   },
+   "aiAcHeader": {
+      "message": "Do more with your Acrobat extension"
+   },
+   "analyticsOptinTitle": {
+      "message": "Felhasználási adatok küldése"
+   },
+   "appearancePrefDesc": {
+      "message": "Váltás sötét és világos témák között"
+   },
+   "appearancePrefOp1": {
+      "message": "Rendszerbeállítás használata"
+   },
+   "appearancePrefOp2": {
+      "message": "Dark mode"
+   },
+   "appearancePrefOp3": {
+      "message": "Light mode"
+   },
+   "appearancePrefTitle": {
+      "message": "Sötét mód beállítások"
+   },
+   "askAIAssistant": {
+      "message": "Kérdezze az MI-asszisztenst"
+   },
+   "askAIAssistantContextMenu": {
+      "message": "Kérdezze meg az MI asszisztenst a weboldalról"
+   },
+   "askAIAssistantSelectedContent": {
+      "message": "Kérdezze az MI-asszisztenst"
+   },
+   "askAssistantBannerContentText": {
+      "message": "Get fast summaries and key insights with AI Assistant on webpages."
+   },
+   "askAssistantBannerTitle": {
+      "message": "AI Assistant for webpages"
+   },
+   "attachmentCardConvertingTooltip": {
+      "message": "A fájl konvertálása folyamatban van, és a befejezés után egy új lapon nyílik meg"
+   },
+   "autoEnhanceImageContextMenuV2ChatGPT": {
+      "message": "Automatikus javítás"
+   },
+   "bypassGenAIWebpageEligibilityDescription": {
+      "message": "Ha engedélyezve van, a generatív mesterséges intelligencia funkciók minden weboldalon elérhetők lesznek, a jogosultsági ellenőrzésektől függetlenül. Ez a beállítás csak az Adobe belső felhasználói számára érhető el."
+   },
+   "bypassGenAIWebpageEligibilityTitle": {
+      "message": "MI asszisztens engedélyezése weboldalakhoz az összes oldalon"
+   },
+   "canQuesBriefOverview": {
+      "message": "Provide a brief overview of this article"
+   },
+   "canQuesCreateFAQ": {
+      "message": "Create an FAQ list based on this info"
+   },
+   "canQuesDraftEmail": {
+      "message": "Draft an email summarizing the key points"
+   },
+   "canQuesImpTopics": {
+      "message": "List all important topics and keywords"
+   },
+   "canQuesSummarise": {
+      "message": "Summarize this article"
+   },
+   "cancel": {
+      "message": "Mégse"
+   },
+   "chatgptCanvasConvertToPDF": {
+      "message": "Konvertálás PDF-re"
+   },
+   "chatgptCanvasConvertToPDFTooltip": {
+      "message": "Konvertálás és megnyitás az Acrobatban"
+   },
+   "chatgptCanvasFteDescription": {
+      "message": "Konvertálja a csevegéseit PDF-fé az Acrobat segítségével, és szerkessze őket a böngészőben."
+   },
+   "chatgptCanvasFteTitle": {
+      "message": "Konvertálás PDF-be Adobe Acrobat segítségével"
+   },
+   "chatgptConvertToPDF": {
+      "message": "Csevegés átalakítása PDF-fé"
+   },
+   "chatgptConvertToPDFFteDescription": {
+      "message": "Konvertálja a csevegéseit PDF-ekké az Acrobat használatával, és szerkessze őket a böngészőben."
+   },
+   "chatgptConvertToPDFFteTitle": {
+      "message": "Konvertálás PDF-be Adobe Acrobat használatával"
+   },
+   "chatgptConvertToPDFTooltip": {
+      "message": "Konvertálás és megnyitás Acrobatban"
+   },
+   "chatgptDeepResearchDefaultTitle": {
+      "message": "ChatGPT Deep Research"
+   },
+   "chatgptDefaultTitleText": {
+      "message": "ChatGPT"
+   },
+   "chatgptLongChatInterrupt": {
+      "message": "A görgetés megszakadt. Próbálja újra kattintás, görgetés vagy a lapok közötti váltás nélkül."
+   },
+   "chatgptLongChatPhase1Desc": {
+      "message": "Ez az oldal automatikusan görget, hogy a PDF-be konvertálás előtt betöltse a teljes csevegést."
+   },
+   "chatgptLongChatPhase1Title": {
+      "message": "Hosszú beszélgetés észlelve..."
+   },
+   "chatgptLongChatPhase2Desc": {
+      "message": "Ne kattintson, ne görgessen, és ne váltson lapot. Ezzel megszakítja a folyamatot."
+   },
+   "chatgptLongChatPhase2Title": {
+      "message": "Beszélgetés betöltése..."
+   },
+   "chatgptLongChatPhase3Desc": {
+      "message": "A konvertálás egy új lapon kezdődik."
+   },
+   "chatgptLongChatPhase3Title": {
+      "message": "Majdnem kész..."
+   },
+   "chatgptResponseExportToPDF": {
+      "message": "Konvertálás PDF-re"
+   },
+   "chatgptResponseExportToPDFTooltip": {
+      "message": "Alakítsa át ezt a választ PDF-fájllá, hogy szerkeszthesse vagy megoszthassa."
+   },
+   "chatgptResponseFteDescription": {
+      "message": "Alakítsa át a ChatGPT-válaszokat közvetlenül PDF-ekké az Adobe Acrobat bővítménnyel."
+   },
+   "chatgptResponseFteTitle": {
+      "message": "Alakítson bármely választ PDF-fé"
+   },
+   "closeButton": {
+      "message": "Bezárás"
+   },
+   "clusterBeta": {
+      "message": "Béta"
+   },
+   "clusterDevelop": {
+      "message": "Fejlesztés"
+   },
+   "clusterRelease": {
+      "message": "Megjelenés"
+   },
+   "conversionErrorDescription": {
+      "message": "Jelentse, és kivizsgáljuk, mi ment félre."
+   },
+   "conversionErrorDocumentTitle": {
+      "message": "Hiba"
+   },
+   "conversionErrorGoToAcrobat": {
+      "message": "Ugrás az Acrobatba"
+   },
+   "conversionErrorReportError": {
+      "message": "Hiba jelentése"
+   },
+   "conversionErrorTitle": {
+      "message": "Nem sikerült átalakítanunk a fájlját"
+   },
+   "convertToPDFFTEBody": {
+      "message": "Konvertálja a(z) $surfaceName$ tartalmát közvetlenül PDF-ekké az Adobe Acrobat bővítmény segítségével, és érje el a szerkesztéshez, aláíráshoz és egyebekhez szükséges eszközöket.",
+      "placeholders": {
+         "surfaceName": {
+            "content": "$1"
+         }
+      }
+   },
+   "convertToPDFFTEHeading": {
+      "message": "Alakítsa át a(z) $docTypeName$ fájlt PDF-fájllá",
+      "placeholders": {
+         "docTypeName": {
+            "content": "$1"
+         }
+      }
+   },
+   "convertToPDFTouchPointTooltip": {
+      "message": "Konvertálás és megnyitás Acrobatban"
+   },
+   "convertToPdf": {
+      "message": "Konvertálás PDF-re"
+   },
+   "convertToPdfErrorToastMessage": {
+      "message": "Nem sikerült a fájlt PDF formátumba konvertálni."
+   },
+   "convertToPdfPasswordProtectedError": {
+      "message": "A jelszóval védett fájlok nem konvertálhatók PDF-be"
+   },
+   "convertToPdfTabCloseErrorToastMessage": {
+      "message": "A fájl konvertálása nem sikerült. A konvertálás alatt tartsa nyitva az Acrobat lapot, majd próbálja újra."
+   },
+   "convertToPdfToastMessage": {
+      "message": "Fájl átalakítása folyamatban. Tartsa nyitva az Acrobat lapot, és értesítést kap, amikor elkészül."
+   },
+   "convertToPdfUsingAcrobatTooltip": {
+      "message": "Dokumentum konvertálása PDF formátumba Acrobat használatával"
+   },
+   "convertWebpageToPDFContextMenu": {
+      "message": "Weboldal átalakítása PDF-fé"
+   },
+   "convertedTabTitle": {
+      "message": "A fájl konvertálva"
+   },
+   "convertingInNewTabKeepOpenTooltip": {
+      "message": "Konvertálás új lapon. Tartsa nyitva az Acrobat lapot."
+   },
+   "convertingTabTitle": {
+      "message": "Fájl konvertálása"
+   },
+   "convertingTooltip": {
+      "message": "A fájl konvertálása egy új lapon folyamatban van. Értesítjük, amikor elkészül."
+   },
+   "convertingTouchPointText": {
+      "message": "Átalakítás..."
+   },
+   "cropAndResizeImageContextMenuV2ChatGPT": {
+      "message": "Vágás és átméretezés"
+   },
+   "cropImageContextMenu": {
+      "message": "Crop Image"
+   },
+   "dcWebBookmarkTitle": {
+      "message": "Adobe Acrobat kezdőlap"
+   },
+   "directFlowErrorTabTitle": {
+      "message": "Hiba"
+   },
+   "directFlowNotificationButtonText": {
+      "message": "Ugrás a fájlhoz"
+   },
+   "directFlowNotificationTitle": {
+      "message": "A fájl készen áll"
+   },
+   "directFlowNotificationTitlePlural": {
+      "message": "Az Ön fájljai készen állnak"
+   },
+   "doNotShowButton": {
+      "message": "Máskor ne jelenjen meg"
+   },
+   "domainPreferenceTitle": {
+      "message": "Websites where AI Assistant FAB is hidden"
+   },
+   "downloadBannerContinue": {
+      "message": "Turn on"
+   },
+   "downloadBannerText": {
+      "message": "Open all downloaded PDFs in Acrobat by setting the app as default PDF viewer in Chrome"
+   },
+   "editImageContextMenu": {
+      "message": "Kép szerkesztése"
+   },
+   "editImageMoreOptionsFteDescription": {
+      "message": "Alakítson át képeket PDF-ekké, vagy szerkessze őket közvetlenül a böngészőben az Acrobat és az Adobe Express segítségével."
+   },
+   "editImageMoreOptionsFteTitle": {
+      "message": "Konvertálja és szerkessze a képeket"
+   },
+   "editMegaVerbText": {
+      "message": "Szerkesztés"
+   },
+   "effectsImageContextMenu": {
+      "message": "Apply Effects"
+   },
+   "embeddedPDFHideIconForNow": {
+      "message": "Hide icon for now"
+   },
+   "embeddedPDFManagePreferences": {
+      "message": "Beállítások kezelése"
+   },
+   "embeddedPDFOpenInAcrobatTooltip": {
+      "message": "Open in Acrobat"
+   },
+   "embeddedPDFOpenPDFInAcrobat": {
+      "message": "Open PDF in Acrobat"
+   },
+   "embeddedPDFTouchPointFTEBody": {
+      "message": "Szerkesztés, összegzés és még sok más közvetlenül az Acrobat bővítményből. Ön bármikor elrejtheti ezt a parancsikont a Beállításokban."
+   },
+   "embeddedPDFTouchPointFTEHeader": {
+      "message": "Megnyitás Adobe Acrobatban"
+   },
+   "enableGenAIFeaturesDescription": {
+      "message": "Your file will be processed in the cloud to deliver a generative AI capability when you use a generative AI feature. Turning off this feature prevents your file from being processed and disables generative AI. You can reactivate it anytime."
+   },
+   "enableGenAIFeaturesTitle": {
+      "message": "Enable Generative AI features in Acrobat"
+   },
+   "envDev": {
+      "message": "Dev"
+   },
+   "envLocalDev": {
+      "message": "Helyi fejlesztés"
+   },
+   "envProd": {
+      "message": "Termelés"
+   },
+   "envStage": {
+      "message": "Fázis"
+   },
+   "envTest": {
+      "message": "Teszt"
+   },
+   "errorBoundaryDescription": {
+      "message": "Váratlan hibába ütköztünk. Kérjük, próbálja újra."
+   },
+   "errorBoundaryRetryButton": {
+      "message": "Próbálja ismét"
+   },
+   "errorBoundaryTitle": {
+      "message": "Hiba történt"
+   },
+   "explainSelectedContent": {
+      "message": "Magyarázat mesterséges intelligencia használatával"
+   },
+   "expressContextualFteCtaLabel": {
+      "message": "Close"
+   },
+   "expressContextualFteDescription": {
+      "message": "Vágjon, távolítsa el a hátteret, állítsa be a színeket és még sok mást az Adobe Acrobat szoftverben, az Adobe Express támogatásával."
+   },
+   "expressContextualFteTitle": {
+      "message": "Szerkessze a képeket gyorsan és egyszerűen"
+   },
+   "expressDropdownMenuTitle": {
+      "message": "Adobe Acrobat"
+   },
+   "expressDropdownMenuTooltip": {
+      "message": "Easily crop, remove background and more. Powered by Adobe Express."
+   },
+   "expressEditImageParentContextMenu": {
+      "message": "Edit Image"
+   },
+   "expressEditImagePoweredByExpressContextMenu": {
+      "message": "Powered by Adobe Express"
+   },
+   "expressExportOptionsDownloadLabel": {
+      "message": "Letöltés"
+   },
+   "expressExportOptionsSaveLabel": {
+      "message": "Mentés"
+   },
+   "expressFTEDescription": {
+      "message": "Right click to crop, remove background, or reimagine an image using AI."
+   },
+   "expressFTEFooter": {
+      "message": "Via \u003Cb>Adobe Acrobat\u003C/b>"
+   },
+   "expressFTETitle": {
+      "message": "Edit image with Adobe Express"
+   },
+   "expressHideforSession": {
+      "message": "Elrejtés egyelőre"
+   },
+   "expressManageinSettings": {
+      "message": "Beállítások"
+   },
+   "expressPopoverFTEDescription": {
+      "message": "Right-click on any online image to quickly remove the background, crop, or reimagine it using AI with Adobe Express"
+   },
+   "expressPopoverFTETitle": {
+      "message": "Edit images right in your browser"
+   },
+   "expressPublishModalTitle": {
+      "message": "Downloading image..."
+   },
+   "expressTouchpointPreferenceDescription": {
+      "message": "Adobe Acrobat extension lets you edit images with Adobe Express. Turning off this feature will remove this capability. You can reactivate it any time."
+   },
+   "expressTouchpointPreferenceTitle": {
+      "message": "Enable Adobe Express actions in Acrobat"
+   },
+   "extensionMenuTitle": {
+      "message": "Acrobat bővítmény – Parancsikon az összes PDF-eszközhöz"
+   },
+   "fabHomeTooltipFteText": {
+      "message": "Nézze meg az Acrobat új kezdőlapját a böngészőjében"
+   },
+   "fabNudgeLabelArticleAbout": {
+      "message": "Miről szól ez a cikk?"
+   },
+   "fabNudgeLabelKeyFigures": {
+      "message": "Melyek a legfontosabb adatok?"
+   },
+   "fabNudgeLabelKeyTakeaways": {
+      "message": "Mik a legfontosabb tanulságok?"
+   },
+   "fabNudgeLabelKeyTerms": {
+      "message": "Mit jelentenek a kulcsfogalmak?"
+   },
+   "fabNudgeLabelMainThemes": {
+      "message": "Melyek a fő témák?"
+   },
+   "fabNudgeLabelPageAbout": {
+      "message": "Miről szól ez az oldal?"
+   },
+   "fabNudgeLabelSimplify": {
+      "message": "Le tudná egyszerűsíteni ezt?"
+   },
+   "fabNudgePromptArticleKeyTakeaways": {
+      "message": "Melyek a cikk legfontosabb tanulságai?"
+   },
+   "fabNudgePromptArticleMainThemes": {
+      "message": "Melyek a cikk fő témái vagy érvei?"
+   },
+   "fabNudgePromptArticleSimplify": {
+      "message": "Magyarázza el ezt a cikket közérthető, egyszerű nyelven."
+   },
+   "fabNudgePromptArticleSummary": {
+      "message": "Foglalja össze, miről szól ez a cikk."
+   },
+   "fabNudgePromptKeyFigures": {
+      "message": "Emelje ki az oldal legfontosabb tényeit, adatait és dátumait."
+   },
+   "fabNudgePromptKeyTerms": {
+      "message": "Azonosítsa és határozza meg az oldalon szereplő kulcsfogalmakat vagy zsargont."
+   },
+   "fabNudgePromptPageKeyTakeaways": {
+      "message": "Melyek az oldal legfontosabb tanulságai?"
+   },
+   "fabNudgePromptPageMainThemes": {
+      "message": "Melyek az oldal fő témái vagy érvei?"
+   },
+   "fabNudgePromptPageSimplify": {
+      "message": "Magyarázza el ezt az oldalt közérthető, egyszerű nyelven."
+   },
+   "fabNudgePromptPageSummary": {
+      "message": "Foglalja össze, miről szól ez az oldal."
+   },
+   "fabPillAskAI": {
+      "message": "Kérdezze a mesterséges intelligenciát az oldalról"
+   },
+   "fabPillConvertToPDF": {
+      "message": "Konvertálás PDF-re"
+   },
+   "fabPillSummarize": {
+      "message": "Összegzés mesterséges intelligenciával"
+   },
+   "fabPillsFteHeaderText": {
+      "message": "Hozzon ki többet Acrobat bővítményéből"
+   },
+   "fabPillsHeaderText": {
+      "message": "Adobe Acrobat"
+   },
+   "failToastText": {
+      "message": "An unexpected error has occurred, please try again later."
+   },
+   "fileReadyTabTitle": {
+      "message": "A fájl készen áll"
+   },
+   "frictionlesOfflineMessage": {
+      "message": "Kérjük, lépjen kapcsolatba a hálózati rendszergazdájával a kapcsolat folytatásához"
+   },
+   "frictionlessWidgetErrorGeneric": {
+      "message": "Hiba történt a betöltés közben. Kérjük, próbálja újra."
+   },
+   "frictionlessWidgetErrorInitFailed": {
+      "message": "Nem sikerült inicializálni a widgetet. Kérjük, próbálja újra."
+   },
+   "frictionlessWidgetErrorLoadFailed": {
+      "message": "A widget betöltése nem sikerült. Kérjük, ellenőrizze a kapcsolatot, majd próbálja újra."
+   },
+   "frictionlessWidgetErrorLoading": {
+      "message": "Hiba történt a widget betöltésekor"
+   },
+   "frictionlessWidgetErrorTimeout": {
+      "message": "A szakasz betöltése nem sikerült"
+   },
+   "frictionlessWidgetErrorTimeoutMessage": {
+      "message": "A kérés a vártnál tovább tart."
+   },
+   "frictionlessWidgetErrorUnableToLoad": {
+      "message": "Nem tölthető be"
+   },
+   "frictionlessWidgetErrorUnsupportedFormat": {
+      "message": "nem támogatott formátumú"
+   },
+   "frictionlessWidgetErrorUploadFailed": {
+      "message": "Hiba történt a fájl feltöltése közben"
+   },
+   "frictionlessWidgetNoConnectionTitle": {
+      "message": "Nincs kapcsolat"
+   },
+   "frictionlessWidgetOfflineMessage": {
+      "message": "Ellenőrizze az internetkapcsolatot, és próbálja újra."
+   },
+   "frictionlessWidgetOfflineRetryInfo": {
+      "message": "Amint Ön ismét online lesz, automatikusan újrapróbáljuk."
+   },
+   "frictionlessWidgetOfflineTitle": {
+      "message": "Ön offline állapotban van"
+   },
+   "frictionlessWidgetRetryButton": {
+      "message": "Újra"
+   },
+   "fteDocTypeNameFile": {
+      "message": "fájl"
+   },
+   "fteDocTypeNamePresentation": {
+      "message": "prezentáció"
+   },
+   "fteDocTypeNameSheet": {
+      "message": "munkalap"
+   },
+   "fteOwnershipSideRedCardContent": {
+      "message": "Megjegyzések hozzáadása, űrlapok kitöltése, aláírás és egyéb lehetőségek közvetlenül a Chrome böngészőben, az Acrobat alapértelmezett PDF-megtekintőként való beállítását követően."
+   },
+   "fteSideCardPrimaryHeader": {
+      "message": "Acrobat használata"
+   },
+   "fteSideCardSecondaryHeader": {
+      "message": "közvetlenül a Chrome böngészőben"
+   },
+   "gDriveDVPAppListCoachMarkContent": {
+      "message": "Enable the checkbox 'Use by default' to directly open Google Drive PDFs in Acrobat from next time"
+   },
+   "gDriveDVPCoachMarkTitle": {
+      "message": "Set Acrobat as default viewer"
+   },
+   "gDriveDVPManageAppCoachMarkContent": {
+      "message": "Kattintson az „Alkalmazások kezelése” lehetőségre a PDF-ek megtekintéséhez, szerkesztéséhez vagy megjegyzésekkel való ellátásához az összes Google Drive-PDF egyidőben történő megnyitásával az Acrobatban"
+   },
+   "gSuiteDVPAddOnDefaultDesc": {
+      "message": "Acrobat Add On is now set as default"
+   },
+   "gdriveConvertToPdfFteToolTipDescription": {
+      "message": "Konvertálja a Google Drive-fájlokat PDF-ekké, és szerkessze őket közvetlenül a böngészőben. Nincs szükség letöltésre."
+   },
+   "gdriveConvertToPdfFteToolTipTitle": {
+      "message": "Konvertálja a fájlokat PDF-ekké az Acrobat használatával"
+   },
+   "gdriveEditPdf": {
+      "message": "PDF szerkesztése"
+   },
+   "gdriveEditPdfFteToolTipDescription": {
+      "message": "Próbálja ki a PDF-eszközöket, például a szerkesztést, a megjegyzést, a konvertálást és az e-aláírást – közvetlenül a böngészőből."
+   },
+   "gdriveEditPdfFteToolTipTitle": {
+      "message": "PDF-ek szerkesztése az Acrobatban"
+   },
+   "gdriveImplicitDVFTEBody": {
+      "message": "Nyissa meg a PDF-eket az Acrobat bővítményben a Google Drive ikonról. Ezt alapértelmezettként az Acrobat Továbbiak (...) menüjében állíthatja be."
+   },
+   "gdriveImplicitDVFTEHeader": {
+      "message": "PDF-ek megtekintése az Acrobatban bármikor"
+   },
+   "gdriveImplicitDVNotification": {
+      "message": "A PDF-ek a Google Drive-ban nyílnak meg."
+   },
+   "geminiChatFteDescription": {
+      "message": "Konvertálja a csevegéseit PDF-ekké az Adobe Acrobat használatával, és szerkessze őket a böngészőben."
+   },
+   "geminiChatFteTitle": {
+      "message": "Konvertálás PDF-be Adobe Acrobat használatával"
+   },
+   "geminiChatNotLoadedToastButtonText": {
+      "message": "Folytatás mégis"
+   },
+   "geminiChatNotLoadedToastMessage": {
+      "message": "Egyes üzenetek nem szerepelnek. Görgessen a tetejére a teljes csevegés konvertálásához."
+   },
+   "geminiConvertToPDFChatTouchpointHoverTooltip": {
+      "message": "Csevegés megnyitása az Acrobatban"
+   },
+   "geminiConvertToPDFChatTouchpointText": {
+      "message": "Csevegés konvertálása PDF-be"
+   },
+   "geminiConvertToPDFResponseTouchpointText": {
+      "message": "Konvertálás PDF-re"
+   },
+   "geminiDefaultTitleText": {
+      "message": "Gemini"
+   },
+   "geminiResponseFteDescription": {
+      "message": "Konvertálja a Gemini-válaszokat közvetlenül PDF-fájlokká az Adobe Acrobat bővítménnyel."
+   },
+   "geminiResponseFteTitle": {
+      "message": "Válasz konvertálása PDF-be"
+   },
+   "genAIFabPreferenceDescription": {
+      "message": "Always display Al Assistant button at the edge of your browser window."
+   },
+   "genAIFabPreferenceTitle": {
+      "message": "Al Assistant button"
+   },
+   "generativeFillImageContextMenu": {
+      "message": "Generative Fill"
+   },
+   "genericDVPCoachMarkContent": {
+      "message": "Click on 'Manage Apps', then scroll down to Acrobat Add On and click on 'Use by default' checkbox"
+   },
+   "getInsight": {
+      "message": "Get insights with Acrobat AI Assistant"
+   },
+   "gmailAcrobatToolsFteDescription": {
+      "message": "Edit, compress, and convert your files — right from your browser."
+   },
+   "gmailAcrobatToolsTouchPoint": {
+      "message": "Open PDF tools"
+   },
+   "gmailAcrobatToolsTouchPointFTEHeader": {
+      "message": "PDF tools for your attachments"
+   },
+   "gmailConvertEmailToPDF": {
+      "message": "Konvertálás PDF-re"
+   },
+   "gmailConvertEmailToPDFFteDescription": {
+      "message": "Konvertálja az e-mail törzsét PDF-be mellékletek nélkül, és töltse le a fájlt."
+   },
+   "gmailConvertEmailToPDFFteTitle": {
+      "message": "Konvertálja ezt az e-mailt PDF-be"
+   },
+   "gmailConvertEmailToPDFTooltip": {
+      "message": "Konvertálja e-mailjét PDF-fájllá"
+   },
+   "gmailConvertToPdf": {
+      "message": "Konvertálás PDF-re"
+   },
+   "gmailConvertToPdfFteToolTipDescription": {
+      "message": "Konvertálja a Gmail-fájlokat PDF-ekké, és szerkessze őket közvetlenül a böngészőben. Nincs szükség letöltésre."
+   },
+   "gmailConvertToPdfFteToolTipTitle": {
+      "message": "Fájlok konvertálása PDF-ekké az Acrobat használatával"
+   },
+   "gmailEditPdf": {
+      "message": "PDF szerkesztése"
+   },
+   "gmailEditPdfFteToolTipDescription": {
+      "message": "Próbálja ki a PDF-eszközöket, például a szerkesztést, a megjegyzést, a konvertálást és az elektronikus aláírást — közvetlenül a böngészőjéből."
+   },
+   "gmailEditPdfFteToolTipTitle": {
+      "message": "PDF-ek szerkesztése Acrobatban"
+   },
+   "gmailImplicitDVFTEBody": {
+      "message": "Nyissa meg a PDF-eket az Acrobat bővítményben a Gmail ikonjáról. Állítsa be alapértelmezettként az Acrobat Továbbiak (...) menüben."
+   },
+   "gmailImplicitDVFTEHeader": {
+      "message": "A PDF-eket bármikor megtekintheti az Acrobatban"
+   },
+   "gmailImplicitDVNotification": {
+      "message": "A PDF-mellékletek a Gmailben nyílnak meg."
+   },
+   "gmailPdfToolsCtaLabel": {
+      "message": "Open PDF tools"
+   },
+   "gmailPromptFTETooltip": {
+      "message": "Open PDFs in Acrobat to use tools like Edit, Sign and more"
+   },
+   "gmailToolsOfflineMessage": {
+      "message": "Check your internet connection and try again."
+   },
+   "gmailToolsOfflineTitle": {
+      "message": "You're offline"
+   },
+   "goToPreferences": {
+      "message": "Lépjen a Beállítások elemre"
+   },
+   "googleSheetsOrientationHeading": {
+      "message": "Tájolás"
+   },
+   "googleSheetsOrientationLandscape": {
+      "message": "Fekvő"
+   },
+   "googleSheetsOrientationPortrait": {
+      "message": "Álló"
+   },
+   "googleSheetsScaleFitColumns": {
+      "message": "Az összes oszlop elhelyezése egy oldalon"
+   },
+   "googleSheetsScaleFitRows": {
+      "message": "Az összes sor egy oldalra igazítása"
+   },
+   "googleSheetsScaleFitSheet": {
+      "message": "Minden elfér egy oldalon"
+   },
+   "googleSheetsScaleHeading": {
+      "message": "Méretezés"
+   },
+   "googleSheetsSettingsDialogTitle": {
+      "message": "Konvertálás PDF-re"
+   },
+   "gsuiteEditWithAcrobat": {
+      "message": "Edit with Acrobat"
+   },
+   "gsuiteOpenWithAcrobat": {
+      "message": "Megnyitás az Acrobatban"
+   },
+   "hideFabForDomain": {
+      "message": "Disable for this site"
+   },
+   "hideForNow": {
+      "message": "Hide for now"
+   },
+   "imageToolsContextMenuTooltip": {
+      "message": "Szerkesztési beállítások az Adobe Acrobat és az Adobe Express alkalmazásban"
+   },
+   "imageToolsDropdownContextMenu": {
+      "message": "Szerkesztőeszközök"
+   },
+   "imageToolsDropdownFteDescription": {
+      "message": "Konvertálja képeit PDF-fájlokká az Adobe Acrobat segítségével, vagy szerkessze őket böngészőben az Adobe Expressben."
+   },
+   "imageToolsDropdownFteTitle": {
+      "message": "Képek konvertálása és szerkesztése a Gmailben"
+   },
+   "imageToolsDropdownFteTitleForGdrive": {
+      "message": "Képek konvertálása és szerkesztése a Google Drive-ban"
+   },
+   "insertObjectImageContextMenu": {
+      "message": "Insert Object"
+   },
+   "linkedInChatPDFTouchPointFTEBody": {
+      "message": "Szerkesszen, írjon alá elektronikusan, és kapjon MI-alapú elemzéseket az Adobe Acrobat használatával."
+   },
+   "linkedInChatPDFTouchPointFTEHeader": {
+      "message": "Adobe Acrobat PDF-eszközök kipróbálása"
+   },
+   "linkedInFeedPDFTouchPointFTEBody": {
+      "message": "Szerkesszen, készítsen összegzést és még sok mást úgy, hogy ezt a PDF-et az Acrobat bővítményben nyitja meg."
+   },
+   "linkedInFeedPDFTouchPointFTEHeader": {
+      "message": "Nyissa meg ezt a pdf-et az Adobe Acrobatban"
+   },
+   "linkedInOpenInAcrobat": {
+      "message": "Megnyitás az Acrobat"
+   },
+   "linkedInSummarizePDF": {
+      "message": "PDF összegzése"
+   },
+   "localFileAccessAndSummaryCoachmarkDescription": {
+      "message": "Engedélyezze az Acrobat számára a fájl elérését, és kapjon gyors, MI-alapú összefoglalót."
+   },
+   "localFileAccessAndSummaryCoachmarkHeader": {
+      "message": "A dokumentum összegzésének kérése"
+   },
+   "localFileAnimationCoachmarkDescription": {
+      "message": "Fájl-URL-ek elérésének engedélyezése, hogy az Acrobat bővítményben megnyithassa az erről az eszközről származó fájlokat."
+   },
+   "localFileAnimationCoachmarkHeader": {
+      "message": "Már csak egy lépés, és kész is van!"
+   },
+   "localFileBlockingPageOpenInChrome": {
+      "message": "Open this file in Chrome"
+   },
+   "localFileBlockingPageTitle": {
+      "message": "Enable Acrobat Extension"
+   },
+   "localFileOptionDesc": {
+      "message": "Biztosítsa a hozzáférést az Acrobat bővítmény számára, hogy hozzáférjen helyi fájljai URL-címeihez, és így minden PDF-jét az Acrobat programban, a Chrome böngészőben nyithassa meg."
+   },
+   "localFileOptionTitle": {
+      "message": "Helyi PDF-ek megnyitása az Acrobatban"
+   },
+   "localFilePromptContinueButton": {
+      "message": "Continue"
+   },
+   "localFilePromptDescription": {
+      "message": "Let Acrobat access files from this device for immediate access to all your tools so you can edit PDFs, convert files, and e-sign in a snap."
+   },
+   "localFilePromptHeader": {
+      "message": "Open in Acrobat to edit, sign, and more"
+   },
+   "localFileSummaryCoachmarkHeader": {
+      "message": "Már majdnem kész. Engedélyezze az Acrobat hozzáférését a fájl-URL-ekhez az összefoglalók használatához."
+   },
+   "localFteContinue": {
+      "message": "Ugrás a beállításokra"
+   },
+   "localFteDescription": {
+      "message": "Hozza ki a legtöbbet az Acrobat bővítményből, és használja azt minden PDF megnyitására. Kapcsolja be a Hozzáférés engedélyezése a fájl URL-ekhez lehetőséget a bővítménybeállításokban."
+   },
+   "localFteDontShowAgainText": {
+      "message": "Máskor ne jelenjen meg"
+   },
+   "localFteTitle": {
+      "message": "Váltson Acrobatra a helyi fájlok megnyitásához"
+   },
+   "magicScanButtonText": {
+      "message": "Feltöltés Adobe Scannel"
+   },
+   "magicScanConfirmCancel": {
+      "message": "Mégse"
+   },
+   "magicScanConfirmDesc": {
+      "message": "A(z) „$filename$” fájl közvetlenül erről a mobileszközről lesz feltöltve erre a webhelyre",
+      "placeholders": {
+         "filename": {
+            "content": "$1"
+         }
+      }
+   },
+   "magicScanConfirmSkip": {
+      "message": "Máskor ne jelenjen meg"
+   },
+   "magicScanConfirmTitle": {
+      "message": "Feltöltés megerősítése"
+   },
+   "magicScanConfirmUpload": {
+      "message": "Megerősítés"
+   },
+   "magicScanExpiresIn": {
+      "message": "Hátralévő idő:"
+   },
+   "magicScanOffline": {
+      "message": "Úgy tűnik, hogy az eszköz kapcsolat nélküli állapotban van. Kérjük, csatlakozzon az internethez, és próbálja újra."
+   },
+   "magicScanOverlayDescription": {
+      "message": "Olvassa be ezt a QR-kódot a telefonja vagy táblagépe kamerájával, hogy a fájlokat közvetlenül a mobileszközéről töltse fel."
+   },
+   "magicScanOverlayInstructions": {
+      "message": "Irányítsa a telefon kameráját erre a kódra a kezdéshez."
+   },
+   "magicScanOverlayTitle": {
+      "message": "Beolvasás feltöltéshez mobilról"
+   },
+   "magicScanPreparing": {
+      "message": "Dokumentum előkészítése…"
+   },
+   "magicScanRefreshLabel": {
+      "message": "Frissítés"
+   },
+   "magicScanReloadQR": {
+      "message": "Kattintson a QR-kód újratöltéséhez"
+   },
+   "magicScanSessionClaimed": {
+      "message": "A QR-kód beolvasva. Folytassa a mobileszközén."
+   },
+   "magicScanStartAgain": {
+      "message": "Kezdje elölről."
+   },
+   "magicScanStatusExpired": {
+      "message": "A QR-kód lejárt."
+   },
+   "magicScanStatusFailed": {
+      "message": "A beolvasás sikertelen. Próbálja újra."
+   },
+   "msWordConvertToPdfFTEBody": {
+      "message": "Konvertálja Microsoft Word dokumentumait PDF formátumba az Adobe Acrobat bővítménnyel, és szerezzen be eszközöket a szerkesztéshez, aláíráshoz és egyebekhez."
+   },
+   "msWordConvertToPdfFTETitle": {
+      "message": "Dokumentum konvertálása PDF formátumba"
+   },
+   "msWordSaveChangesTooltip": {
+      "message": "A folytatás előtt nyomja meg a $shortcut$ billentyűkombinációt a módosítások mentéséhez.",
+      "placeholders": {
+         "shortcut": {
+            "content": "$1"
+         }
+      }
+   },
+   "neverDisplayFab": {
+      "message": "Never display"
+   },
+   "openInAcrobat": {
+      "message": "Open In Acrobat"
+   },
+   "optionsFailurePrompt": {
+      "message": "Nem sikerült menteni a módosításokat. Kérjük, próbálja újra később"
+   },
+   "optionsSuccessPrompt": {
+      "message": "Beállítása sikeresen mentve"
+   },
+   "optionsSuccessPromptReloadRequired": {
+      "message": "Preference would be reflected only after reload"
+   },
+   "outlookAttachmentErrorDescription": {
+      "message": "Something went wrong. Go back to Outlook and try again."
+   },
+   "outlookAttachmentErrorDocumentTitle": {
+      "message": "Error"
+   },
+   "outlookAttachmentErrorGoToOutlook": {
+      "message": "Go to Outlook"
+   },
+   "outlookAttachmentErrorTitle": {
+      "message": "We couldn't open this attachment"
+   },
+   "outlookErrorToastDescription": {
+      "message": "Something went wrong. Please close the file and try again."
+   },
+   "outlookErrorToastTitle": {
+      "message": "Unable to open file"
+   },
+   "outlookImplicitDVNotification": {
+      "message": "A PDF-mellékletek mostantól az Outlookban nyílnak meg. Ha az Acrobatban szeretné megnyitni őket, válassza az Acrobat ikont."
+   },
+   "outlookPDFTouchPointFTEBody": {
+      "message": "Edit, summarize, and sign PDFs by opening them in Acrobat."
+   },
+   "outlookPDFTouchPointFTEHeader": {
+      "message": "Open this PDF in Adobe Acrobat"
+   },
+   "outlookPDFTouchPointTooltip": {
+      "message": "Megnyitás az Acrobat"
+   },
+   "paywallCreditsExpiredToastMessage": {
+      "message": "Az Ön erre a hónapra szóló ingyenes kreditei lejártak. Fizessen elő a folytatáshoz."
+   },
+   "pdfOpenInAcrobatContextMenu": {
+      "message": "Megnyitás az Acrobat"
+   },
+   "pdfOwnerShipDmbConfirmBtn": {
+      "message": "Folytatás"
+   },
+   "pdfOwnerShipSideRedCardConfirmBtn": {
+      "message": "Folytatás"
+   },
+   "pdfOwnershipDefSideCardcontent": {
+      "message": "Használja az Adobe Acrobat programot alapértelmezett PDF-megtekintőként a PDF-ek megtekintéséhez, megjegyzések hozzáfűzéséhez, űrlapok kitöltéséhez, aláíráshoz és egyebekhez."
+   },
+   "pdfOwnershipExploreAcrobat": {
+      "message": "Acrobat használata a Chrome-ban"
+   },
+   "pdfOwnershipExploreAcrobatEdge": {
+      "message": "Acrobat használata a Microsoft Edge-ben"
+   },
+   "pdfOwnershipExploreOptionsDescription": {
+      "message": "Make Acrobat the default PDF viewer for your browser for quick access to commenting, Fill & Sign, and other PDF tools."
+   },
+   "pdfOwnershipExploreOptionsTitle": {
+      "message": "Open all PDFs in Acrobat"
+   },
+   "pdfOwnershipPromptCancel": {
+      "message": "Most nem"
+   },
+   "pdfOwnershipPromptContent": {
+      "message": "Érjen el többet PDF-dokumentumaival az Adobe Acrobat alkalmazás alapértelmezett PDF-megtekintőként való használatával"
+   },
+   "pdfOwnershipPromptContent2": {
+      "message": "Állítsa be az Acrobatot alapértelmezett PDF-megtekintőként, így közvetlenül a Google Chromeban dolgozhat a PDF-ekkel. Megjegyzések hozzáadása, kitöltés, aláírás, valamint konvertálás és tömörítés."
+   },
+   "pdfOwnershipPromptContentEdge": {
+      "message": "Érjen el többet PDF-dokumentumaival a Microsoft Edge-ben, az Adobe Acrobat alkalmazás alapértelmezett PDF-megtekintőként való használatával."
+   },
+   "pdfOwnershipPromptDeny": {
+      "message": "Nem, köszönöm"
+   },
+   "pdfOwnershipPromptOk": {
+      "message": "Beállítás alapértelmezettként"
+   },
+   "pdfOwnershipPromptOkFullscreen": {
+      "message": "Próbálja ki most"
+   },
+   "pdfReadyTabTitle": {
+      "message": "A PDF elkészült"
+   },
+   "pdfToWordContextMenu": {
+      "message": "PDF átalakítása Word dokumentummá"
+   },
+   "pdfToolsDropdownContextMenu": {
+      "message": "PDF-eszközök"
+   },
+   "pdfToolsFteTooltipButton": {
+      "message": "Bezárás"
+   },
+   "pdfToolsFteTooltipDescription": {
+      "message": "Nyissa meg a PDF-eket közvetlenül a Gmailből, és próbálja ki az olyan eszközöket, mint a szerkesztés, a megjegyzések, a konvertálás és az elektronikus aláírás Adobe Acrobat segítségével."
+   },
+   "pdfToolsFteTooltipTitle": {
+      "message": "Fedezze fel a PDF-eszközök széles választékát"
+   },
+   "popupNoConnection": {
+      "message": "Nincs kapcsolat"
+   },
+   "popupOfflineMessage": {
+      "message": "A kapcsolat folytatásához forduljon a rendszergazdához"
+   },
+   "preferenceAcrobatIntegrationsDescription": {
+      "message": "Acrobat beállítása alapértelmezett PDF-megtekintőként a támogatott böngészőintegrációkhoz, például a Gmailhez, a Google Drive-hoz és egyebekhez."
+   },
+   "preferenceAcrobatIntegrationsTitle": {
+      "message": "Acrobat-integrációk engedélyezése"
+   },
+   "preferenceAdobeExpressDescription": {
+      "message": "Szerkessze a képeket Adobe Express használatával az Adobe Acrobat bővítményből."
+   },
+   "preferenceAdobeExpressTitle": {
+      "message": "Adobe Express engedélyezése az Acrobatban"
+   },
+   "preferenceAdobeInternalConnectedAppDescription": {
+      "message": "Válassza ki a bővítmény funkcióihoz a célként szolgáló csatlakoztatott alkalmazást. Ez a beállítás csak a nézeteket szimulálja, a funkciók hibásan működhetnek."
+   },
+   "preferenceAdobeInternalConnectedAppTitle": {
+      "message": "Csatlakoztatott alkalmazás"
+   },
+   "preferenceAdobeInternalEnvironmentDescription": {
+      "message": "Válassza ki a bővítmény célkörnyezetét."
+   },
+   "preferenceAdobeInternalEnvironmentTitle": {
+      "message": "Fejlesztői környezet"
+   },
+   "preferenceAdobeInternalGenAIClusterDescription": {
+      "message": "Válassza ki a generatív mesterséges intelligencia szolgáltatások célfürtjét."
+   },
+   "preferenceAdobeInternalGenAIClusterTitle": {
+      "message": "GenAI-fürt"
+   },
+   "preferenceAdobeInternalTabLabel": {
+      "message": "Belső Adobe-használatra"
+   },
+   "preferenceAssistantWebPageBadgeText": {
+      "message": "Béta"
+   },
+   "preferenceAssistantWebPageContent": {
+      "message": "Kérjen gyors összefoglalókat és lényegre törő információkat a MI asszisztenssel a weboldalakon."
+   },
+   "preferenceAssistantWebPageTitle": {
+      "message": "MI asszisztens weboldalakhoz"
+   },
+   "preferenceAutoOpenConvertedPDFDescription": {
+      "message": "Miután az Acrobat bővítménnyel pdf-be konvertált egy weboldalt, automatikusan nyissa meg a konvertált pdf-et az Acrobatban."
+   },
+   "preferenceBrowserDefaultViewershipDescription": {
+      "message": "Állítsa be az Acrobat alkalmazást alapértelmezett megtekintőként, hogy online hivatkozásokból, a Gmailből, a Google Drive-ból és egyebekből is meg tudja nyitni a PDF-eket."
+   },
+   "preferenceBrowserDefaultViewershipDescriptionEdge": {
+      "message": "Acrobat beállítása alapértelmezett megtekintőként, hogy az online hivatkozásokból megnyíló PDF-eket megnyithassa."
+   },
+   "preferenceBrowserDefaultViewershipDescriptionOutlook": {
+      "message": "Állítsa be az Acrobatot alapértelmezett megtekintőként, hogy online hivatkozásokból, a Gmailből, a Google Drive-ból, a Microsoft Outlookból és más helyekről is meg tudja nyitni a PDF-eket."
+   },
+   "preferenceBrowserDefaultViewershipTitle": {
+      "message": "PDF-ek megnyitása Acrobatban a böngészőből"
+   },
+   "preferenceChromeMimeHandlerDescription": {
+      "message": "Engedélyezéskor a PDF-ek az Adobe megtekintőjében nyílnak meg a Chrome natív MIME-kezelőjén keresztül — az eredeti URL megmarad a címsorban. Kikapcsoláskor ehelyett a bővítmény átirányítási folyamata használatos."
+   },
+   "preferenceChromeMimeHandlerTitle": {
+      "message": "MIME-kezelő engedélyezése"
+   },
+   "preferenceConnectedAppsTabLabel": {
+      "message": "Csatlakoztatott alkalmazások"
+   },
+   "preferenceDisplayThemeDescription": {
+      "message": "Sötét mód vagy világos mód kiválasztása."
+   },
+   "preferenceDisplayThemeTitle": {
+      "message": "Megjelenítési téma beállítása"
+   },
+   "preferenceEmbeddedPDFReloadToastLabel": {
+      "message": "Beágyazott PDF"
+   },
+   "preferenceEmbeddedPDFsTitle": {
+      "message": "Beágyazott PDF-ek"
+   },
+   "preferenceErrorBoundaryRetry": {
+      "message": "Próbálja ismét"
+   },
+   "preferenceErrorBoundaryTitle": {
+      "message": "Hiba történt"
+   },
+   "preferenceGeneralTabLabel": {
+      "message": "Általános"
+   },
+   "preferenceGenerativeAITabLabel": {
+      "message": "Generatív MI"
+   },
+   "preferenceGoogleSearchToolsDescription": {
+      "message": "Engedélyezze, hogy Acrobat az Ön keresései alapján PDF-eszközöket ajánljon a böngészőben, amelyeket a rendszer nem küld el az Adobe-nak."
+   },
+   "preferenceGoogleSearchToolsTitle": {
+      "message": "Acrobat eszközök megjelenítése a Google keresési találataival"
+   },
+   "preferenceGroupAccordionTitle": {
+      "message": "Speciális beállítások"
+   },
+   "preferenceHideAcrobatDomainListTitle": {
+      "message": "Webhelyek, ahol az Acrobat le van tiltva"
+   },
+   "preferenceHideFabDomainListTitle": {
+      "message": "Webhelyek, ahol az MI asszisztens le van tiltva"
+   },
+   "preferenceHideSummaryBarDomainListTitle": {
+      "message": "Webhelyek, ahol az MI asszisztens összegzés szalaghirdetése rejtve van"
+   },
+   "preferenceLanguageDescription": {
+      "message": "Válassza ki az Ön által preferált nyelvet."
+   },
+   "preferenceLanguageTitle": {
+      "message": "Nyelv beállítása"
+   },
+   "preferenceLearnerExperienceDescription": {
+      "message": "Engedélyezéskor a diákokra fókuszáló funkciók segítik Önt a tanulásban, az ismeretszerzésben és a tanulmányi feladatok hatékonyabb kezelésében."
+   },
+   "preferenceLearnerExperienceTitle": {
+      "message": "Tanulói élmény engedélyezése az Acrobatban"
+   },
+   "preferenceLinkedInTitle": {
+      "message": "LinkedIn"
+   },
+   "preferenceOfflineModeDescription": {
+      "message": "Kérjük, ellenőrizze a hálózati kapcsolatát, és próbálja meg újra."
+   },
+   "preferenceOfflineModeTitle": {
+      "message": "Jelenleg nem érhető el"
+   },
+   "preferenceOnlinePDFsTitle": {
+      "message": "Online PDF-ek"
+   },
+   "preferenceOpenLocalFilesDescription": {
+      "message": "Ezt a beállítást a Chrome böngésző kezeli. Kapcsolja be a „Hozzáférés engedélyezése a fájl URL-ekhez” beállítást, hogy az Acrobatban nyissa meg a PDF-eket."
+   },
+   "preferenceOpenLocalFilesTitle": {
+      "message": "Helyi fájlok megnyitása az Acrobatban"
+   },
+   "preferenceOpenLocalFilesTurnOffButtonLabel": {
+      "message": "Kikapcsolás"
+   },
+   "preferenceOpenLocalFilesTurnOnButtonLabel": {
+      "message": "Bekapcsolás"
+   },
+   "preferenceOptinDescription": {
+      "message": "Küldjön az Adobe-nak információt arról, hogyan használja az Acrobat bővítményt, hogy javíthassuk a termékfunkciókat. "
+   },
+   "preferenceOptinLearnMore": {
+      "message": "További tudnivalók"
+   },
+   "preferenceOutlookTitle": {
+      "message": "Microsoft Outlook"
+   },
+   "preferencePDFReloadToastLabel": {
+      "message": "PDF"
+   },
+   "preferencePrivacyTabLabel": {
+      "message": "Adatvédelem"
+   },
+   "preferenceReloadSurfaceTabsToast": {
+      "message": "A módosítás alkalmazásához töltse újra a(z) $surface$ lapokat.",
+      "placeholders": {
+         "surface": {
+            "content": "$1"
+         }
+      }
+   },
+   "preferenceSaveLocationDescription": {
+      "message": "Mentse a fájljait Adobe-felhőtárhelyre, mentse a számítógépére, vagy kérje, hogy a rendszer minden alkalommal rákérdezzen a mentés helyére."
+   },
+   "preferenceSaveLocationTitle": {
+      "message": "Hely beállítása a fájlok mentéséhez"
+   },
+   "preferenceShareTextToWhatsAppDescription": {
+      "message": "Bekapcsolásakor a PDF-megtekintő nem jeleníti meg többé a kijelölt szöveg WhatsAppra való megosztásának lehetőségét."
+   },
+   "preferenceShareTextToWhatsAppTitle": {
+      "message": "„Szöveg megosztása WhatsAppra” lehetőség letiltása"
+   },
+   "preferenceShowAIAssistantButtonDescription": {
+      "message": "Mindig jelenítse meg a MI asszisztens gombot a böngészőablak szélén."
+   },
+   "preferenceShowAIAssistantButtonTitle": {
+      "message": "MI asszisztens gomb megjelenítése"
+   },
+   "preferenceShowAISummaryBannerDescription": {
+      "message": "Az MI asszisztens összegzési szalaghirdetésének megjelenítése mindig a weboldalakon, ha támogatott."
+   },
+   "preferenceShowAISummaryBannerTitle": {
+      "message": "MI asszisztens összefoglaló szalaghirdetés megjelenítése"
+   },
+   "preferenceShowAcrobatAssistantShortcutDescription": {
+      "message": "Érje el a pdf-eszközöket és a MI asszisztenst a böngészőablak széléről."
+   },
+   "preferenceShowAcrobatAssistantShortcutTitle": {
+      "message": "Tartsa láthatóan az Acrobatot a böngészőben"
+   },
+   "preferenceShowContextualPromptDescription": {
+      "message": "Weboldalak böngészése közben mindig jelenítse meg a javasolt promptokat."
+   },
+   "preferenceShowContextualPromptTitle": {
+      "message": "MI-javaslatok"
+   },
+   "preferenceShowFeatureGuidanceDescription": {
+      "message": "Engedélyezze, hogy az Acrobat bővítmény útmutatást jelenítsen meg a frissítésekről, a funkciók használatáról és egyebekről."
+   },
+   "preferenceShowFeatureGuidanceTitle": {
+      "message": "Funkcióismertető megjelenítése"
+   },
+   "preferenceShowGenAIFabPillsTitle": {
+      "message": "Mesterséges intelligencia-beállítások megjelenítése a MI asszisztens panelen"
+   },
+   "preferenceShowLessText": {
+      "message": "Kevesebb megjelenítése"
+   },
+   "preferenceShowMoreText": {
+      "message": "Több megjelenítése"
+   },
+   "preferenceShowNotificationsDescription": {
+      "message": "Engedélyezze, hogy az Acrobat bővítmény értesítéseket jelenítsen meg a frissítésekről, a funkciók használatáról és egyebekről."
+   },
+   "preferenceShowNotificationsTitle": {
+      "message": "Értesítések megjelenítése"
+   },
+   "preferenceShowOpenInAcrobatShortcutCheckboxGroupFooter": {
+      "message": "Az Acrobat parancsikon nem jelenik meg, ha már alapértelmezett megtekintőként van beállítva ahhoz az alkalmazáshoz."
+   },
+   "preferenceShowOpenInAcrobatShortcutCheckboxGroupFooterLinkText": {
+      "message": "Beállítás alapértelmezett megtekintőként"
+   },
+   "preferenceShowOpenInAcrobatShortcutDescription": {
+      "message": "Adjon hozzá parancsikont a PDF-ek Acrobatban való megnyitásához a Gmailből, a Google Drive-ból és más helyekről."
+   },
+   "preferenceShowOpenInAcrobatShortcutTitle": {
+      "message": "„Megnyitás Acrobatban” parancsikon megjelenítése más alkalmazásokban"
+   },
+   "preferenceShowSummarizeBarOnWebpagesTitle": {
+      "message": "Összegző sáv megjelenítése weboldalakon"
+   },
+   "preferenceShowWhatsAppShortcutTitle": {
+      "message": "„Küldés WhatsAppra” parancsikon megjelenítése"
+   },
+   "preferenceTurnOnAIFeaturesDescription": {
+      "message": "Engedélyezze, hogy fájljait a felhőben dolgozza fel a rendszer a generatív mesterséges intelligencia funkciók használatához. Megjegyzés: A funkció kikapcsolása letiltja a generatív mesterséges intelligencia funkciókat azzal, hogy megakadályozza a fájlok felhőben történő feldolgozását; Ön bármikor visszakapcsolhatja."
+   },
+   "preferenceTurnOnAIFeaturesTitle": {
+      "message": "Generatív mesterséges intelligencia funkciók bekapcsolása Acrobatban"
+   },
+   "preferenceTurnOnGenAIWebpagesDescription": {
+      "message": "A MI asszisztens bármely weboldalon elérhető összefoglalókhoz és elemzésekhez. Ennek kikapcsolásával megszünteti ezt a hozzáférést."
+   },
+   "preferenceTurnOnGenAIWebpagesTitle": {
+      "message": "Kapcsolja be a generatív mesterséges intelligenciát a böngészőben"
+   },
+   "preferenceWebpageConversionDescription": {
+      "message": "Módosítsa a weboldalak PDF-ként való mentésének beállításait, beleértve a margókat, a betűtípusokat és az egyéb elrendezési beállításokat."
+   },
+   "preferenceWebpageConversionTitle": {
+      "message": "Weboldal-konvertálási beállítások módosítása"
+   },
+   "preferenceWhatsNewAutoOpenTitle": {
+      "message": "Automatikus megnyitás engedélyezése frissítéshez"
+   },
+   "preferences": {
+      "message": "Preferences"
+   },
+   "productAcrobat": {
+      "message": "Acrobat"
+   },
+   "productNoApp": {
+      "message": "Nincs alkalmazás"
+   },
+   "productReader": {
+      "message": "Reader"
+   },
+   "refreshButtonInFailToast": {
+      "message": "Frissítés"
+   },
+   "removeBackgroundImageContextMenu": {
+      "message": "Háttér törlése"
+   },
+   "removeBackgroundImageContextMenuV2ChatGPT": {
+      "message": "A háttér eltávolítása"
+   },
+   "removeObjectImageContextMenu": {
+      "message": "Remove Object"
+   },
+   "saveLocationOp1": {
+      "message": "Mindig kérdezzen rá"
+   },
+   "saveLocationOp2": {
+      "message": "Adobe felhőalapú tárhely"
+   },
+   "saveLocationOp3": {
+      "message": "Sajátgép"
+   },
+   "saveLocationPreferenceDescription": {
+      "message": "Állítson be egy helyet fájljai mentéséhez"
+   },
+   "saveLocationPreferenceTitle": {
+      "message": "Fájl helyének mentése"
+   },
+   "selectFileButton": {
+      "message": "Fájl kiválasztása"
+   },
+   "sessionExpiredDescription": {
+      "message": "Kérjük, töltse fel a fájlt, és próbálja újra."
+   },
+   "sessionExpiredDocumentTitle": {
+      "message": "A munkamenet lejárt"
+   },
+   "sessionExpiredTitle": {
+      "message": "Az Ön munkamenete lejárt"
+   },
+   "sessionExpiredToastText": {
+      "message": "A munkamenet lejárt. Kérjük, frissítse az oldalt, és próbálja újra."
+   },
+   "sharepointPreferenceMessage": {
+      "message": "Engedélyezi a SharePoint-fájlkivételt az Acrobat programban."
+   },
+   "sidepanelLoaderText": {
+      "message": "Összefoglalók és fontos megállapítások az Acrobat MI asszisztens segítségével"
+   },
+   "sidepanelLocationPreferenceButtonText": {
+      "message": "Change in browser settings"
+   },
+   "sidepanelLocationPreferenceDescription": {
+      "message": "Place the side panel on the left or right side of the browser window. Side panel is only available in Google Chrome 11.4 or later."
+   },
+   "sidepanelLocationPreferenceTitle": {
+      "message": "AI Assistant panel location"
+   },
+   "stripTextOpenAcrobat": {
+      "message": "Megnyitás az Acrobatban"
+   },
+   "stripTextOpenFillnSign": {
+      "message": "Kitöltés és aláírás az Acrobatban"
+   },
+   "studentToolsTouchpointCheatsheet": {
+      "message": "Súgólap létrehozása"
+   },
+   "studentToolsTouchpointFabFlashcards": {
+      "message": "Tanulókártyák készítése"
+   },
+   "studentToolsTouchpointFabLoading": {
+      "message": "Létrehozás…"
+   },
+   "studentToolsTouchpointFabMindmap": {
+      "message": "Gondolattérkép létrehozása"
+   },
+   "studentToolsTouchpointFabNotes": {
+      "message": "Jegyzetek létrehozása"
+   },
+   "studentToolsTouchpointFabQuiz": {
+      "message": "Kvíz létrehozása"
+   },
+   "studentToolsTouchpointFabStudyGuide": {
+      "message": "Tanulási útmutató létrehozása"
+   },
+   "studentToolsTouchpointFlashcards": {
+      "message": "Tanulókártyák létrehozása erről az oldalról"
+   },
+   "studentToolsTouchpointFlashcardsFromFile": {
+      "message": "Tanulókártyák létrehozása a fájlból"
+   },
+   "studentToolsTouchpointMindmap": {
+      "message": "Gondolattérkép létrehozása"
+   },
+   "studentToolsTouchpointQuiz": {
+      "message": "Kvíz létrehozása erről az oldalról"
+   },
+   "studentToolsTouchpointStudyGuide": {
+      "message": "Tanulási útmutató létrehozása"
+   },
+   "studentToolsTouchpointStudyGuideContextMenu": {
+      "message": "Alakítsa ezt az oldalt tanulási útmutatóvá"
+   },
+   "successToastText": {
+      "message": "PDF downloads will now open in Adobe Acrobat"
+   },
+   "summarizeWebpageContextMenu": {
+      "message": "Weboldal összefoglalása mesterséges intelligenciával"
+   },
+   "summarizeWebpageSelectedContent": {
+      "message": "Összegzés"
+   },
+   "summaryBarCloseTooltip": {
+      "message": "Beállítások elrejtése"
+   },
+   "summaryBarCtaLabel": {
+      "message": "Foglalja össze ezt az oldalt az Acrobat MI asszisztens segítségével."
+   },
+   "summaryBarDismissMenuAriaLabel": {
+      "message": "MI asszisztens összefoglaló szalaghirdetés beállításai"
+   },
+   "surfaceNameChatGPT": {
+      "message": "ChatGPT"
+   },
+   "surfaceNameGdrive": {
+      "message": "Google Drive"
+   },
+   "surfaceNameGemini": {
+      "message": "Gemini"
+   },
+   "surfaceNameGmail": {
+      "message": "Gmail"
+   },
+   "surfaceNameGoogleDocs": {
+      "message": "Google Docs"
+   },
+   "surfaceNameGoogleSheets": {
+      "message": "Google Táblázatok"
+   },
+   "surfaceNameGoogleSlides": {
+      "message": "Google Diák"
+   },
+   "surfaceNameMSWord": {
+      "message": "Microsoft Word"
+   },
+   "surfaceNameWikipedia": {
+      "message": "Wikipedia"
+   },
+   "tooltipTextDisabled": {
+      "message": "AI Assistant isn't available for this webpage"
+   },
+   "tooltipTextEnabled": {
+      "message": "Get summaries and key insights using AI Assistant"
+   },
+   "tooltipTextEnabledHome": {
+      "message": "Konvertáljon, szerkesszen és dolgozzon a MI asszisztenssel közvetlenül a böngészőjében"
+   },
+   "tooltipTextSubText": {
+      "message": "powered by Adobe Acrobat"
+   },
+   "tryAgain": {
+      "message": "Próbálja ismét"
+   },
+   "unsupportedFileTypeToastText": {
+      "message": "This file type isn’t supported. You can try editing another file."
+   },
+   "userLocale": {
+      "message": "Felhasználó területi beállítása"
+   },
+   "web2pdfAddButtonText": {
+      "message": "Hozzáadás PDF-hez"
+   },
+   "web2pdfAlwaysShow": {
+      "message": "PDF-eknél automatikus megjelenítés"
+   },
+   "web2pdfAppendLinkContextMenu": {
+      "message": "Hivatkozási cél hozzáfűzése meglévő PDF-fájlhoz"
+   },
+   "web2pdfAppendPageContextMenu": {
+      "message": "Weboldal hozzáadása meglévő PDF-fájlhoz…"
+   },
+   "web2pdfBadVersion": {
+      "message": "A Chrome ezen verziója nem támogatja az Adobe Acrobatot. A szükséges legkisebb verziószám: $version$",
+      "placeholders": {
+         "version": {
+            "content": "$1"
+         }
+      }
+   },
+   "web2pdfBadVersionEdge": {
+      "message": "A Edge ezen verziója nem támogatja az Adobe Acrobat alkalmazást. A szükséges legkisebb verziószám: $version$",
+      "placeholders": {
+         "version": {
+            "content": "$1"
+         }
+      }
+   },
+   "web2pdfClickToOpen": {
+      "message": "Kattintson az alábbi hivatkozásra a PDF Acrobatban való megnyitásához."
+   },
+   "web2pdfConvertButtonToolTip": {
+      "message": "Acrobat Extension - Shortcut to all your PDF tools."
+   },
+   "web2pdfConvertButtonToolTipERPReader": {
+      "message": "Az Acrobat Reader bővítmény jelenleg nincs engedélyezve. Kérjük, forduljon a rendszergazdához"
+   },
+   "web2pdfConvertButtonToolTipReader": {
+      "message": "PDF megnyitása az Acrobat Readerben"
+   },
+   "web2pdfConvertLinkContextMenu": {
+      "message": "Hivatkozási cél konvertálása Adobe PDF formátumra"
+   },
+   "web2pdfConvertPageContextMenu": {
+      "message": "Weblap konvertálása Adobe PDF formátumúra..."
+   },
+   "web2pdfCopyText": {
+      "message": "Másolás az Acrobatba"
+   },
+   "web2pdfDestinationText": {
+      "message": "Célmappa:"
+   },
+   "web2pdfDoneButtonText": {
+      "message": "Kész"
+   },
+   "web2pdfExtnDescription": {
+      "message": "Acrobat használata a böngészőben a PDF-ek megtekintéséhez, konvertálásához, tömörítéséhez és aláírásához"
+   },
+   "web2pdfExtnDescriptionBeta": {
+      "message": "Acrobat használata a böngészőben a PDF-ek megtekintéséhez, konvertálásához, tömörítéséhez és aláírásához"
+   },
+   "web2pdfExtnDescriptionChrome": {
+      "message": "Végezzen el még több feladatot az Adobe Acrobat PDF-eszközök segítségével a Google Chrome böngészőben – megtekintés, kitöltés, megjegyzés hozzáadása, aláírás, valamint konvertáló- és tömörítőeszközök."
+   },
+   "web2pdfExtnDescriptionEdge": {
+      "message": "Még több lehetőség a Microsoft Edge böngészővel és az Adobe Acrobat PDF-eszközökkel: megjegyzés, aláírás, szerkesztés, konvertálás."
+   },
+   "web2pdfExtnName": {
+      "message": "Adobe Acrobat: PDF-ek szerkesztése, konvertálása, aláírási eszközök"
+   },
+   "web2pdfExtnNameBeta": {
+      "message": "Adobe Acrobat Beta"
+   },
+   "web2pdfExtnNameEdge": {
+      "message": "Adobe Acrobat: PDF-ek szerkesztése, konvertálása, aláírási eszközök"
+   },
+   "web2pdfExtnNameStage": {
+      "message": "Adobe Acrobat Stage"
+   },
+   "web2pdfFileLockedError": {
+      "message": "Fájl mentése sikertelen: egy másik folyamat használja a fájlt."
+   },
+   "web2pdfFilename": {
+      "message": "Fájlnév:"
+   },
+   "web2pdfFrictionlessToggleDescription": {
+      "message": "Az Adobe Acrobat bővítmény PDF-eszközöket javasol a feladat megoldásához az Ön keresései alapján. A folyamat az eszközön zajlik, a keresések nem kerülnek továbbításra az Adobe felé."
+   },
+   "web2pdfFrictionlessUrl": {
+      "message": "https://www.adobe.com/go/fl_chromeext_hu"
+   },
+   "web2pdfFrictionlessUrlEdge": {
+      "message": "https://www.adobe.com/hu/acrobat/online.html?x_api_client_id=edge_extension&x_api_client_location=trefoil&mv=other&mv2=edge_extension:trefoil&trackingid=HM85XB76"
+   },
+   "web2pdfHTMLJSError": {
+      "message": "Weboldalfeldolgozási hiba."
+   },
+   "web2pdfHTMLTooLarge": {
+      "message": "A HTML-tartalom túl nagy."
+   },
+   "web2pdfInfoHoverPopup": {
+      "message": "Az Adobe Acrobat bővítmény PDF-eszközöket javasol a feladat megoldásához az Ön keresései alapján. A folyamat az eszközön zajlik, a keresések nem kerülnek továbbításra az Adobe felé. A funkció letiltásához kattintson: \u003Cspan class = \"tooltip-content-settings\">ide\u003C/span>."
+   },
+   "web2pdfLoaderTitle": {
+      "message": "Betöltés..."
+   },
+   "web2pdfMissingMac": {
+      "message": "Az Acrobat for Chrome még nem elérhető Mac rendszerre"
+   },
+   "web2pdfMissingMacEdge": {
+      "message": "Az Adobe Acrobat még nem érhető el a Microsoft Edge-hez Mac rendszerre"
+   },
+   "web2pdfNoFoldersText": {
+      "message": "Lehetséges, hogy az Acrobat DC tárhelyen nincsenek mappák."
+   },
+   "web2pdfNoWritePermissionOnSelectedFile": {
+      "message": "Nem rendelkezik írási jogosultsággal a kiválasztott fájlhoz."
+   },
+   "web2pdfOpenButtonText": {
+      "message": "Megnyitás az Acrobatban"
+   },
+   "web2pdfOpenButtonTextOlder": {
+      "message": "Adobe PDF letöltése"
+   },
+   "web2pdfOpenButtonTextReader": {
+      "message": "Megnyitás Acrobat Readerben"
+   },
+   "web2pdfOpenConvertedPDFDescription": {
+      "message": "Konvertált PDF automatikus megnyitása az Acrobatban, miután befejeződött a weboldal konvertálása PDF-be."
+   },
+   "web2pdfOpenConvertedPDFTitle": {
+      "message": "Konvertált PDF-ek automatikus megnyitása az Acrobatban"
+   },
+   "web2pdfOpenInDCButtonText": {
+      "message": "PDF megnyitása Acrobatban"
+   },
+   "web2pdfOptOut": {
+      "message": "A termék funkcióinak fejlesztése érdekében ez a bővítmény felhasználással kapcsolatos adatokat küld az Adobe számára."
+   },
+   "web2pdfOptOutDisabled": {
+      "message": "Semmilyen felhasználói adata nem kerül megosztásra."
+   },
+   "web2pdfOptions": {
+      "message": "Beállítások"
+   },
+   "web2pdfOptionsTitle": {
+      "message": "Adobe Acrobat beállításai"
+   },
+   "web2pdfPDFOpenFailed": {
+      "message": "PDF megnyitása sikertelen"
+   },
+   "web2pdfPDFOpenFailedv2": {
+      "message": "Sikertelen megnyitás"
+   },
+   "web2pdfPDFOpened": {
+      "message": "PDF megnyitva"
+   },
+   "web2pdfPDFOpening": {
+      "message": "PDF megnyitása"
+   },
+   "web2pdfPreferencesButtonText": {
+      "message": "Beállítások..."
+   },
+   "web2pdfPreferencesNewText": {
+      "message": "Konvertálási beállítások..."
+   },
+   "web2pdfPrivacy": {
+      "message": "Adobe Acrobat névjegye"
+   },
+   "web2pdfReplaceWarning": {
+      "message": "már létezik.\nSzeretné lecserélni?"
+   },
+   "web2pdfSave": {
+      "message": "Mentés"
+   },
+   "web2pdfSaveButton": {
+      "message": "Beállítások mentése"
+   },
+   "web2pdfShowPDFTools": {
+      "message": "Megjelenítés a Google-keresési eredményekkel"
+   },
+   "web2pdfShowPDFViewerOption": {
+      "message": "Acrobat használata alapértelmezett PDF-megtekintőként"
+   },
+   "web2pdfShowPersistentOpen": {
+      "message": "„Megnyitás Acrobatban” lehetőség megjelenítése"
+   },
+   "web2pdfShowPersistentOpenAlways": {
+      "message": "„Megnyitás Acrobatban” lehetőség megjelenítése mindig"
+   },
+   "web2pdfShowPersistentOpenDescription": {
+      "message": "Minden alkalommal mutassa a PDF megnyitása az Acrobatban lehetőséget."
+   },
+   "web2pdfStatusCancelled": {
+      "message": "Konvertálás megszakítva"
+   },
+   "web2pdfStatusComplete": {
+      "message": "Sikeres konvertálás"
+   },
+   "web2pdfStatusDownloading": {
+      "message": "Letöltés a konvertáláshoz..."
+   },
+   "web2pdfStatusDownloadingPDF": {
+      "message": "PDF letöltése"
+   },
+   "web2pdfStatusFailure": {
+      "message": "Konvertálási hiba"
+   },
+   "web2pdfStatusInProgress": {
+      "message": "Konvertálás folyamatban..."
+   },
+   "web2pdfStatusUnknownFailure": {
+      "message": "Ismeretlen hiba"
+   },
+   "web2pdfStatusWaiting": {
+      "message": "Várakozás a konvertálásra..."
+   },
+   "web2pdfTitle": {
+      "message": "Adobe Acrobat"
+   },
+   "web2pdfUnsupportedAcrobatVersion": {
+      "message": "Nem található az Acrobat támogatott verziója. Telepítse az \u003Ca target='_blank' href='https://acrobat.adobe.com/hu/hu/free-trial-download.html?trackingid=29NMCS7T&mv=other'>ingyenes, 7 napos próbaverziót\u003C/a>."
+   },
+   "web2pdfUntitledFileName": {
+      "message": "névtelen"
+   },
+   "webpagePDFConversion": {
+      "message": "Weboldal konvertálása PDF formátumba beállítás"
+   },
+   "webpagePDFConversionDescription": {
+      "message": "A weboldalak PDF-ként történő mentésekor beállíthatja a margókat, a betűtípusokat és egyéb, elrendezéssel kapcsolatos részleteket"
+   },
+   "whatsNewAutoOpenDescription": {
+      "message": "Engedélyezze, hogy az Acrobat automatikusan megnyisson egy weboldalt, amikor új frissítések érhetők el."
+   },
+   "whatsNewAutoOpenTitle": {
+      "message": "Automatikus megnyitás engedélyezése frissítési közleményekhez"
+   },
+   "wikipediaConvertToPdfFTEBody": {
+      "message": "Alakítsa a Wikipedia-oldalakat PDF-ekké, és szerkessze őket a böngésző elhagyása nélkül."
+   },
+   "wikipediaConvertToPdfFTETitle": {
+      "message": "Alakítsa át ezt az oldalt PDF-fé"
+   },
+   "wikipediaConvertToPdfHoverTooltip": {
+      "message": "Alakítsa át ezt a Wikipédia-oldalt PDF-fé az Acrobat segítségével"
+   },
+   "wikipediaConvertToPdfToastMessage": {
+      "message": "Oldal konvertálása PDF-fájllá. Tartsa nyitva az Acrobat lapot, hogy értesítést kapjon, amikor elkészül."
+   },
+   "wikipediaConvertingTooltip": {
+      "message": "Feldolgozás új lapon. Értesítjük Önt, amikor a fájl elkészült"
+   },
+   "wikipediaDefaultTitleText": {
+      "message": "Wikipedia-cikk"
+   }
+}

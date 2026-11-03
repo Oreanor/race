@@ -76,6 +76,8 @@ export function cityLayer(start: [number, number], onPublish?: (parts: BuildingP
   sync: (parts: BuildingPart[], terrain: boolean, focus: [number, number]) => void;
   follow: (focus: [number, number], carY: number | null, budget?: number, heading?: number) => void;
   configure: (options: { colors: readonly string[]; detail: BuildingDetail; architecture: ArchitectureSetting; region: string }) => void;
+  cellCount: () => number;
+  pendingCount: () => number;
 } {
   const origin: [number, number] = [start[0], start[1]];
   let built: BuildingPart[] = [];
@@ -318,7 +320,9 @@ export function cityLayer(start: [number, number], onPublish?: (parts: BuildingP
   function sampleCell(group: { x: number; z: number }) {
     if (!builtTerrain || !map) return 0;
     const cos = Math.cos(origin[1] * Math.PI / 180);
-    return map.queryTerrainElevation([origin[0] + group.x / (METERS * cos), origin[1] + (-group.z) / METERS]);
+    const exact = map.queryTerrainElevation([origin[0] + group.x / (METERS * cos), origin[1] + (-group.z) / METERS]);
+    if (exact != null) return exact;
+    return map.getCenterElevation();
   }
 
   function cellStamp(parts: BuildingPart[], sample: number) {
@@ -348,11 +352,17 @@ export function cityLayer(start: [number, number], onPublish?: (parts: BuildingP
     if (!built.length) return;
     const next = new Map<string, Planned>();
     for (const part of built) {
-      const anchor = part.rings[0]?.reduce((best, point) => point[0] < best[0] || (point[0] === best[0] && point[1] < best[1]) ? point : best);
-      if (!anchor) continue;
-      const local = project(origin, anchor);
-      const gx = Math.floor(local.x / CELL);
-      const gz = Math.floor(local.z / CELL);
+      const ring = dedupe(part.rings[0] ?? []);
+      if (ring.length < 3) continue;
+      let sx = 0;
+      let sz = 0;
+      for (const point of ring) {
+        const local = project(origin, point);
+        sx += local.x;
+        sz += local.z;
+      }
+      const gx = Math.floor(sx / ring.length / CELL);
+      const gz = Math.floor(sz / ring.length / CELL);
       const id = `${gx}:${gz}`;
       let group = next.get(id);
       if (!group) {
@@ -396,7 +406,7 @@ export function cityLayer(start: [number, number], onPublish?: (parts: BuildingP
       }
       if (performance.now() >= deadline) break;
     }
-    if (waiting.length) queue = waiting.concat(queue);
+    if (waiting.length) queue = queue.concat(waiting);
     if (builtOne) publish();
   }
 
@@ -415,28 +425,26 @@ export function cityLayer(start: [number, number], onPublish?: (parts: BuildingP
   }
 
   function buildCell(group: Planned): 'wait' | 'built' | 'same' {
+    if (builtTerrain && !map.isSourceLoaded('elevation')) return 'wait';
     const sample = sampleCell(group);
-    if (sample == null) {
-      const tried = (patience.get(group.id) ?? 0) + 1;
-      patience.set(group.id, tried);
-      if (tried < 120) return 'wait';
-    }
-    const groundQuant = sample == null ? 0 : Math.round(sample / 4) * 4;
     const existing = cells.get(group.id);
+    const groundQuant = Math.round(sample / 4) * 4;
     const styleNow = `${detail}|${architecture}|${builtTerrain ? 1 : 0}|${colors.join(',')}`;
     const incoming = new Set(group.parts.map((part) => part.key));
     const emitParts = existing ? group.parts.filter((part) => !existing.keys.has(part.key)) : group.parts;
     const missing = existing ? [...existing.keys].some((key) => !incoming.has(key)) : false;
     const sameStyle = existing?.style === styleNow;
     const focus = project(origin, lastFocus);
-    if (deferCellReplacement(cellDistance(group.x, group.z, focus.x, focus.z, CELL), Boolean(sameStyle), Boolean(existing))) return 'wait';
+    const shift = existing ? Math.abs(existing.ground - groundQuant) : 0;
+    const changed = emitParts.length > 0 || missing;
     if (existing && sameStyle && !emitParts.length && !missing) {
-      const shift = sample == null ? 0 : Math.abs(existing.ground - groundQuant);
-      if (shift < 8) {
+      const shiftNow = Math.abs(existing.ground - groundQuant);
+      if (shiftNow < 8) {
         existing.stamp = group.stamp;
         return 'same';
       }
     }
+    if (!changed && deferCellReplacement(cellDistance(group.x, group.z, focus.x, focus.z, CELL), Boolean(sameStyle), Boolean(existing), shift)) return 'same';
     // Shared-wall ownership changes when neighbours arrive. Rebuild the whole
     // cell and swap it atomically; appending leaves obsolete walls/windows alive.
     const parts = group.parts;
@@ -608,6 +616,8 @@ export function cityLayer(start: [number, number], onPublish?: (parts: BuildingP
     sync,
     follow,
     configure,
+    cellCount: () => cells.size,
+    pendingCount: () => queue.length + (groupsDirty ? 1 : 0),
     onAdd(nextMap, gl) {
       map = nextMap;
       ensureMaterials();
