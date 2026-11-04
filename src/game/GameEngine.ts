@@ -49,9 +49,12 @@ const DRIVER_NAMES = ['Ines', 'Tiago', 'Marta', 'Rui', 'Leonor', 'Duarte', 'Beat
 const PICKUP_COLORS = ['#ff4f79', '#ffc837', '#45d8ef', '#a96aff', '#69e286', '#ff8745'];
 const TRAFFIC_MARKER_COLORS = ['#ff3b30', '#00e5ff', '#ffe600'];
 const METERS_PER_DEGREE = 111319.49;
+const GRAVITY = 9.81;
+/** key J: a kicker ramp, metres */
+export const RAMP = { length: 3.2, width: 3.2, height: 1.0 };
 
 export type HudParticipant = { id: string; name: string; color: string; hp: number; maxHp: number; money: number; wins: number };
-type ActivePickup = { position: [number, number]; color: string };
+type ActivePickup = { position: [number, number]; color: string; kind: 'ball' | 'coin' };
 
 function distanceMeters(a: [number, number], b: [number, number]) {
   const cos = Math.cos(a[1] * Math.PI / 180);
@@ -133,6 +136,12 @@ export class GameEngine {
   private overlayTime = 0;
   private wheelSampleTime = 0;
   private wheelTargets = { altitude: 0, pitch: 0, roll: 0, ready: false };
+  /** vertical motion: the car flies off crests and ramps under gravity */
+  private climb = 0;
+  private airborne = false;
+  private wasOnRamp = false;
+  /** the ramp put down with J (one at a time; gone shortly after the jump) */
+  private ramp: { start: [number, number]; heading: number; usedAt: number } | null = null;
   private region: string;
   private aimScreen: [number, number] | null = null;
   private trafficBots: TrafficBot[] = [];
@@ -287,10 +296,11 @@ export class GameEngine {
         return;
       }
       if (!this.driving || this.paused || e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
-      if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'ShiftLeft', 'ShiftRight', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyR', 'Tab', 'KeyM'].includes(e.code)) e.preventDefault();
+      if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'ShiftLeft', 'ShiftRight', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyR', 'Tab', 'KeyM', 'KeyJ'].includes(e.code)) e.preventDefault();
       if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'ShiftLeft', 'ShiftRight', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) this.keys.add(e.code);
       if (e.code === 'KeyR') this.resetCamera();
       if (e.code === 'Tab' && !e.repeat) this.cycleMissionFocus();
+      if (e.code === 'KeyJ' && !e.repeat) this.placeRamp();
       if (e.code === 'KeyM' && !e.repeat && this.threeMap) this.overviewTarget = this.overviewTarget ? 0 : 1;
     }) as EventListener);
     listen(window, 'keyup', ((e: KeyboardEvent) => { this.keys.delete(e.code); }) as EventListener);
@@ -945,7 +955,14 @@ export class GameEngine {
       this.pickups.set(pickup.id, {
         position: pickup.position,
         color: PICKUP_COLORS[hash % PICKUP_COLORS.length],
+        kind: 'ball',
       });
+    }
+    // big spinning coins: as many as balls, halfway between them
+    for (const spot of this.trafficNetwork.pickupLocations(position, 650, 80, 0)) {
+      const id = `coin:${spot.id}`;
+      if (this.pickups.has(id) || this.collectedPickups.has(id)) continue;
+      this.pickups.set(id, { position: spot.position, color: '#f2c230', kind: 'coin' });
     }
     this.pickupFocus = [...position];
     this.pickupNetworkRevision = this.trafficNetwork.revision;
@@ -957,6 +974,7 @@ export class GameEngine {
       id,
       position: pickup.position,
       color: pickup.color,
+      kind: pickup.kind,
     }));
   }
 
@@ -1622,6 +1640,51 @@ export class GameEngine {
     this.fpsStamp = now;
   }
 
+  /** Put a kicker ramp one body length ahead of the nose, if there is room. */
+  placeRamp() {
+    if (!this.driving || this.paused || this.airborne) return;
+    const heading = this.vehicle.heading;
+    const east = Math.sin(heading);
+    const north = Math.cos(heading);
+    const ahead = (meters: number) => offsetPosition(this.vehicle.position, east * meters, north * meters);
+    const nose = ahead(this.car.length * 0.5);
+    const start = ahead(this.car.length * 1.5);
+    const end = ahead(this.car.length * 1.5 + RAMP.length);
+    if (this.collisions.blocked(nose, end, heading) || this.water.resolve(nose, end, heading).stopped) {
+      this.say(t('ramp.blocked'), true);
+      return;
+    }
+    const ground = (point: [number, number]) => (this.settings.terrain ? this.map.queryTerrainElevation(point) : 0) ?? this.altitude;
+    const base = ground(start);
+    const tilt = Math.atan2(ground(end) - base, RAMP.length);
+    this.ramp = { start, heading, usedAt: 0 };
+    this.combatLayer?.setRamp({ position: start, heading, ground: base, tilt });
+  }
+
+  /** Height of the ramp surface under this point (driving onto it head-on), or null. */
+  private rampLift(position: [number, number]) {
+    const ramp = this.ramp;
+    if (!ramp || ramp.usedAt) return null;
+    if (Math.cos(this.vehicle.heading - ramp.heading) < 0.5) return null;
+    const east = (position[0] - ramp.start[0]) * METERS_PER_DEGREE * Math.cos(ramp.start[1] * Math.PI / 180);
+    const north = (position[1] - ramp.start[1]) * METERS_PER_DEGREE;
+    const along = east * Math.sin(ramp.heading) + north * Math.cos(ramp.heading);
+    const side = east * Math.cos(ramp.heading) - north * Math.sin(ramp.heading);
+    if (along < 0 || along > RAMP.length || Math.abs(side) > RAMP.width / 2 + 0.3) return null;
+    return along / RAMP.length * RAMP.height;
+  }
+
+  /** The ramp goes away a moment after the jump, or when left far behind. */
+  private updateRamp(now: number) {
+    const ramp = this.ramp;
+    if (!ramp) return;
+    const far = distanceMeters(ramp.start, this.vehicle.position) > 300;
+    if (far || (ramp.usedAt && now - ramp.usedAt > 900)) {
+      this.ramp = null;
+      this.combatLayer?.setRamp(null);
+    }
+  }
+
   plantWheels(dt: number, now = performance.now()) {
     const settle = (current: number, target: number) => {
       const gap = target - current;
@@ -1630,12 +1693,7 @@ export class GameEngine {
     };
     if (!this.settings.terrain) {
       this.wheelTargets = { altitude: 0, pitch: 0, roll: 0, ready: true };
-      this.altitude = settle(this.altitude, 0);
-      this.modelPitch = settle(this.modelPitch, 0);
-      this.modelRoll = settle(this.modelRoll, 0);
-      return;
-    }
-    if (!this.wheelTargets.ready || now - this.wheelSampleTime >= 48) {
+    } else if (!this.wheelTargets.ready || now - this.wheelSampleTime >= 48) {
       this.wheelSampleTime = now;
       const heading = this.renderVehicle.heading;
       const forwardEast = Math.sin(heading);
@@ -1681,9 +1739,49 @@ export class GameEngine {
       }
     }
     if (!this.wheelTargets.ready) return;
-    this.modelPitch = settle(this.modelPitch, this.wheelTargets.pitch);
+    const clamp = (value: number) => Math.max(-0.5, Math.min(0.5, value));
+    const lift = this.driving ? this.rampLift(this.renderVehicle.position) : null;
+    const ground = this.wheelTargets.altitude + (lift ?? 0);
+    const speed = Math.abs(this.vehicle.speed);
+    if (this.airborne) {
+      // flying: gravity only; the nose follows the flight path
+      this.climb -= GRAVITY * dt;
+      this.altitude += this.climb * dt;
+      this.modelPitch = settle(this.modelPitch, clamp(Math.atan2(this.climb, Math.max(4, speed)) * 0.8));
+      this.modelRoll = settle(this.modelRoll, 0);
+      if (this.altitude <= ground) {
+        this.altitude = ground;
+        this.airborne = false;
+        this.climb = 0;
+      }
+      return;
+    }
+    // the ground falls away faster than gravity can pull the car down: it flies
+    const predicted = this.altitude + this.climb * dt - 0.5 * GRAVITY * dt * dt;
+    if (speed > 5 && ground < predicted - 0.3) {
+      this.airborne = true;
+      this.altitude = predicted;
+      this.climb -= GRAVITY * dt;
+      if (this.wasOnRamp && this.ramp) this.ramp.usedAt = now;
+      this.wasOnRamp = false;
+      return;
+    }
+    const before = this.altitude;
+    if (lift != null) {
+      // on the ramp: straight up its slope
+      this.altitude = ground;
+      // up its slope, but a kicker throws you ~2 m up at most, whatever the speed
+      const kick = Math.sqrt(2 * GRAVITY * (2 - RAMP.height));
+      this.climb = Math.min(kick, this.vehicle.speed * Math.cos(this.vehicle.heading - this.ramp!.heading) * RAMP.height / RAMP.length);
+      this.modelPitch = settle(this.modelPitch, Math.atan2(RAMP.height, RAMP.length));
+    } else {
+      this.altitude = Math.max(ground, settle(this.altitude, ground));
+      const measured = (this.altitude - before) / Math.max(dt, 1e-3);
+      this.climb += (measured - this.climb) * (1 - Math.exp(-dt * 8));
+      this.modelPitch = settle(this.modelPitch, this.wheelTargets.pitch);
+    }
     this.modelRoll = settle(this.modelRoll, this.wheelTargets.roll);
-    this.altitude = Math.max(this.wheelTargets.altitude, settle(this.altitude, this.wheelTargets.altitude));
+    this.wasOnRamp = lift != null;
   }
 
   private readSourceLayer(layer: string) {
@@ -1937,6 +2035,7 @@ export class GameEngine {
       this.updateEvents();
       this.renderVehicle.update(this.vehicle, this.accumulator * 60);
       this.plantWheels(dt, now);
+      this.updateRamp(now);
       this.nudgeCamera(dt);
       const targetBearing = (this.settings.follow ? this.renderVehicle.heading * 180 / Math.PI : this.bearing) + this.orbit;
       const delta = ((targetBearing - this.bearing + 540) % 360) - 180;

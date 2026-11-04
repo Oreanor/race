@@ -12,7 +12,7 @@ import { t } from '@/i18n';
 
 export type TargetVehicle = { id: string; driver: string; car: Car; position: Position; heading: number };
 export type TargetHealth = { id: string; driver: string; color: string; hp: number; maxHp: number };
-export type PickupVisual = { id: string; position: Position; color: string };
+export type PickupVisual = { id: string; position: Position; color: string; kind?: 'ball' | 'coin' };
 type DeathPhase = 'tumble' | 'burn' | 'wreck';
 type CharMat = { material: THREE.MeshPhongMaterial; r: number; g: number; b: number };
 type TargetState = TargetVehicle & {
@@ -60,6 +60,8 @@ export type VehicleSceneLayer = MapLayer & {
   setPickups: (pickups: PickupVisual[]) => void;
   setMissionBeacons: (beacons: { id: string; kind: 'arena' | 'race'; position: Position }[]) => void;
   setRaceFinish: (goal: Position | null) => void;
+  /** the J ramp: low edge at `position`, rising along `heading`; null takes it away */
+  setRamp: (ramp: { position: Position; heading: number; ground: number; tilt: number } | null) => void;
 };
 
 export function disposeObject(object: THREE.Object3D) {
@@ -212,8 +214,32 @@ export function vehicleLayer(
   let lastFrame = 0;
   const tireTracks = new TireTracks(scene);
   const targets = new Map<string, TargetState>();
-  const pickups = new Map<string, { position: Position; mesh: THREE.Mesh<THREE.SphereGeometry, THREE.MeshStandardMaterial>; phase: number }>();
+  const pickups = new Map<string, { position: Position; mesh: THREE.Object3D; phase: number; coin: boolean; ground: number | null }>();
   const pickupGeometry = new THREE.SphereGeometry(0.38, 16, 12);
+  // a gold coin 1 m across, standing on its edge: disc, raised rim, a star on both faces
+  const coinParts = (() => {
+    const gold = new THREE.MeshStandardMaterial({ color: '#ffd54a', emissive: '#c88a10', emissiveIntensity: 0.45, metalness: 0.25, roughness: 0.3 });
+    const deep = new THREE.MeshStandardMaterial({ color: '#f0b62a', emissive: '#a06c08', emissiveIntensity: 0.4, metalness: 0.2, roughness: 0.35 });
+    const disc = new THREE.CylinderGeometry(0.5, 0.5, 0.09, 40).rotateX(Math.PI / 2);
+    const rim = new THREE.TorusGeometry(0.46, 0.045, 8, 40);
+    const star = new THREE.Shape();
+    for (let i = 0; i < 10; i++) {
+      const r = i % 2 ? 0.12 : 0.27;
+      const a = Math.PI / 2 + i * Math.PI / 5;
+      if (i) star.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+      else star.moveTo(Math.cos(a) * r, Math.sin(a) * r);
+    }
+    const starGeometry = new THREE.ExtrudeGeometry(star, { depth: 0.13, bevelEnabled: false }).translate(0, 0, -0.065);
+    return { gold, deep, disc, rim, star: starGeometry };
+  })();
+  function makeCoin() {
+    const coin = new THREE.Group();
+    coin.add(new THREE.Mesh(coinParts.disc, coinParts.deep));
+    coin.add(new THREE.Mesh(coinParts.rim, coinParts.gold));
+    coin.add(new THREE.Mesh(coinParts.star, coinParts.gold));
+    coin.traverse((part) => { part.frustumCulled = false; part.renderOrder = 8; });
+    return coin;
+  }
   const pickupMaterials = new Map<string, THREE.MeshStandardMaterial>();
   function makeBeacon(pole: string, glow: string, orb: string, base: string) {
     const group = new THREE.Group();
@@ -334,7 +360,8 @@ export function vehicleLayer(
     }
     for (const pickup of next) {
       if (pickups.has(pickup.id)) continue;
-      const mesh = new THREE.Mesh(pickupGeometry, pickupMaterial(pickup.color));
+      const coin = pickup.kind === 'coin';
+      const mesh = coin ? makeCoin() : new THREE.Mesh(pickupGeometry, pickupMaterial(pickup.color));
       mesh.frustumCulled = false;
       mesh.renderOrder = 8;
       scene.add(mesh);
@@ -342,6 +369,8 @@ export function vehicleLayer(
         position: [...pickup.position],
         mesh,
         phase: Math.random() * Math.PI * 2,
+        coin,
+        ground: null,
       });
     }
   }
@@ -366,6 +395,35 @@ export function vehicleLayer(
       entry.position = [...beacon.position];
       entry.visual.group.visible = true;
     }
+    map?.triggerRepaint();
+  }
+
+  // kicker ramp: a wedge rising along +z (the car's forward), grows in and shrinks away
+  const rampSize = { length: 3.2, width: 3.2, height: 1.0 };
+  const rampMesh = (() => {
+    const side = new THREE.Shape([new THREE.Vector2(0, 0), new THREE.Vector2(rampSize.length, 0), new THREE.Vector2(rampSize.length, rampSize.height)]);
+    const geometry = new THREE.ExtrudeGeometry(side, { depth: rampSize.width, bevelEnabled: false })
+      .rotateY(-Math.PI / 2)
+      .translate(rampSize.width / 2, 0, 0);
+    const mesh = new THREE.Mesh(geometry, [
+      new THREE.MeshStandardMaterial({ color: '#d98a2b', roughness: 0.75 }), // sides
+      new THREE.MeshStandardMaterial({ color: '#f2b544', roughness: 0.6 }), // deck
+    ]);
+    mesh.rotation.order = 'YXZ';
+    mesh.visible = false;
+    mesh.frustumCulled = false;
+    scene.add(mesh);
+    return mesh;
+  })();
+  let ramp: { position: Position; heading: number; ground: number; tilt: number } | null = null;
+  let rampShown = 0;
+  let rampTarget = 0;
+  function setRamp(next: typeof ramp) {
+    if (next) {
+      ramp = { ...next, position: [...next.position] as Position };
+      rampShown = 0;
+    }
+    rampTarget = next ? 1 : 0;
     map?.triggerRepaint();
   }
 
@@ -706,8 +764,9 @@ export function vehicleLayer(
     const back = -car.length * 0.56;
     const rise = 0.55;
     const x = side * (0.62 + Math.random() * 0.12);
-    const y = rise * Math.cos(lean) - back * Math.sin(lean);
-    const z = rise * Math.sin(lean) + back * Math.cos(lean);
+    // nose-up lean lowers the tail pipe
+    const y = rise * Math.cos(lean) + back * Math.sin(lean);
+    const z = -rise * Math.sin(lean) + back * Math.cos(lean);
     const heading = vehicle.heading;
     const puff = puffs[cursor % puffs.length];
     cursor += 1;
@@ -790,6 +849,7 @@ export function vehicleLayer(
     setPickups,
     setMissionBeacons,
     setRaceFinish,
+    setRamp,
     scene,
     placement,
     fuse() { fused = true; },
@@ -891,9 +951,27 @@ export function vehicleLayer(
         tintTarget(target, now < target.flashUntil);
       }
       for (const pickup of pickups.values()) {
-        pickup.mesh.position.copy(scenePoint(here, pickup.position, heading, 0.42 + Math.sin(now * 0.002 + pickup.phase) * 0.07));
-        pickup.mesh.rotation.y = now * 0.0007;
+        // stand on the ground under the pickup, not at the car's height
+        if (pickup.ground == null) pickup.ground = map.getTerrain() ? map.queryTerrainElevation(pickup.position) : 0;
+        const lift = (pickup.ground ?? height()) - height();
+        if (pickup.coin) {
+          // 1 m coin hovering just above the road, turning about its upright axis
+          pickup.mesh.position.copy(scenePoint(here, pickup.position, heading, lift + 0.62 + Math.sin(now * 0.0018 + pickup.phase) * 0.08));
+          pickup.mesh.rotation.y = now * 0.0032 + pickup.phase;
+        } else {
+          pickup.mesh.position.copy(scenePoint(here, pickup.position, heading, lift + 0.42 + Math.sin(now * 0.002 + pickup.phase) * 0.07));
+          pickup.mesh.rotation.y = now * 0.0007;
+        }
       }
+      if (ramp) {
+        // grow in / shrink away over a quarter second instead of popping
+        rampShown += Math.sign(rampTarget - rampShown) * Math.min(Math.abs(rampTarget - rampShown), 0.06);
+        rampMesh.visible = rampShown > 0.001;
+        rampMesh.scale.set(1, Math.max(0.001, rampShown), 1);
+        rampMesh.position.copy(scenePoint(here, ramp.position, heading, ramp.ground - height()));
+        rampMesh.rotation.set(-ramp.tilt, heading - ramp.heading, 0);
+        if (!rampTarget && rampShown <= 0.001) ramp = null;
+      } else rampMesh.visible = false;
       let beaconIndex = 0;
       for (const entry of missionBeacons.values()) {
         if (!entry.visual.group.visible) continue;
@@ -930,7 +1008,7 @@ export function vehicleLayer(
       const place = { x: mercatorX01(vehicle.position[0]), y: mercatorY01(vehicle.position[1]), z: height() * perMeter };
       const meters = perMeter;
       root.rotation.order = 'XYZ';
-      root.rotation.x = pitch();
+      root.rotation.x = -pitch(); // pitch is nose-up positive; +x rotation here lowers the nose
       root.rotation.z = roll();
       const matrix = new THREE.Matrix4().makeTranslation(place.x, place.y, place.z).scale(new THREE.Vector3(meters, -meters, meters)).multiply(new THREE.Matrix4().makeRotationX(Math.PI / 2)).multiply(new THREE.Matrix4().makeRotationY(-vehicle.heading + Math.PI));
       placement.copy(matrix);

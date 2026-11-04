@@ -156,11 +156,12 @@ export class TrafficRoadNetwork {
     return candidates[Math.abs(seed) % candidates.length];
   }
 
-  pickupLocations(center: Position, radius = 650, limit = 80): RoadPickup[] {
+  /** Spots along the roads every ~75 m; `start` shifts the row (coins sit halfway between balls). */
+  pickupLocations(center: Position, radius = 650, limit = 80, start = 37.5): RoadPickup[] {
     const candidates = new Map<string, Position>();
     for (const line of this.lines.values()) {
       let traveled = 0;
-      let nextPickup = 37.5;
+      let nextPickup = start;
       for (let index = 1; index < line.length; index++) {
         const from = line[index - 1];
         const to = line[index];

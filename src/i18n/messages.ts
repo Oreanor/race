@@ -9,6 +9,7 @@ export const LANGS: { id: Lang; name: string; locale: string }[] = [
 ];
 
 const en = {
+  'ramp.blocked': 'No room for a ramp here',
   'settings.stats': 'Performance stats',
   'poi.fuel': '⛽ Fuel',
   'poi.service': '🔧 Car service',
@@ -158,6 +159,7 @@ const en = {
 export type MessageKey = keyof typeof en;
 
 const pt: Partial<Record<MessageKey, string>> = {
+  'ramp.blocked': 'Não há espaço para a rampa',
   'settings.stats': 'Estatísticas de desempenho',
   'poi.fuel': '⛽ Posto',
   'poi.service': '🔧 Oficina',
@@ -293,6 +295,7 @@ const pt: Partial<Record<MessageKey, string>> = {
 };
 
 const ru: Partial<Record<MessageKey, string>> = {
+  'ramp.blocked': 'Тут трамплин не поставить',
   'settings.stats': 'Статистика производительности',
   'poi.fuel': '⛽ АЗС',
   'poi.service': '🔧 Автосервис',
