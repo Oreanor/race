@@ -101,7 +101,7 @@ type Train = {
 };
 
 const SPEC: Record<TrackKind, { carLength: number; gap: number; maxSpeed: number; cars: [number, number]; max: number }> = {
-  rail: { carLength: 13, gap: 0.35, maxSpeed: 22, cars: [4, 9], max: 3 }, // a locomotive and 3–8 wagons, 13 m each (the size the models are drawn at)
+  rail: { carLength: 13, gap: 0.35, maxSpeed: 22, cars: [4, 9], max: 1 }, // a locomotive and 3–8 wagons, 13 m each (the size the models are drawn at)
   tram: { carLength: 11, gap: 0.8, maxSpeed: 11, cars: [2, 3], max: 3 },
 };
 const ACCEL = 0.8;
@@ -119,9 +119,12 @@ export class TrainTraffic {
   private spawnClock = 0;
 
   private network: RailNetwork;
+  private limits: Record<TrackKind, number>;
 
-  constructor(network: RailNetwork) {
+  /** `limits`: how many trains / trams run at once (one train by default) */
+  constructor(network: RailNetwork, limits: Partial<Record<TrackKind, number>> = {}) {
     this.network = network;
+    this.limits = { rail: limits.rail ?? SPEC.rail.max, tram: limits.tram ?? SPEC.tram.max };
   }
 
   private length(train: Train) {
@@ -254,7 +257,7 @@ export class TrainTraffic {
     if (this.spawnClock <= 0) {
       this.spawnClock = 1.5;
       for (const kind of ['rail', 'tram'] as TrackKind[]) {
-        if (this.trains.filter((t) => t.kind === kind).length < SPEC[kind].max) this.spawn(kind, player, hidden, poses);
+        if (this.trains.filter((t) => t.kind === kind).length < this.limits[kind]) this.spawn(kind, player, hidden, poses);
       }
     }
   }

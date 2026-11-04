@@ -20,7 +20,7 @@ test('only main lines carry trains', () => {
 test('trains on one track never run into each other', () => {
   const network = new RailNetwork();
   network.addFeatures([{ geometry: { type: 'LineString', coordinates: line(-3000, 3000) }, properties: { class: 'rail', subclass: 'rail' } }]);
-  const traffic = new TrainTraffic(network);
+  const traffic = new TrainTraffic(network, { rail: 3 }); // the game runs one; three to test the spacing
   const player: [number, number] = [0, 0.01]; // 1.1 km off the line: trains appear and go in the haze
   let closest = Infinity;
   for (let t = 0; t < 600; t += 0.1) {
