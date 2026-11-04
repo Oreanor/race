@@ -101,7 +101,7 @@ type Train = {
 };
 
 const SPEC: Record<TrackKind, { carLength: number; gap: number; maxSpeed: number; cars: [number, number]; max: number }> = {
-  rail: { carLength: 13, gap: 0.35, maxSpeed: 22, cars: [4, 9], max: 3 }, // a locomotive and 3–8 wagons // 13 m: the size the models are drawn at
+  rail: { carLength: 13, gap: 0.35, maxSpeed: 22, cars: [4, 9], max: 3 }, // a locomotive and 3–8 wagons, 13 m each (the size the models are drawn at)
   tram: { carLength: 11, gap: 0.8, maxSpeed: 11, cars: [2, 3], max: 3 },
 };
 const ACCEL = 0.8;
