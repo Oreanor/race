@@ -5,10 +5,11 @@ import { findPlaces } from '@/game/findPlaces';
 import { kilometres, ticketPrice, type HubKind } from '@/game/Travel';
 import type { TravelOffer } from '@/game/GameEngine';
 import Dialog from './ui/Dialog';
+import { formatNumber, t, useLang } from '@/i18n';
 
-const COPY: Record<HubKind, { title: string; verb: string; icon: string }> = {
-  airport: { title: 'Аэропорт', verb: 'Лететь', icon: '✈' },
-  port: { title: 'Порт', verb: 'Плыть', icon: '⚓' },
+const COPY: Record<HubKind, { title: 'travel.airport' | 'travel.port'; go: 'travel.fly' | 'travel.sail'; icon: string }> = {
+  airport: { title: 'travel.airport', go: 'travel.fly', icon: '✈' },
+  port: { title: 'travel.port', go: 'travel.sail', icon: '⚓' },
 };
 
 const key = (c: City) => `${c.name}|${c.coords[0].toFixed(3)}|${c.coords[1].toFixed(3)}`;
@@ -20,6 +21,7 @@ export default function TravelDialog({ offer, current, onBuy, onStay }: {
   onBuy: (city: City) => void;
   onStay: () => void;
 }) {
+  useLang();
   const [query, setQuery] = useState('');
   const [found, setFound] = useState<City[]>([]);
   const [looking, setLooking] = useState(false);
@@ -51,15 +53,15 @@ export default function TravelDialog({ offer, current, onBuy, onStay }: {
   return (
     <Dialog
       wide
-      title={<>{copy.icon} {copy.title}</>}
-      actions={<button type="button" className="ui-btn is-ghost" onClick={onStay}>Остаться здесь</button>}
+      title={<>{copy.icon} {t(copy.title)}</>}
+      actions={<button type="button" className="ui-btn is-ghost" onClick={onStay}>{t('travel.stay')}</button>}
     >
-      <p className="ui-text">Куда отправимся? Цена зависит от расстояния{offer.kind === 'airport' ? ', самолёт дороже корабля' : ''}.</p>
-      <div className="ui-row ui-wallet"><span>У вас</span><strong>{offer.money.toLocaleString('ru')} монет</strong></div>
+      <p className="ui-text">{t('travel.question')}{offer.kind === 'airport' ? ` ${t('travel.planeMore')}` : ''}</p>
+      <div className="ui-row ui-wallet"><span>{t('travel.wallet')}</span><strong>{t('travel.coins', { n: formatNumber(offer.money) })}</strong></div>
       <input
         className="ui-input"
-        placeholder="Найти город"
-        aria-label="Найти город"
+        placeholder={t('travel.search')}
+        aria-label={t('travel.search')}
         value={query}
         autoFocus
         onChange={(e) => setQuery(e.target.value)}
@@ -75,15 +77,15 @@ export default function TravelDialog({ offer, current, onBuy, onStay }: {
               className="ui-list-item"
               disabled={!affordable}
               onClick={() => onBuy(city)}
-              title={affordable ? `${copy.verb} в ${city.name}` : 'Не хватает монет'}
+              title={affordable ? t(copy.go, { city: city.name }) : t('travel.short')}
             >
-              <span className="ui-list-main"><b>{city.name}</b><small>{city.country} · {km.toLocaleString('ru')} км</small></span>
-              <span className="ui-price">{price.toLocaleString('ru')}</span>
+              <span className="ui-list-main"><b>{city.name}</b><small>{city.country} · {t('unit.km', { n: formatNumber(km) })}</small></span>
+              <span className="ui-price">{formatNumber(price)}</span>
             </button>
           );
         })}
-        {looking && <p className="ui-empty">Ищем…</p>}
-        {!looking && !options.length && <p className="ui-empty">Ничего не нашли</p>}
+        {looking && <p className="ui-empty">{t('travel.searching')}</p>}
+        {!looking && !options.length && <p className="ui-empty">{t('travel.none')}</p>}
       </div>
     </Dialog>
   );

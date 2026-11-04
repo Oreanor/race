@@ -23,6 +23,6 @@ export const mapConfig = {
     tileSize: 256,
     encoding: 'terrarium' as const,
     maxzoom: 15,
-    attribution: 'Рельеф © <a href="https://github.com/tilezen/joerd/blob/master/docs/attribution.md">Mapzen</a>, AWS Open Data',
+    attribution: 'Terrain © <a href="https://github.com/tilezen/joerd/blob/master/docs/attribution.md">Mapzen</a>, AWS Open Data',
   },
 };

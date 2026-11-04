@@ -1,4 +1,5 @@
 import type { City } from '@/config/vehicle.config';
+import { getLang } from '@/i18n';
 
 const REGION: Record<string, string> = {
   pt: 'Portugal',
@@ -40,14 +41,15 @@ export function placesFromSearch(rows: PlaceHit[]): City[] {
     seen.add(key);
     const code = (address.country_code || '').toLowerCase();
     const country = REGION[code] || address.country || '';
-    const note = [address.state, address.country].filter(Boolean).join(' · ') || 'Точка на карте';
+    // empty note: the UI shows a localised "point on the map"
+    const note = [address.state, address.country].filter(Boolean).join(' · ');
     places.push({ name, country, coords: [lng, lat], heading: 0, road: '', note });
   }
   return places.slice(0, 6);
 }
 
 export async function findPlaces(query: string, signal: AbortSignal): Promise<City[]> {
-  const response = await fetch(`/api/places?q=${encodeURIComponent(query)}`, { signal });
+  const response = await fetch(`/api/places?q=${encodeURIComponent(query)}&lang=${getLang()}`, { signal });
   if (!response.ok) throw new Error('search failed');
   const rows = await response.json() as City[];
   return Array.isArray(rows) ? rows.filter(place => place?.name && Array.isArray(place.coords) && place.coords.length === 2) : [];

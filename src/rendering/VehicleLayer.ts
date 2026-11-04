@@ -7,6 +7,7 @@ import type { Car } from '@/config/vehicle.config';
 import { offsetPosition, type Position } from '@/game/VehicleController';
 import type { Pose } from '@/game/VehiclePose';
 import { healthColor } from '@/game/health';
+import { t } from '@/i18n';
 
 export type TargetVehicle = { id: string; driver: string; car: Car; position: Position; heading: number };
 export type TargetHealth = { id: string; driver: string; color: string; hp: number; maxHp: number };
@@ -725,12 +726,12 @@ export function vehicleLayer(
     loadCar(next).then((model) => {
       if (disposed || token !== carLoadToken) { disposeObject(model); return; }
       installCarModel(model);
-      if (announce) status('Машина готова');
+      if (announce) status(t('status.ready'));
     }).catch((error: unknown) => {
       if (disposed || token !== carLoadToken) return;
       console.error('Failed to load vehicle model', error);
       installCarModel(fallbackCar(next.color));
-      if (announce) status('Резервная модель · GLB недоступен');
+      if (announce) status(t('car.fallback'));
     });
   }
 

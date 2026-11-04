@@ -17,6 +17,7 @@ import type { ArchitectureSetting, BuildingDetail } from './buildings/BuildingSt
 import { collapseCopies, footprintKey, keepVisibleParts, retainNearParts } from './buildings/wallOverlap';
 import { advanceTrafficBot, createTrafficBot, TrafficRoadNetwork, type TrafficBot } from './TrafficBots';
 import { healthColor } from './health';
+import { formatNumber, t } from '@/i18n';
 import { ThreeMap, ThreeMarker } from '@/world3d/map/ThreeMap';
 import { atStation, EVACUATION_COST, EVACUATION_RESERVE, FuelTank, metersBetween, nearestStation, stationsFromFeatures, type Station } from './Fuel';
 import { fuelStationsLayer } from '@/rendering/FuelStationsLayer';
@@ -274,7 +275,7 @@ export class GameEngine {
   get booted() { return this.mapShown; }
   private aimingFire = false;
   readonly rendererKind: RendererKind;
-  constructor(el: HTMLElement, city: City, car: Car, settings: Settings, private hud: (speed: number, distance: number, scale: number, fps: number, participants: HudParticipant[]) => void, private status: (s: string) => void, private aimHud: (x: number, y: number, visible: boolean, firing?: boolean) => void, renderer: RendererKind = 'three', carry: PlayerCarry | null = null) {
+  constructor(el: HTMLElement, city: City, car: Car, settings: Settings, private hud: (speed: number, distance: number, scale: number, fps: number, participants: HudParticipant[]) => void, private status: (s: string, toast?: boolean) => void, private aimHud: (x: number, y: number, visible: boolean, firing?: boolean) => void, renderer: RendererKind = 'three', carry: PlayerCarry | null = null) {
     this.rendererKind = renderer;
     this.fuel = new FuelTank(car.fuel);
     this.carry = carry;
@@ -323,7 +324,7 @@ export class GameEngine {
         this.collisionDirty = true;
       }
     });
-    this.map.on('error', () => this.say('Часть карты недоступна · проверьте сеть'));
+    this.map.on('error', () => this.say(t('status.mapError')));
     this.map.on('load', () => {
       if (this.disposed) return;
       this.decorate();
@@ -363,7 +364,7 @@ export class GameEngine {
       this.ready = true;
       this.map.setCenterClampedToGround(false);
       this.collisionDirty = true;
-      this.say('Ставим машину…');
+      this.say(t('status.placing'));
       // Map click → set custom spawn
       this.map.on('click', (e) => {
         if (!this.driving && this.mapShown) this.setSpawnFromClick(e.lngLat);
@@ -450,10 +451,11 @@ export class GameEngine {
     this.frame = requestAnimationFrame(this.tick);
   }
 
-  say(text: string) {
+  /** Status line; `toast` marks event news worth a pop-up while driving. */
+  say(text: string, toast = false) {
     if (this.message === text) return;
     this.message = text;
-    this.status(text);
+    this.status(text, toast);
   }
 
   private updateAim() {
@@ -639,7 +641,7 @@ export class GameEngine {
 
   private nextMissionLabel(kind: 'arena' | 'race') {
     this.missionSeq[kind] += 1;
-    return kind === 'arena' ? `Арена ${this.missionSeq[kind]}` : `Гонка ${this.missionSeq[kind]}`;
+    return kind === 'arena' ? t('mission.arena', { n: this.missionSeq[kind] }) : t('mission.race', { n: this.missionSeq[kind] });
   }
 
   private createMission(
@@ -691,7 +693,7 @@ export class GameEngine {
     if (!this.driving || this.mode !== 'roam' || this.missions.length < 2) return;
     this.missionFocus = (this.missionFocus + 1) % this.missions.length;
     const mission = this.missions[this.missionFocus];
-    if (mission) this.say(`Цель · ${mission.label}`);
+    if (mission) this.say(t('mission.target', { label: mission.label }), true);
   }
 
   private completeActiveMission() {
@@ -729,7 +731,7 @@ export class GameEngine {
     this.missionRespawnAt = this.missions.length >= 3 ? 0 : performance.now() + 30000;
     this.syncMissionVisuals(true);
     const added = this.missions[this.missions.length - 1];
-    this.say(`Новая миссия · ${added.label}`);
+    this.say(t('mission.new', { label: added.label }), true);
   }
 
   private targetVehicles() {
@@ -808,7 +810,7 @@ export class GameEngine {
     return [
       {
         id: 'player',
-        name: 'Вы',
+        name: t('you'),
         color: '#111111',
         hp: this.playerHp,
         maxHp: this.playerMaxHp,
@@ -895,7 +897,7 @@ export class GameEngine {
     this.ensureTrafficMarkers();
     this.ensureHealthMarkers();
     this.combatLayer?.setTargets(this.targetVehicles());
-    this.say('Арена · уничтожьте три машины');
+    this.say(t('arena.start'), true);
   }
 
   private startRace() {
@@ -906,7 +908,7 @@ export class GameEngine {
       ?? this.trafficNetwork.randomAway(center, new Set(), 2800, 6500, seedBase + 41);
     const finishAhead = finishSpot ? null : this.trafficNetwork.destinationAhead(center, heading, seedBase);
     if (!finishSpot && !finishAhead) {
-      this.say('Гонка недоступна · нет дороги впереди');
+      this.say(t('race.unavailable'), true);
       this.eventCooldown = performance.now() + 8000;
       return;
     }
@@ -942,7 +944,7 @@ export class GameEngine {
     this.ensureTrafficMarkers();
     this.ensureHealthMarkers();
     this.combatLayer?.setTargets(this.targetVehicles());
-    this.say('Гонка · кто первый до флага');
+    this.say(t('race.start'), true);
   }
 
   private endArena(won: boolean) {
@@ -952,10 +954,10 @@ export class GameEngine {
     if (won) {
       this.playerMoney += 10000;
       this.addWin('player');
-      this.say('Победа в арене · +10 000');
+      this.say(t('arena.won'), true);
     } else {
       this.playerMoney = Math.max(0, this.playerMoney - 10000);
-      this.say('Поражение в арене · −10 000');
+      this.say(t('arena.lost'), true);
     }
     this.playerHp = this.playerMaxHp;
     this.clearEventBots();
@@ -970,12 +972,12 @@ export class GameEngine {
     if (winnerId === 'player') {
       this.playerMoney += 10000;
       this.addWin('player');
-      this.say('Победа в гонке · +10 000');
+      this.say(t('race.won'), true);
     } else {
       const bot = this.trafficBots.find(entry => entry.id === winnerId);
       if (bot) bot.money += 10000;
       this.addWin(winnerId);
-      this.say(`${winnerName} финишировал первым`);
+      this.say(t('race.lost', { name: winnerName }), true);
     }
     this.raceGoal = null;
     this.combatLayer?.setRaceFinish(null);
@@ -1014,7 +1016,7 @@ export class GameEngine {
       const element = document.createElement('div');
       element.className = 'overhead-health-meter';
       element.setAttribute('role', 'meter');
-      element.setAttribute('aria-label', `${participant.name}: здоровье`);
+      element.setAttribute('aria-label', t('health.label', { name: participant.name }));
       element.style.position = 'absolute';
       element.style.display = 'none';
       element.style.width = '48px';
@@ -1208,7 +1210,7 @@ export class GameEngine {
     if (this.mode === 'race') {
       if (!this.raceGoal) return;
       if (distanceMeters(this.vehicle.position, this.raceGoal) <= 12) {
-        this.endRace('player', 'Вы');
+        this.endRace('player', t('you'));
         return;
       }
       const winner = this.trafficBots.find(bot =>
@@ -1284,7 +1286,7 @@ export class GameEngine {
       if (el) el.style.display = roaming ? '' : 'none';
     }
     if (!this.focusIndicator) {
-      this.focusIndicator = this.makeOffscreenIndicator('focus', 'Цель');
+      this.focusIndicator = this.makeOffscreenIndicator('focus', t('marker.target'));
       this.eventIndicatorLayer.appendChild(this.focusIndicator.element);
     }
   }
@@ -1302,14 +1304,14 @@ export class GameEngine {
       this.host.appendChild(this.eventIndicatorLayer);
     }
     if (!this.raceGoalMarker) {
-      this.raceGoalMarker = this.marker({ element: this.makeMapLabel('race-finish-marker', 'Финиш', 'Финиш гонки'), anchor: 'bottom' })
+      this.raceGoalMarker = this.marker({ element: this.makeMapLabel('race-finish-marker', t('marker.finish'), t('marker.finishRace')), anchor: 'bottom' })
         .setLngLat(this.raceGoal)
         .addTo(this.map);
     } else this.raceGoalMarker.setLngLat(this.raceGoal);
     const el = this.raceGoalMarker.getElement();
     if (el) el.style.display = this.mode === 'race' ? '' : 'none';
     if (!this.raceGoalIndicator) {
-      const made = this.makeOffscreenIndicator('finish', 'Финиш');
+      const made = this.makeOffscreenIndicator('finish', t('marker.finish'));
       this.raceGoalIndicator = { element: made.element, arrow: made.arrow, distance: made.distance };
       this.eventIndicatorLayer.appendChild(this.raceGoalIndicator.element);
     }
@@ -1347,7 +1349,7 @@ export class GameEngine {
     marker.element.style.left = `${centerX + dx * scale}px`;
     marker.element.style.top = `${centerY + dy * scale}px`;
     marker.arrow.style.transform = `rotate(${Math.atan2(dy, dx) * 180 / Math.PI + 90}deg)`;
-    marker.distance.textContent = `${new Intl.NumberFormat('ru-RU').format(Math.round(distanceMeters(this.vehicle.position, target)))} м`;
+    marker.distance.textContent = t('unit.m', { n: formatNumber(Math.round(distanceMeters(this.vehicle.position, target))) });
   }
 
   private updateEventMarkers() {
@@ -1431,7 +1433,7 @@ export class GameEngine {
       const near = metersBetween(hub.position, here) < 6000;
       const marker = this.hubMarkers.get(hub.id);
       if (near && !marker) {
-        const text = hub.kind === 'airport' ? '✈ Аэропорт' : '⚓ Порт';
+        const text = hub.kind === 'airport' ? t('hub.airport') : t('hub.port');
         this.hubMarkers.set(hub.id, this.marker({ element: this.makeMapLabel(`travel-hub-marker is-${hub.kind}`, text, text), anchor: 'bottom' }).setLngLat(hub.position).addTo(this.map));
       } else if (!near && marker) {
         marker.remove();
@@ -1479,9 +1481,9 @@ export class GameEngine {
       const paid = this.fuel.refuel(dt, this.playerMoney);
       this.playerMoney -= paid.cost;
       this.refuelling = paid.litres > 0;
-      if (this.refuelling) this.say('АЗС · заправка, 1 монета за литр');
-      else if (this.playerMoney < 1) this.say('АЗС · не хватает монет на топливо');
-    } else if (wasRefuelling || this.message.startsWith('АЗС')) this.say('');
+      if (this.refuelling) this.say(t('fuel.pumping'));
+      else if (this.playerMoney < 1) this.say(t('fuel.broke'));
+    } else if (wasRefuelling || this.message === t('fuel.pumping') || this.message === t('fuel.broke')) this.say('');
     if (this.fuel.empty && Math.abs(this.vehicle.speed) < 0.3 && !this.fuelOut && !station) {
       this.fuelOut = true;
       this.keys.clear();
@@ -1511,7 +1513,7 @@ export class GameEngine {
     this.syncedAt = null;
     this.fuelOut = false;
     this.onFuelOut(false);
-    this.say(near ? 'Эвакуатор доставил вас на АЗС · −100 монет' : 'Эвакуатор: АЗС рядом нет · залили запас · −100 монет');
+    this.say(near ? t('tow.done') : t('tow.none'), true);
   }
 
   private marker(options: { element: HTMLElement; anchor: 'bottom' }): MapMarker {
@@ -1570,7 +1572,7 @@ export class GameEngine {
     this.host.style.transition = 'opacity .7s ease';
     this.host.style.opacity = '1';
     this.onBoot(true);
-    this.say('Машина готова');
+    this.say(t('status.ready'));
     // Enable map navigation for the intro screen (pan, zoom, right-drag rotate).
     this.map.dragPan.enable();
     this.map.scrollZoom.enable();
@@ -1582,7 +1584,7 @@ export class GameEngine {
     if (this.mapShown || !this.ready) return;
     const waited = performance.now() - this.bootAt;
     if (!this.spawnResolved) {
-      this.say('Ставим машину…');
+      this.say(t('status.placing'));
       if (waited > 12000) {
         this.spawnResolved = true;
         this.defaultSpawn = { position: [...this.vehicle.position], heading: this.vehicle.heading };
@@ -1592,13 +1594,13 @@ export class GameEngine {
     }
     if (this.settings.terrain) {
       if (!this.map.isSourceLoaded('elevation')) {
-        this.say('Поднимаем рельеф…');
+        this.say(t('status.terrain'));
         return;
       }
       const ground = this.map.queryTerrainElevation(this.vehicle.position);
       if (ground == null) {
         this.groundHits = 0;
-        this.say('Поднимаем рельеф…');
+        this.say(t('status.terrain'));
         if (waited < 10000) return;
       } else {
         const stable = this.lastGround != null && Math.abs(ground - this.lastGround) < 0.35;
@@ -1606,7 +1608,7 @@ export class GameEngine {
         this.lastGround = ground;
         this.altitude = ground;
         if (this.groundHits < 10 && waited < 10000) {
-          this.say('Поднимаем рельеф…');
+          this.say(t('status.terrain'));
           return;
         }
       }
@@ -1614,22 +1616,22 @@ export class GameEngine {
       this.altitude = 0;
     }
     if (!this.map.areTilesLoaded() && waited < 10000) {
-      this.say('Грузим улицы…');
+      this.say(t('status.streets'));
       return;
     }
     if (!this.syncedAt) {
       this.collisionDirty = true;
-      this.say('Рисуем квартал…');
+      this.say(t('status.block'));
       if (waited < 14000) return;
     }
     const cells = this.city?.cellCount() ?? 0;
     if ((this.city?.pendingCount() ?? 0) > 0 || this.collisionDirty || this.worldWork) {
-      this.say('Рисуем кварталы…');
+      this.say(t('status.blocks'));
       return;
     }
     if (this.city && cells < 1 && waited < 16000) {
       this.settleFrames++;
-      this.say('Рисуем квартал…');
+      this.say(t('status.block'));
       return;
     }
     if (this.city && !this.city.isSettled()) {
@@ -2140,10 +2142,10 @@ export class GameEngine {
       if (this.trafficBots.length) this.combatLayer?.updateTargets(this.targetVehicles());
       this.updateFuel(dt);
       this.updateTravel();
-      if (blocked) this.say('Здание · выберите другое направление');
-      else if (thicket) this.say('Чаща · здесь не проехать');
-      else if (shore) this.say('Берег · в воду нельзя');
-      else if (this.message.startsWith('Здание') || this.message.startsWith('Чаща') || this.message.startsWith('Берег')) this.say('');
+      if (blocked) this.say(t('hint.building'));
+      else if (thicket) this.say(t('hint.thicket'));
+      else if (shore) this.say(t('hint.shore'));
+      else if ([t('hint.building'), t('hint.thicket'), t('hint.shore')].includes(this.message)) this.say('');
       this.updateEvents();
       this.renderVehicle.update(this.vehicle, this.accumulator * 60);
       this.plantWheels(dt, now);

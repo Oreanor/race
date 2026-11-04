@@ -1,7 +1,9 @@
 import { placesFromSearch, type PlaceHit } from '@/game/findPlaces';
 
 export async function GET(request: Request) {
-  const query = new URL(request.url).searchParams.get('q')?.trim() ?? '';
+  const params = new URL(request.url).searchParams;
+  const query = params.get('q')?.trim() ?? '';
+  const lang = /^(en|pt|ru)$/.test(params.get('lang') ?? '') ? params.get('lang') : 'en';
   if (query.length < 2 || query.length > 80) return Response.json([]);
   const url = new URL('https://nominatim.openstreetmap.org/search');
   url.searchParams.set('q', query);
@@ -12,7 +14,7 @@ export async function GET(request: Request) {
     const response = await fetch(url, {
       headers: {
         'User-Agent': 'CityRider/1.0 (personal driving game)',
-        'Accept-Language': 'ru,en',
+        'Accept-Language': `${lang},en`,
       },
       signal: request.signal,
     });

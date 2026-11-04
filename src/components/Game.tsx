@@ -5,6 +5,14 @@ import { findPlaces } from '@/game/findPlaces';
 import { healthColor } from '@/game/health';
 import { GameEngine, type FuelHud, type HudParticipant, type PlayerCarry, type Settings, type TravelOffer } from '@/game/GameEngine';
 import { EVACUATION_COST } from '@/game/Fuel';
+import { LANGS, setLang, t, useLang, type Lang, type MessageKey } from '@/i18n';
+
+/** Localised note of a city: built-in cities have translations, search results keep their own. */
+function cityNote(city: City) {
+  const key = `note.${city.name}` as MessageKey;
+  const text = t(key);
+  return text !== key ? text : city.note || t('place.pin');
+}
 import CarPreview from './CarPreview';
 import FuelGauge from './FuelGauge';
 import TravelDialog from './TravelDialog';
@@ -46,7 +54,7 @@ function syncRoster(root: HTMLElement, store: Map<string, RosterNodes>, drivers:
       hpGroup.className = 'roster-hp-group';
       const meter = document.createElement('span');
       meter.setAttribute('role', 'meter');
-      meter.setAttribute('aria-label', `${driver.name} здоровье`);
+      meter.setAttribute('aria-label', t('roster.health', { name: driver.name }));
       meter.setAttribute('aria-valuemin', '0');
       const fill = document.createElement('i');
       meter.appendChild(fill);
@@ -82,14 +90,15 @@ function syncRoster(root: HTMLElement, store: Map<string, RosterNodes>, drivers:
     nodes.fill.style.width = `${Math.max(0, Math.min(100, driver.hp / driver.maxHp * 100))}%`;
     nodes.hp.textContent = String(Math.ceil(driver.hp));
     nodes.moneyValue.data = String(driver.money);
-    nodes.money.setAttribute('aria-label', `${driver.money} монет`);
+    nodes.money.setAttribute('aria-label', t('roster.coins', { n: driver.money }));
     nodes.winsValue.data = String(driver.wins);
-    nodes.wins.setAttribute('aria-label', `${driver.wins} побед`);
+    nodes.wins.setAttribute('aria-label', t('roster.wins', { n: driver.wins }));
     root.appendChild(nodes.entry);
   }
 }
 
 export default function Game() {
+  const lang = useLang();
   const host = useRef<HTMLDivElement>(null);
   const engine = useRef<GameEngine | null>(null);
   const speedRef = useRef<HTMLElement>(null);
@@ -112,7 +121,7 @@ export default function Game() {
   const [searchFailed, setSearchFailed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [eventOffer, setEventOffer] = useState<'arena' | 'race' | null>(null);
-  const [status, setStatus] = useState('Загружаем город…');
+  const [status, setStatus] = useState(() => t('loading.city'));
   const [statusToast, setStatusToast] = useState('');
   const [spawnPin, setSpawnPin] = useState<[number, number] | null>(null);
   // ?perf=1 shows the same profiler as three-world, for side-by-side numbers
@@ -139,7 +148,7 @@ export default function Game() {
 
   // Recreate the engine only when the city changes. Car swaps reuse the live map.
   useEffect(() => {
-    setStatus('Загружаем город…');
+    setStatus(t('loading.city'));
     setApproaching(false);
     setBooted(false);
     setSpawnPin(null);
@@ -159,9 +168,10 @@ export default function Game() {
           if (fpsRef.current) fpsRef.current.textContent = (frames || '—') + ' FPS';
           if (drivingRef.current && rosterRef.current) syncRoster(rosterRef.current, rosterStoreRef.current, drivers);
         },
-        (text) => {
+        (text, toast) => {
           setStatus(text);
-          if (!drivingRef.current || !(/Арена|Гонка|Победа|Поражение|финишировал|Цель ·|Новая миссия/i.test(text))) return;
+          // the engine marks event news (missions, wins, tow truck) as toast-worthy
+          if (!drivingRef.current || !toast) return;
           setStatusToast(text);
           if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
           toastTimerRef.current = setTimeout(() => {
@@ -207,7 +217,7 @@ export default function Game() {
       }
     } catch (error) {
       console.error('Failed to initialize the game engine', error);
-      setStatus('Не удалось запустить WebGL. Попробуйте другой браузер.');
+      setStatus(t('webgl.failed'));
     }
     return () => { monitor?.dispose(); game?.dispose(); engine.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -325,7 +335,7 @@ export default function Game() {
       {!booted && (
         <div className="map-loader" aria-live="polite">
           <span className="live-dot" />
-          <span>{status || 'Загружаем город…'}</span>
+          <span>{status || t('loading.city')}</span>
         </div>
       )}
       <header className={driving ? 'game-header is-driving' : 'game-header'}>
@@ -343,14 +353,14 @@ export default function Game() {
           <section className="intro">
             <div className="trip-card">
               <div className="field-label">
-                <span>01 / МЕСТО НАЗНАЧЕНИЯ</span><span>↗</span>
+                <span>{t('intro.destination')}</span><span>↗</span>
               </div>
               <div className="city-search">
                 <label className="search">
                   <span>⌕</span>
                   <input
-                    aria-label="Поиск города"
-                    placeholder="Найти свой город"
+                    aria-label={t('search.label')}
+                    placeholder={t('search.placeholder')}
                     value={search}
                     onFocus={() => setSearchOpen(search.trim().length >= 2)}
                     onChange={e => {
@@ -363,14 +373,14 @@ export default function Game() {
                 {searchOpen && query.length >= 2 && (
                   <div className="city-list">
                     {found.map(option)}
-                    {looking && <p className="empty">Ищем на карте…</p>}
-                    {!looking && searchFailed && <p className="empty">Поиск недоступен · проверьте сеть</p>}
-                    {!looking && !searchFailed && !found.length && <p className="empty">Город не найден</p>}
+                    {looking && <p className="empty">{t('search.looking')}</p>}
+                    {!looking && searchFailed && <p className="empty">{t('search.failed')}</p>}
+                    {!looking && !searchFailed && !found.length && <p className="empty">{t('search.none')}</p>}
                   </div>
                 )}
               </div>
               <div className="field-label car-label">
-                <span>02 / ВАШ АВТОМОБИЛЬ</span>
+                <span>{t('intro.car')}</span>
               </div>
               <div className="cars">
                 {cars.map((c, i) => (
@@ -389,12 +399,12 @@ export default function Game() {
                   {spawnPin
                     ? <>
                         <span className="spawn-hint-icon">📍</span>
-                        <span>Место старта выбрано</span>
-                        <button className="spawn-clear" onClick={() => { engine.current?.clearCustomSpawn(); }}>✕ Сбросить</button>
+                        <span>{t('spawn.chosen')}</span>
+                        <button className="spawn-clear" onClick={() => { engine.current?.clearCustomSpawn(); }}>{t('spawn.reset')}</button>
                       </>
                     : <>
                         <span className="spawn-hint-icon">🖱</span>
-                        <span>Кликните на карте, чтобы выбрать место старта</span>
+                        <span>{t('spawn.hint')}</span>
                       </>
                   }
                 </div>
@@ -404,30 +414,30 @@ export default function Game() {
                 disabled={!booted}
                 onClick={() => { setApproaching(true); setDriving(true); setSettingsOpen(false); }}
               >
-                Поехали
+                {t('drive')}
               </button>
             </div>
           </section>
           <aside className="destination">
-            <span className="eyebrow">ВАША СЛЕДУЮЩАЯ ОСТАНОВКА</span>
+            <span className="eyebrow">{t('next.stop')}</span>
             <h2>{place.name}<span>↗</span></h2>
-            <p>{place.note}</p>
+            <p>{cityNote(place)}</p>
             <div className="coordinates">
               {Math.abs(place.coords[1]).toFixed(4)}° {place.coords[1] < 0 ? 'S' : 'N'} &nbsp; {Math.abs(place.coords[0]).toFixed(4)}° {place.coords[0] < 0 ? 'W' : 'E'}
             </div>
           </aside>
           <footer>
-            <span>МАЛЕНЬКАЯ МАШИНА. БОЛЬШОЙ МИР.</span>
-            <span>Реальные улицы · Ваш маршрут</span>
+            <span>{t('tagline')}</span>
+            <span>{t('tagline.sub')}</span>
           </footer>
         </>
       ) : !approaching ? (
         <>
-          <div className="roster-hud" ref={rosterRef} aria-label="Участники гонки" />
+          <div className="roster-hud" ref={rosterRef} aria-label={t('hud.racers')} />
           <FuelGauge subscribe={subscribeFuel} />
-          <div className="speed-hud" aria-label="Скорость">
+          <div className="speed-hud" aria-label={t('hud.speed')}>
             <strong ref={speedRef}>00</strong>
-            <span>КМ/Ч</span>
+            <span>{t('hud.kmh')}</span>
           </div>
           {statusToast && <div className="mission-toast" role="status">{statusToast}</div>}
         </>
@@ -435,19 +445,20 @@ export default function Game() {
 
       {settingsOpen && (
         <Dialog
-          title="Настройки"
+          title={t('settings.title')}
           onBackdrop={closeSettings}
           actions={<>
-            <button type="button" className="ui-btn" onClick={closeSettings}>{driving ? 'В игру' : 'Вернуться'}</button>
-            <button type="button" className="ui-btn is-ghost" onClick={exitToMenu}>Выход</button>
+            <button type="button" className="ui-btn" onClick={closeSettings}>{driving ? t('settings.resume') : t('settings.back')}</button>
+            <button type="button" className="ui-btn is-ghost" onClick={exitToMenu}>{t('settings.exit')}</button>
           </>}
         >
           <div className="ui-form">
-            <label>Детали зданий<select value={settings.buildingDetail} onChange={e => update({ buildingDetail: e.target.value as Settings['buildingDetail'] })}><option value="off">Выкл</option><option value="low">Низкая</option><option value="medium">Средняя</option><option value="high">Высокая</option></select></label>
-            <label className="toggle">Камера следует за машиной<input type="checkbox" checked={settings.follow} onChange={e => update({ follow: e.target.checked })} /></label>
-            <label className="toggle">Рельеф местности<input type="checkbox" checked={settings.terrain} onChange={e => update({ terrain: e.target.checked })} /></label>
-            <label>Чувствительность камеры<input type="range" min="0.3" max="2" step="0.1" value={settings.sensitivity} onChange={e => update({ sensitivity: Number(e.target.value) })} /></label>
-            <label>Качество<select value={settings.quality} onChange={e => update({ quality: e.target.value as Settings['quality'] })}><option value="low">Низкое</option><option value="medium">Среднее</option><option value="high">Высокое</option></select></label>
+            <label>{t('settings.language')}<select value={lang} onChange={e => setLang(e.target.value as Lang)}>{LANGS.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select></label>
+            <label>{t('settings.detail')}<select value={settings.buildingDetail} onChange={e => update({ buildingDetail: e.target.value as Settings['buildingDetail'] })}><option value="off">{t('level.off')}</option><option value="low">{t('level.low')}</option><option value="medium">{t('level.medium')}</option><option value="high">{t('level.high')}</option></select></label>
+            <label className="toggle">{t('settings.follow')}<input type="checkbox" checked={settings.follow} onChange={e => update({ follow: e.target.checked })} /></label>
+            <label className="toggle">{t('settings.terrain')}<input type="checkbox" checked={settings.terrain} onChange={e => update({ terrain: e.target.checked })} /></label>
+            <label>{t('settings.sensitivity')}<input type="range" min="0.3" max="2" step="0.1" value={settings.sensitivity} onChange={e => update({ sensitivity: Number(e.target.value) })} /></label>
+            <label>{t('settings.quality')}<select value={settings.quality} onChange={e => update({ quality: e.target.value as Settings['quality'] })}><option value="low">{t('quality.low')}</option><option value="medium">{t('quality.medium')}</option><option value="high">{t('quality.high')}</option></select></label>
           </div>
         </Dialog>
       )}
@@ -455,10 +466,10 @@ export default function Game() {
       {fuelOut && driving && (
         <Dialog
           tone="alert"
-          title="Топливо закончилось"
-          actions={<button type="button" className="ui-btn" autoFocus onClick={() => engine.current?.evacuate()}>Вызвать эвакуатор · {EVACUATION_COST}</button>}
+          title={t('fuel.out.title')}
+          actions={<button type="button" className="ui-btn" autoFocus onClick={() => engine.current?.evacuate()}>{t('fuel.out.button', { cost: EVACUATION_COST })}</button>}
         >
-          <p className="ui-text">Машина встала с пустым баком. Эвакуатор доставит вас на ближайшую АЗС за {EVACUATION_COST} монет.</p>
+          <p className="ui-text">{t('fuel.out.text', { cost: EVACUATION_COST })}</p>
         </Dialog>
       )}
 
@@ -483,15 +494,13 @@ export default function Game() {
 
       {eventOffer && !settingsOpen && (
         <Dialog
-          title={eventOffer === 'arena' ? 'Арена' : 'Гонка'}
+          title={eventOffer === 'arena' ? t('event.arena') : t('event.race')}
           actions={<>
-            <button type="button" className="ui-btn" onClick={() => engine.current?.acceptEvent()}>Играть</button>
-            <button type="button" className="ui-btn is-ghost" onClick={() => engine.current?.declineEvent()}>Не сейчас</button>
+            <button type="button" className="ui-btn" onClick={() => engine.current?.acceptEvent()}>{t('event.play')}</button>
+            <button type="button" className="ui-btn is-ghost" onClick={() => engine.current?.declineEvent()}>{t('event.later')}</button>
           </>}
         >
-          <p className="ui-text">{eventOffer === 'arena'
-            ? 'Три машины в радиусе километра. Победа +10 000, поражение −10 000.'
-            : 'Три соперника рядом. Финиш примерно через 5 км. Победа +10 000.'}</p>
+          <p className="ui-text">{eventOffer === 'arena' ? t('event.arena.text') : t('event.race.text')}</p>
         </Dialog>
       )}
     </main>
