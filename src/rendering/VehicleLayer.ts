@@ -587,6 +587,12 @@ export function vehicleLayer(
     map?.triggerRepaint();
   }
 
+  /** Height of the ground at a point relative to the car's frame (0 where not known yet). */
+  function groundLift(point: Position) {
+    const ground = map.getTerrain() ? map.queryTerrainElevation(point) : 0;
+    return ground == null ? 0 : ground - height();
+  }
+
   function scenePoint(here: Position, point: Position, heading: number, up: number) {
     const offset = eastNorth(here, point);
     return new THREE.Vector3(
@@ -963,13 +969,14 @@ export function vehicleLayer(
       for (const entry of missionBeacons.values()) {
         if (!entry.visual.group.visible) continue;
         const bob = Math.sin(now * 0.0022 + beaconIndex) * 0.08;
-        entry.visual.group.position.copy(scenePoint(here, entry.position, heading, bob));
+        // stand on the ground under the beacon, not at the car's height
+        entry.visual.group.position.copy(scenePoint(here, entry.position, heading, groundLift(entry.position) + bob));
         entry.visual.group.rotation.set(0, heading - now * 0.0012, 0);
         entry.visual.tip.scale.setScalar(1 + Math.sin(now * 0.004 + beaconIndex) * 0.08);
         beaconIndex++;
       }
       if (raceFinishGoal && raceFinish.visible) {
-        raceFinish.position.copy(scenePoint(here, raceFinishGoal, heading, 0));
+        raceFinish.position.copy(scenePoint(here, raceFinishGoal, heading, groundLift(raceFinishGoal)));
         raceFinish.rotation.set(0, heading - now * 0.0008, 0);
         finishFlag.rotation.y = Math.sin(now * 0.003) * 0.15;
       }
