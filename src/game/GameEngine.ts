@@ -360,8 +360,8 @@ export class GameEngine {
         (text) => this.say(text),
         (cam, camAlt, ground, groundAlt, mark) => this.city
           ? this.city.shoot(cam, camAlt, ground, groundAlt, mark)
-          : this.threeMap?.raycastBuildings(cam, camAlt, ground, groundAlt) ?? null,
-        (point, altitude) => this.city?.markGround(point, altitude),
+          : this.threeMap?.raycastBuildings(cam, camAlt, ground, groundAlt, mark) ?? null,
+        (point, altitude) => this.city ? this.city.markGround(point, altitude) : this.threeMap?.markGround(point, altitude),
       );
       this.map.addLayer(this.combatLayer);
       this.applyLabelVisibility();

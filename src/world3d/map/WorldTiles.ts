@@ -427,13 +427,39 @@ export class WorldTiles {
       return hit;
     };
     const steps = Math.ceil(length / 0.75);
+    const m = (q: LngLat): [number, number] => [(q[0] - from[0]) * 111319.49 * cos, (q[1] - from[1]) * 111319.49];
     for (let s = 1; s <= steps; s++) {
       const t = s / steps;
       const p: LngLat = [from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t];
       const altitude = fromAlt + (toAlt - fromAlt) * t;
       for (const c of candidates) {
         if (altitude > c.top) continue;
-        if (inside(p, c.rings[0]) && !c.rings.slice(1).some((hole) => inside(p, hole))) return { point: p, altitude };
+        if (!inside(p, c.rings[0]) || c.rings.slice(1).some((hole) => inside(p, hole))) continue;
+        const prevT = (s - 1) / steps;
+        const q: LngLat = [from[0] + (to[0] - from[0]) * prevT, from[1] + (to[1] - from[1]) * prevT];
+        const prevAlt = fromAlt + (toAlt - fromAlt) * prevT;
+        // came in through the roof, or through a wall: find the crossed edge
+        if (prevAlt > c.top + 0.05) return { point: p, altitude: c.top, normal: [0, 1, 0] as [number, number, number] };
+        const [qx, qz] = m(q), [px, pz] = m(p);
+        let best: { t: number; nx: number; nz: number } | null = null;
+        for (const ring of c.rings) {
+          for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+            const [ax, az] = m(ring[j]), [bx, bz] = m(ring[i]);
+            const den = (px - qx) * (bz - az) - (pz - qz) * (bx - ax);
+            if (Math.abs(den) < 1e-9) continue;
+            const u = ((ax - qx) * (bz - az) - (az - qz) * (bx - ax)) / den;
+            const v = ((ax - qx) * (pz - qz) - (az - qz) * (px - qx)) / den;
+            if (u < 0 || u > 1 || v < 0 || v > 1 || (best && u >= best.t)) continue;
+            const ex = bx - ax, ez = bz - az, len = Math.hypot(ex, ez) || 1;
+            let nx = -ez / len, nz = ex / len;
+            if (nx * (qx - px) + nz * (qz - pz) < 0) { nx = -nx; nz = -nz; } // face the shooter
+            best = { t: u, nx, nz };
+          }
+        }
+        const hitT = best ? prevT + (t - prevT) * best.t : t;
+        const point: LngLat = [from[0] + (to[0] - from[0]) * hitT, from[1] + (to[1] - from[1]) * hitT];
+        // east, up, north
+        return { point, altitude: fromAlt + (toAlt - fromAlt) * hitT, normal: (best ? [best.nx, 0, best.nz] : [0, 1, 0]) as [number, number, number] };
       }
     }
     return null;

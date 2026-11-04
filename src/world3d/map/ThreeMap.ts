@@ -115,6 +115,11 @@ export class ThreeMap {
   private sky = new SkyBodies();
   private lighting: Lighting | null = null;
   private lightClock = 0;
+  /** bullet holes on walls, roofs and ground; world positions, oldest replaced first */
+  private holes: { at: [number, number]; altitude: number; normal: [number, number, number] }[] = [];
+  private holeMesh: THREE.InstancedMesh;
+  private holesDirty = false;
+  private holesOrigin = '';
   /** player car (lng/lat, altitude m) for the see-through buildings in front of it */
   private focusCar: { at: [number, number]; altitude: number } | null = null;
   loaded = false;
@@ -153,6 +158,15 @@ export class ThreeMap {
     };
     this.scene.add(this.world.root);
     this.scene.add(this.sky.group);
+    this.holeMesh = new THREE.InstancedMesh(
+      new THREE.CircleGeometry(0.075, 12),
+      new THREE.MeshBasicMaterial({ color: '#151210', transparent: true, opacity: 0.92, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -8, polygonOffsetUnits: -16, side: THREE.DoubleSide }),
+      512,
+    );
+    this.holeMesh.count = 0;
+    this.holeMesh.frustumCulled = false;
+    this.holeMesh.renderOrder = 5;
+    this.scene.add(this.holeMesh);
     const wanted = new URLSearchParams(window.location.search).get('time');
     if (wanted && /^\d{1,2}:\d{2}$/.test(wanted)) {
       const [h, m] = wanted.split(':').map(Number);
@@ -312,9 +326,42 @@ export class ThreeMap {
     this.focusCar = at ? { at: [...at], altitude } : null;
   }
 
-  /** First building hit along a shot, like CityBuildings.shoot but from tile footprints. */
-  raycastBuildings(from: [number, number], fromAlt: number, to: [number, number], toAlt: number) {
-    return this.world.raycastBuildings(from, fromAlt, to, toAlt, this.terrain?.exaggeration ?? 0);
+  /** First building hit along a shot (like CityBuildings.shoot); `mark` leaves a bullet hole. */
+  raycastBuildings(from: [number, number], fromAlt: number, to: [number, number], toAlt: number, mark = false) {
+    const hit = this.world.raycastBuildings(from, fromAlt, to, toAlt, this.terrain?.exaggeration ?? 0);
+    if (hit && mark) this.addHole(hit.point, hit.altitude, hit.normal);
+    return hit ? { point: hit.point, altitude: hit.altitude } : null;
+  }
+
+  /** A bullet mark on the ground (roads sit up to 0.15 m above it). */
+  markGround(point: [number, number], altitude: number) {
+    this.addHole(point, altitude + 0.18, [0, 1, 0]);
+  }
+
+  private addHole(at: [number, number], altitude: number, normal: [number, number, number]) {
+    this.holes.push({ at: [...at], altitude, normal });
+    if (this.holes.length > 512) this.holes.shift();
+    this.holesDirty = true;
+    this.triggerRepaint();
+  }
+
+  private placeHoles(perMeter: number) {
+    const key = `${this.origin.x01},${this.origin.y01}`;
+    if (!this.holesDirty && key === this.holesOrigin) return;
+    this.holesDirty = false;
+    this.holesOrigin = key;
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), p = new THREE.Vector3(), n = new THREE.Vector3();
+    const z = new THREE.Vector3(0, 0, 1), one = new THREE.Vector3(1, 1, 1);
+    this.holes.forEach((h, i) => {
+      // normal is (east, up, north); scene axes are (east, up, south)
+      n.set(h.normal[0], h.normal[1], -h.normal[2]).normalize();
+      p.set((mercatorX01(h.at[0]) - this.origin.x01) / perMeter, h.altitude, (mercatorY01(h.at[1]) - this.origin.y01) / perMeter).addScaledVector(n, 0.02);
+      q.setFromUnitVectors(z, n);
+      m.compose(p, q, one.setScalar(0.8 + ((i * 7919) % 5) * 0.1));
+      this.holeMesh.setMatrixAt(i, m);
+    });
+    this.holeMesh.count = this.holes.length;
+    this.holeMesh.instanceMatrix.needsUpdate = true;
   }
 
   setPixelRatio(ratio: number) {
@@ -401,6 +448,7 @@ export class ThreeMap {
     const eye = cam.cameraMercator;
     this.uniforms.uCameraPos.value.set((eye.x - this.origin.x01) / perMeter, eye.z / perMeter, (eye.y - this.origin.y01) / perMeter);
     this.updateLighting(eye, perMeter);
+    this.placeHoles(perMeter);
     this.uniforms.uXray.value = this.focusCar ? 1 : 0;
     if (this.focusCar) {
       const c = this.focusCar.at;

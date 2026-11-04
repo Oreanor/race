@@ -11,7 +11,7 @@ export class TireTracks {
   private direction: {x:number;y:number}|null=null;
   private stroke=0;
   private lastScale=1;
-  private material=new THREE.MeshBasicMaterial({color:'#302e2a',vertexColors:true,transparent:true,depthWrite:false,side:THREE.DoubleSide,polygonOffset:true,polygonOffsetFactor:-1,polygonOffsetUnits:-1});
+  private material=new THREE.MeshBasicMaterial({color:'#302e2a',vertexColors:true,transparent:true,depthWrite:false,side:THREE.DoubleSide,polygonOffset:true,polygonOffsetFactor:-6,polygonOffsetUnits:-12});
   private meshes=[0,1].map(()=>{
     const geo=new THREE.BufferGeometry();
     geo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(96*2*3),3).setUsage(THREE.DynamicDrawUsage));
@@ -51,7 +51,7 @@ export class TireTracks {
           const fade=Math.max(0,Math.min(1,(14*scale-dist)/(8*scale)));
           for(let side=0;side<2;side++){
             const p=edges[j][side],v=(start+j)*2+side;
-            positions.setXYZ(v,(p.y*Math.sin(heading)-p.x*Math.cos(heading))/scale,(sample.elevation+0.035-carAltitude)/scale,(p.y*Math.cos(heading)+p.x*Math.sin(heading))/scale);
+            positions.setXYZ(v,(p.y*Math.sin(heading)-p.x*Math.cos(heading))/scale,(sample.elevation+0.19-carAltitude)/scale,(p.y*Math.cos(heading)+p.x*Math.sin(heading))/scale);
             colors.setXYZW(v,1,1,1,0.27*fade);
           }
           if(j>0){const a=(start+j-1)*2,b=a+2;for(const v of [a,b,a+1,a+1,b,b+1])index.setX(count++,v);}
