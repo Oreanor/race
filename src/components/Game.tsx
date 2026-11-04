@@ -104,6 +104,18 @@ export default function Game() {
   const engine = useRef<GameEngine | null>(null);
   const speedRef = useRef<HTMLElement>(null);
   const fpsRef = useRef<HTMLElement>(null);
+  const compassRef = useRef<HTMLDivElement>(null);
+  // compass: the rose turns against the camera so N always points north
+  useEffect(() => {
+    let frame = 0;
+    const tick = () => {
+      frame = requestAnimationFrame(tick);
+      const bearing = engine.current?.map.getBearing();
+      if (compassRef.current && bearing != null) compassRef.current.style.transform = `rotate(${-bearing}deg)`;
+    };
+    tick();
+    return () => cancelAnimationFrame(frame);
+  }, []);
   const aimRef = useRef<HTMLDivElement>(null);
   const rosterRef = useRef<HTMLDivElement>(null);
   const rosterStoreRef = useRef(new Map<string, RosterNodes>());
@@ -343,6 +355,12 @@ export default function Game() {
     <main className={driving ? 'game-shell is-driving' : 'game-shell'}>
       <div ref={host} className="map" />
       <div ref={aimRef} className="aim-reticle" aria-hidden="true"><span /></div>
+      <div className="compass" aria-hidden="true">
+        <div className="compass-rose" ref={compassRef}>
+          <i className="compass-needle" />
+          <b className="compass-n">N</b>
+        </div>
+      </div>
       {perfOn && <PerfOverlay mode={t('settings.stats')} perf={perf} bench={bench} onBench={runBench} />}
       {!booted && (
         <div className="map-loader" aria-live="polite">
