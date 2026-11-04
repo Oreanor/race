@@ -330,7 +330,10 @@ export default function Game() {
         setSearchOpen(false);
       }}
     >
-      <span>{c.name}</span>
+      <span className="city-option-main">
+        <span>{c.name}</span>
+        {c.note && <em>{cityNote(c)}</em>}
+      </span>
       <small>{c.country}</small>
       {chosen(c) && <b>↗</b>}
     </button>

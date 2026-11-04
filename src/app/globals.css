@@ -188,3 +188,5 @@
 .bounty-indicator{color:#ff8a7a!important;text-shadow:0 1px 3px #000,0 0 5px #000}
 .bounty-indicator .mission-indicator-arrow{background:#d63a2f!important}
 .bounty-indicator .mission-reward{color:#ffb3a8}
+.city-option-main{display:flex;flex-direction:column;align-items:flex-start;gap:1px;min-width:0}
+.city-option-main em{font-style:normal;font-size:11px;color:var(--ui-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}

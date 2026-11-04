@@ -1,4 +1,4 @@
-import { ENGLISH, LANGS, MESSAGES, type Lang, type MessageKey } from './messages';
+import { ENGLISH, LANGS, MESSAGES, type Lang, type MessageKey } from './messages.ts';
 
 // Tiny i18n: language from the saved choice, else from the browser
 // (Portuguese and Russian by prefix), else English.

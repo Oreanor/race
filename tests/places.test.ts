@@ -29,3 +29,11 @@ test('duplicate hits collapse', () => {
   ];
   assert.equal(placesFromSearch(rows).length, 1);
 });
+
+test('search hits say what and where they are', () => {
+  const [village] = placesFromSearch([{
+    lat: '41.09', lon: '-7.8', name: 'Figueira', addresstype: 'village',
+    address: { village: 'Figueira', city: 'Lamego', county: 'Viseu', country: 'Portugal', country_code: 'pt' },
+  }], 'ru');
+  assert.equal(village.note, 'Деревня · Lamego, Viseu');
+});

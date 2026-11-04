@@ -20,7 +20,7 @@ export async function GET(request: Request) {
     });
     if (!response.ok) return Response.json([]);
     const rows = await response.json() as PlaceHit[];
-    return Response.json(placesFromSearch(Array.isArray(rows) ? rows : []));
+    return Response.json(placesFromSearch(Array.isArray(rows) ? rows : [], lang as 'en' | 'pt' | 'ru'));
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') throw error;
     return Response.json([]);
