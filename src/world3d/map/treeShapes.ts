@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
-// Low-poly tree crowns. Each crown is one merged, flat-shaded geometry, so a
+// Low-poly tree crowns. Each crown is one merged, softly shaded geometry, so a
 // whole tree is still one instance (plus its trunk). Every shape is normalised
 // to radius 1 and height 1 with its base at y = 0: the instance scale is simply
 // (crown radius, crown height, crown radius). `aShade` runs 0 → 1 from the
@@ -10,8 +10,20 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 type Blob = { at: [number, number, number]; r: number; squash?: number };
 
 function cluster(blobs: Blob[]) {
+  // centre of the whole crown: normals lean toward it so the crown shades as one soft mass
+  const cy = blobs.reduce((s, b) => s + b.at[1], 0) / blobs.length;
   const parts = blobs.map(({ at, r, squash = 1 }) => {
-    const g = new THREE.IcosahedronGeometry(r, 0);
+    const g = new THREE.IcosahedronGeometry(r, 0); // already non-indexed
+    const pos = g.getAttribute('position');
+    const normals = new Float32Array(pos.count * 3);
+    const own = new THREE.Vector3(), crown = new THREE.Vector3();
+    for (let i = 0; i < pos.count; i++) {
+      own.set(pos.getX(i), pos.getY(i), pos.getZ(i)).normalize();
+      crown.set(pos.getX(i) + at[0], pos.getY(i) * squash + at[1] - cy, pos.getZ(i) + at[2]).normalize();
+      own.multiplyScalar(0.55).addScaledVector(crown, 0.45).normalize();
+      normals.set([own.x, own.y, own.z], i * 3);
+    }
+    g.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
     g.scale(1, squash, 1);
     g.translate(at[0], at[1], at[2]);
     return g;
@@ -21,24 +33,23 @@ function cluster(blobs: Blob[]) {
 
 function tiers(levels: { r: number; h: number; y: number }[], segments = 6) {
   const parts = levels.map(({ r, h, y }) => {
-    const g = new THREE.ConeGeometry(r, h, segments, 1, false);
+    const g = new THREE.ConeGeometry(r, h, segments, 1, false); // smooth side normals
     g.translate(0, y + h / 2, 0);
     return g;
   });
   return finish(parts);
 }
 
-/** Merge, flat-shade, normalise to radius 1 / height 1 and add the height gradient. */
+/** Merge, normalise to radius 1 / height 1 and add the height gradient. */
 function finish(parts: THREE.BufferGeometry[]) {
-  const merged = mergeGeometries(parts.map((p) => p.toNonIndexed()), false)!;
+  const merged = mergeGeometries(parts.map((p) => (p.index ? p.toNonIndexed() : p)), false)!;
   for (const p of parts) p.dispose();
   merged.computeBoundingBox();
   const box = merged.boundingBox!;
   const radius = Math.max(-box.min.x, box.max.x, -box.min.z, box.max.z) || 1;
   const height = (box.max.y - box.min.y) || 1;
   merged.translate(0, -box.min.y, 0);
-  merged.scale(1 / radius, 1 / height, 1 / radius);
-  merged.computeVertexNormals();
+  merged.scale(1 / radius, 1 / height, 1 / radius); // keeps the smooth normals (transformed)
   const position = merged.getAttribute('position');
   const shade = new Float32Array(position.count);
   for (let i = 0; i < position.count; i++) shade[i] = position.getY(i);

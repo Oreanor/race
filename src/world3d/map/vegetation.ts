@@ -4,6 +4,7 @@ import type { BaseUniforms } from './materials';
 import { simpleLit } from './simpleLit';
 import { createPieceGeometries } from '@/game/buildings/BuildingGeometry';
 import { createCrowns } from './treeShapes';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 const pieces = createPieceGeometries();
 const crowns = createCrowns();
@@ -11,7 +12,22 @@ const crowns = createCrowns();
 // Draws the per-tile vegetation planned in the worker. Shared low-poly shapes,
 // one InstancedMesh per shape per tile; ground height and fog in the shader.
 
-type Kind = 'trunk' | 'leaf0' | 'leaf1' | 'leaf2' | 'leaf3' | 'post' | 'rail' | 'chimney' | 'vent';
+type Kind = 'trunk' | 'leaf0' | 'leaf1' | 'leaf2' | 'leaf3' | 'post' | 'rail' | 'chimney' | 'vent' | 'lamp';
+
+/** Street lamp: pole, arm reaching over the road (+X), lamp head. Meters. */
+function lampGeometry() {
+  const pole = new THREE.CylinderGeometry(0.07, 0.11, 7, 6);
+  pole.translate(0, 3.5, 0);
+  const base = new THREE.CylinderGeometry(0.16, 0.18, 0.5, 6);
+  base.translate(0, 0.25, 0);
+  const arm = new THREE.BoxGeometry(1.5, 0.07, 0.07);
+  arm.translate(0.72, 6.95, 0);
+  const head = new THREE.BoxGeometry(0.62, 0.16, 0.3);
+  head.translate(1.42, 6.86, 0);
+  const merged = mergeGeometries([pole, base, arm, head].map((g) => g.toNonIndexed()), false)!;
+  merged.deleteAttribute('uv');
+  return merged;
+}
 
 export class VegetationRenderer {
   private geometries: Record<Kind, THREE.BufferGeometry>;
@@ -29,6 +45,7 @@ export class VegetationRenderer {
       // same shapes as the old detailed layer's roof props
       chimney: pieces.chimney,
       vent: pieces.vent,
+      lamp: lampGeometry(),
     };
     const lambert = (color: string | number) => simpleLit(color, uniforms);
     const leaf = simpleLit(0xffffff, uniforms, { foliage: true });
@@ -36,6 +53,7 @@ export class VegetationRenderer {
       trunk: lambert(0x7a5a43), leaf0: leaf, leaf1: leaf, leaf2: leaf, leaf3: leaf,
       post: lambert('#4a4036'), rail: lambert('#5c5145'),
       chimney: lambert(0xffffff), vent: lambert(0xffffff),
+      lamp: lambert('#3d444b'),
     };
   }
 
@@ -48,7 +66,7 @@ export class VegetationRenderer {
   build(data: VegetationData): THREE.InstancedMesh[] {
     return this.instanced([
       ['trunk', data.trunks], ['leaf0', data.leaves[0]], ['leaf1', data.leaves[1]], ['leaf2', data.leaves[2]], ['leaf3', data.leaves[3]],
-      ['post', data.posts], ['rail', data.rails],
+      ['post', data.posts], ['rail', data.rails], ['lamp', data.lamps],
     ]);
   }
 

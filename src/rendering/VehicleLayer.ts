@@ -1,4 +1,5 @@
 import { TireTracks } from './TireTracks';
+import { WorldParticles, type Enu } from './effects/WorldParticles';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { MercatorCoordinate, type CustomLayerInterface, type Map as LibreMap } from 'maplibre-gl';
@@ -265,21 +266,8 @@ export function vehicleLayer(
   tracer.frustumCulled = false;
   tracer.visible = false;
   scene.add(tracer);
-  const createFlash = (color: number) => {
-    const positions = new Float32Array(8 * 6 * 3);
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3).setUsage(THREE.DynamicDrawUsage));
-    const material = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 1, depthWrite: false, depthTest: false, side: THREE.DoubleSide });
-    const mesh = new THREE.LineSegments(geometry, material);
-    mesh.frustumCulled = false;
-    mesh.visible = false;
-    scene.add(mesh);
-    return { mesh, geometry, material, positions };
-  };
-  const muzzleFlash = createFlash(0xff9a32);
-  const muzzleCore = createFlash(0xfff5dc);
-  const impactFlash = createFlash(0xff9a32);
-  const impactCore = createFlash(0xfff5dc);
+  // muzzle flash, impact sparks and explosions
+  const fx = new WorldParticles(scene);
   const healthBackgroundGeometry = new THREE.PlaneGeometry(2.2, 0.24);
   const healthFillGeometry = new THREE.PlaneGeometry(1, 0.12);
   const healthBackgroundMaterial = new THREE.MeshBasicMaterial({
@@ -374,35 +362,6 @@ export function vehicleLayer(
     map?.triggerRepaint();
   }
 
-  function drawStar(flash: ReturnType<typeof createFlash>, center: THREE.Vector3, radius: number, phase: number) {
-    for (let ray = 0; ray < 8; ray++) {
-      const angle = phase + ray * Math.PI / 4;
-      const inner = radius * 0.22;
-      const outer = radius * (ray % 2 ? 0.62 : 1);
-      const halfWidth = radius * 0.14;
-      const dx = Math.cos(angle);
-      const dy = Math.sin(angle);
-      const px = -dy * halfWidth;
-      const py = dx * halfWidth;
-      const innerX = center.x + dx * inner;
-      const innerY = center.y + dy * inner;
-      const outerX = center.x + dx * outer;
-      const outerY = center.y + dy * outer;
-      const leftX = px, leftY = py;
-      const rightX = -px, rightY = -py;
-      const index = ray * 18;
-      flash.positions.set([
-        innerX + leftX, innerY + leftY, center.z,
-        innerX + rightX, innerY + rightY, center.z,
-        outerX + leftX, outerY + leftY, center.z,
-        outerX + leftX, outerY + leftY, center.z,
-        innerX + rightX, innerY + rightY, center.z,
-        outerX + rightX, outerY + rightY, center.z,
-      ], index);
-    }
-    (flash.geometry.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true;
-    flash.mesh.visible = true;
-  }
 
   function createHealthBar() {
     const bar = new THREE.Group();
@@ -455,15 +414,11 @@ export function vehicleLayer(
     }
   }
 
-  function burstExplosion(target: TargetState, here: Position, heading: number, now: number, size: number) {
-    const point = scenePoint(here, target.position, heading, 0.7 + Math.random() * 0.8);
-    target.explosion.position.copy(point);
-    target.explosion.scale.setScalar(0.25 * size);
-    target.explosion.material.opacity = 1;
-    target.explosion.visible = true;
-    drawStar(impactFlash, point, 1.1 * size + Math.random() * 0.4, Math.random() * Math.PI);
-    drawStar(impactCore, point, 0.55 * size + Math.random() * 0.25, Math.random() * Math.PI);
-    impactUntil = now + 140;
+  function burstExplosion(target: TargetState, here: Position, _heading: number, now: number, size: number) {
+    const o = eastNorth(here, target.position);
+    const jitter = () => (Math.random() - 0.5) * 1.6;
+    fx.altitude = height();
+    fx.explosion(here, { e: o.east + jitter(), n: o.north + jitter(), u: 0.6 + Math.random() * 0.8 }, 0.75 * size, now, size > 1);
   }
 
   const wreckYawScratch = new THREE.Quaternion();
@@ -686,8 +641,17 @@ export function vehicleLayer(
     tracerGeometry.setDrawRange(0, dashCount * 2);
     tracer.visible = true;
     tracerUntil = now + 90;
-    drawStar(muzzleFlash, startPoint, 0.6 + Math.random() * 0.325, Math.random() * Math.PI);
-    drawStar(muzzleCore, startPoint, 0.34 + Math.random() * 0.175, Math.random() * Math.PI);
+    // world-space (east, north, up) shot geometry for the effects
+    const muzzleAt: Enu = { e: Math.sin(heading) * 1.9, n: Math.cos(heading) * 1.9, u: 0.85 };
+    const endEn = eastNorth(here, end);
+    const hitAt: Enu = { e: endEn.east, n: endEn.north, u: hitUp };
+    const shotLen = Math.hypot(hitAt.e - muzzleAt.e, hitAt.n - muzzleAt.n, hitAt.u - muzzleAt.u) || 1;
+    const shotDir: Enu = { e: (hitAt.e - muzzleAt.e) / shotLen, n: (hitAt.n - muzzleAt.n) / shotLen, u: (hitAt.u - muzzleAt.u) / shotLen };
+    const bounce: Enu = { e: -shotDir.e, n: -shotDir.n, u: Math.max(0.35, -shotDir.u) };
+    fx.altitude = carAlt;
+    fx.muzzle(here, muzzleAt, shotDir, now);
+    fx.tracer(here, muzzleAt, hitAt, now);
+    tracer.visible = false; // the particle streak replaces the 1px line
     flashUntil = now + 75;
     if (hit) {
       hit.hp = Math.max(0, hit.hp - targetDamagePerShot);
@@ -696,16 +660,12 @@ export function vehicleLayer(
         destroyTarget(hit, now, here, heading);
       } else {
         hit.flashUntil = now + 130;
-        const impact = scenePoint(here, end, heading, hitUp);
-        drawStar(impactFlash, impact, 1.1 + Math.random() * 0.55, Math.random() * Math.PI);
-        drawStar(impactCore, impact, 0.6 + Math.random() * 0.3, Math.random() * Math.PI);
+        fx.impact(here, hitAt, bounce, now, { scale: 1 });
         impactUntil = now + 90;
       }
     } else if (wallHit || groundHit) {
-      const impact = scenePoint(here, end, heading, hitUp);
-      const size = groundHit ? 0.4 : 0.55;
-      drawStar(impactFlash, impact, size + Math.random() * size * 0.5, Math.random() * Math.PI);
-      drawStar(impactCore, impact, size * 0.55 + Math.random() * size * 0.3, Math.random() * Math.PI);
+      const normal: Enu = groundHit ? { e: bounce.e * 0.4, n: bounce.n * 0.4, u: 1 } : bounce;
+      fx.impact(here, hitAt, normal, now, { scale: groundHit ? 0.7 : 0.9, dust: true });
       impactUntil = now + 90;
     }
   }
@@ -854,10 +814,6 @@ export function vehicleLayer(
         Math.cos(bearing) * Math.cos(pitchAngle),
       ).applyAxisAngle(new THREE.Vector3(0, 1, 0), heading - Math.PI);
       tracer.visible = tracer.visible && now < tracerUntil;
-      muzzleFlash.mesh.visible = now < flashUntil && Math.random() > 0.22;
-      muzzleCore.mesh.visible = now < flashUntil && Math.random() > 0.3;
-      impactFlash.mesh.visible = now < impactUntil && Math.random() > 0.28;
-      impactCore.mesh.visible = now < impactUntil && Math.random() > 0.35;
       for (const target of targets.values()) {
         const offset = scenePoint(here, target.position, heading, 0);
         if (target.destroyed) {
@@ -960,6 +916,11 @@ export function vehicleLayer(
       root.rotation.z = roll();
       const matrix = new THREE.Matrix4().makeTranslation(place.x, place.y, place.z).scale(new THREE.Vector3(meters, -meters, meters)).multiply(new THREE.Matrix4().makeRotationX(Math.PI / 2)).multiply(new THREE.Matrix4().makeRotationY(-vehicle.heading + Math.PI));
       placement.copy(matrix);
+      // camera position in this layer's local frame, for camera-facing particles
+      const clipToLocal = new THREE.Matrix4().fromArray(args.defaultProjectionData.mainMatrix as unknown as number[]).multiply(matrix).invert();
+      const eye = new THREE.Vector4(0, 0, -1, 1).applyMatrix4(clipToLocal);
+      fx.altitude = height();
+      fx.update(now, dt, here, heading, new THREE.Vector3(eye.x / eye.w, eye.y / eye.w, eye.z / eye.w));
       if (fused || !renderer) return;
       camera.projectionMatrix.fromArray(args.defaultProjectionData.mainMatrix).multiply(matrix);
       renderer.resetState();
@@ -971,10 +932,7 @@ export function vehicleLayer(
       disposeObject(scene);
       tracerGeometry.dispose();
       tracerMaterial.dispose();
-      for (const flash of [muzzleFlash, muzzleCore, impactFlash, impactCore]) {
-        flash.geometry.dispose();
-        flash.material.dispose();
-      }
+      fx.dispose();
       renderer?.dispose();
     },
   };

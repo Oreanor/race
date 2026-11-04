@@ -56,7 +56,9 @@ export function simpleLit(color: THREE.ColorRepresentation, uniforms: SimpleLitU
         vec3 n = normal;
         #ifdef USE_INSTANCING
           p = instanceMatrix * p;
-          n = mat3(instanceMatrix) * n;
+          // inverse-transpose for scaled instances (flat pine crowns are very non-uniform)
+          mat3 im = mat3(instanceMatrix);
+          n = im * (n / vec3(dot(im[0], im[0]), dot(im[1], im[1]), dot(im[2], im[2])));
         #endif
         #ifdef FOLIAGE
           vShade = aShade;
@@ -96,11 +98,21 @@ export function simpleLit(color: THREE.ColorRepresentation, uniforms: SimpleLitU
       void main() {
         vec3 n = normalize(vNormal);
         if (!gl_FrontFacing) n = -n;
-        float light = 0.5 + 0.18 * n.y + 0.42 * max(dot(n, uSun), 0.0);
-        vec3 color = uColor * vTint * light;
         #ifdef FOLIAGE
-          // darker under the crown, sunlit on top
-          color *= mix(0.62, 1.15, vShade);
+          // soft foliage: wrapped light (no hard terminator), gentle top-to-bottom
+          // shading, leaf-clump dapple and a bright rim like light through leaves
+          float wrap = dot(n, uSun) * 0.5 + 0.5;
+          float light = 0.58 + 0.42 * wrap * wrap + 0.08 * n.y;
+          vec3 color = uColor * vTint * light;
+          color *= mix(0.74, 1.08, vShade);
+          float dapple = sin(vWorld.x * 2.1 + vWorld.y * 0.7) * sin(vWorld.z * 2.3 - vWorld.y * 1.3) * sin(vWorld.y * 2.7 + vWorld.x * 0.9);
+          color *= 1.0 + 0.09 * dapple;
+          vec3 toEye = normalize(uCameraPos - vWorld);
+          float rim = pow(1.0 - max(dot(n, toEye), 0.0), 2.0);
+          color += uColor * vTint * vec3(0.18, 0.22, 0.1) * rim;
+        #else
+          float light = 0.5 + 0.18 * n.y + 0.42 * max(dot(n, uSun), 0.0);
+          vec3 color = uColor * vTint * light;
         #endif
         float fog = smoothstep(uFogNear, uFogFar, distance(vWorld, uCameraPos));
         color = mix(color, pow(uFogColor, vec3(2.2)), fog);

@@ -6,6 +6,7 @@
 import { planParkFences, planVegetation, type VegetationInput } from '../../game/Vegetation.ts';
 import type { MapFeature } from '../../game/WaterCollisionController.ts';
 import { latFromMercator, lngFromMercator, mercatorX, mercatorY } from '../mercator.ts';
+import { planStreets } from './streetscape.ts';
 
 export type InstanceSet = {
   count: number;
@@ -23,6 +24,8 @@ export type VegetationData = {
   leaves: InstanceSet[];
   posts: InstanceSet;
   rails: InstanceSet;
+  /** street lamps (model in meters, arm along +X) */
+  lamps: InstanceSet;
 };
 
 const GREENS = ['#619447', '#7da653', '#53875a', '#8eaf64', '#689f76', '#4e7d42', '#6f9a4a', '#5b8a3c'];
@@ -93,7 +96,8 @@ export function buildVegetation(
     reachScale: (span * metersScale * Math.SQRT1_2 + 40) / 430,
     fenceReach: span * metersScale * Math.SQRT1_2 + 40,
   };
-  const plants = drain(planVegetation(input));
+  // park and green-area planting stays free; street planting is done by planStreets
+  const plants = drain(planVegetation(input)).filter((p) => !p.key.startsWith('r:'));
   const trunks = new Instances();
   const leaves = [new Instances(), new Instances(), new Instances(), new Instances()];
   const inside = (x: number, z: number) => x >= 0 && z >= 0 && x < span && z < span;
@@ -132,6 +136,38 @@ export function buildVegetation(
     }
   }
 
+  // Planted streets: one species, size and colour per street, even spacing.
+  const streets = planStreets(corner, span, metersScale, features);
+  const lamps = new Instances();
+  for (const p of streets.plants) {
+    const ground = groundAt(p.x, p.z);
+    const s = p.s;
+    const tone = Math.min(0.999, (s - 0.9) / 0.25);
+    switch (p.species) {
+      case 'plane':
+        trunks.push(p.x, 1.5 * s, p.z, p.yaw, 1.1 * s * toMerc, 3 * s, 1.1 * s * toMerc, ground);
+        leaves[0].push(p.x, 2.4 * s, p.z, p.yaw, 2.6 * s * toMerc, 4.2 * s, 2.5 * s * toMerc, ground, pick(GREENS, tone));
+        break;
+      case 'jacaranda':
+        trunks.push(p.x, 1.3 * s, p.z, p.yaw, s * toMerc, 2.6 * s, s * toMerc, ground);
+        leaves[0].push(p.x, 2 * s, p.z, p.yaw, 2.6 * s * toMerc, 3.6 * s, 2.6 * s * toMerc, ground, linear('#9b7fd1'));
+        break;
+      case 'pine':
+        trunks.push(p.x, 3 * s, p.z, p.yaw, 1.15 * s * toMerc, 6 * s, 1.15 * s * toMerc, ground);
+        leaves[1].push(p.x, 5.5 * s, p.z, p.yaw, 3.4 * s * toMerc, 2 * s, 3.3 * s * toMerc, ground, pick(PINES, tone));
+        break;
+      case 'cypress':
+        trunks.push(p.x, 0.4 * s, p.z, p.yaw, 0.9 * s * toMerc, 0.8 * s, 0.9 * s * toMerc, ground);
+        leaves[2].push(p.x, 0.5 * s, p.z, p.yaw, 0.95 * s * toMerc, 8 * s, 0.95 * s * toMerc, ground, pick(FIRS, tone));
+        break;
+      case 'hedge':
+        // one clipped section ~4 m long, overlapping the next: reads as a continuous hedge
+        leaves[3].push(p.x, 0, p.z, p.yaw, 2.1 * toMerc, 1.15, 0.85 * toMerc, ground, linear('#5f8f4a'));
+        break;
+    }
+  }
+  for (const lamp of streets.lamps) lamps.push(lamp.x, 0, lamp.z, lamp.yaw, toMerc, 1, toMerc, groundAt(lamp.x, lamp.z));
+
   // Park fences: edges are in meters around the tile centre (x east, z south).
   const posts = new Instances();
   const rails = new Instances();
@@ -156,12 +192,12 @@ export function buildVegetation(
       px = x; pz = z; pg = g;
     }
   }
-  return { trunks: trunks.done(), leaves: leaves.map((l) => l.done(true)), posts: posts.done(), rails: rails.done() };
+  return { trunks: trunks.done(), leaves: leaves.map((l) => l.done(true)), posts: posts.done(), rails: rails.done(), lamps: lamps.done() };
 }
 
 export function vegetationTransferables(v: VegetationData): ArrayBuffer[] {
   const out: ArrayBuffer[] = [];
-  for (const set of [v.trunks, ...v.leaves, v.posts, v.rails]) {
+  for (const set of [v.trunks, ...v.leaves, v.posts, v.rails, v.lamps]) {
     out.push(set.matrices.buffer as ArrayBuffer, set.ground.buffer as ArrayBuffer);
     if (set.colors) out.push(set.colors.buffer as ArrayBuffer);
   }
