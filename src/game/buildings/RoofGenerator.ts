@@ -47,7 +47,37 @@ export function canPitch(points: RoofPoint[]) {
 
 type V3 = { x: number; y: number; z: number };
 
-export type RoofMesh = { positions: number[]; normals: number[]; ridgeY: number; ridgeA: RoofPoint; ridgeB: RoofPoint };
+export type RoofMesh = {
+  positions: number[];
+  normals: number[];
+  ridgeY: number;
+  eavesY: number;
+  halfWidth: number;
+  ridgeA: RoofPoint;
+  ridgeB: RoofPoint;
+};
+
+/** Roof as a collision surface: flat (half ≤ 0) or pitched down from the ridge. */
+export type RoofProfile = {
+  eaves: number;
+  peak: number;
+  half: number;
+  ridgeA: RoofPoint | null;
+  ridgeB: RoofPoint | null;
+};
+
+/** Height of the roof skin above the building base at (x, z). */
+export function roofClearanceAt(x: number, z: number, roof: RoofProfile) {
+  if (roof.half <= 0 || !roof.ridgeA || !roof.ridgeB) return roof.peak;
+  const ax = roof.ridgeA.x, az = roof.ridgeA.z;
+  const bx = roof.ridgeB.x, bz = roof.ridgeB.z;
+  const dx = bx - ax, dz = bz - az;
+  const span = dx * dx + dz * dz || 1;
+  const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / span));
+  const dist = Math.hypot(x - ax - t * dx, z - az - t * dz);
+  const fall = Math.min(1, dist / roof.half);
+  return roof.peak - fall * (roof.peak - roof.eaves);
+}
 
 export function buildRoof(points: RoofPoint[], yBase: number, kind: RoofKind): RoofMesh | null {
   const ring = simplifyRing(points);
@@ -100,7 +130,7 @@ export function buildRoof(points: RoofPoint[], yBase: number, kind: RoofKind): R
     pushTri(positions, normals, at(eave1b, yBase), ridgeB, at(eave2b, yBase), false, center);
   }
   if (kind === 'tile') addRidge(positions, normals, ridgeA, ridgeB);
-  return { positions, normals, ridgeY: y, ridgeA, ridgeB };
+  return { positions, normals, ridgeY: y, eavesY: yBase, halfWidth: width / 2, ridgeA, ridgeB };
 }
 
 function pushTri(positions: number[], normals: number[], a: V3, b: V3, c: V3, upward: boolean, center?: V3) {

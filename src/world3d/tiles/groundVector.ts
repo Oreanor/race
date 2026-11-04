@@ -180,9 +180,31 @@ export function buildGround(vt: VectorTile, span: number, grid: number, dem: Flo
         } else if (!w.pool && nearShore(i * cs, j * cs)) {
           // the bank right next to the water dips just under it: the ground
           // between grid points never rises through the water surface
-          H[j * n + i] = Math.min(H[j * n + i], w.level - 0.35);
+          H[j * n + i] = Math.min(H[j * n + i], w.level - 0.2);
         }
       }
+  }
+
+  // soften cliffs from water carving so roads on the bank aren't stabbed by terrain triangles
+  {
+    const soft = Float32Array.from(H);
+    for (let j = 1; j < n - 1; j++) for (let i = 1; i < n - 1; i++) {
+      let nearWet = wet[j * n + i];
+      if (!nearWet) {
+        for (let dj = -1; dj <= 1 && !nearWet; dj++) for (let di = -1; di <= 1; di++) {
+          if (wet[(j + dj) * n + (i + di)]) nearWet = 1;
+        }
+      }
+      if (!nearWet) continue;
+      let sum = 0, count = 0;
+      for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+        sum += H[(j + dj) * n + (i + di)];
+        count++;
+      }
+      // keep wet beds low; only ease the bank transition
+      soft[j * n + i] = wet[j * n + i] ? Math.min(H[j * n + i], sum / count) : sum / count;
+    }
+    H.set(soft);
   }
 
   // ---- terrain: grid with a stony bank colour next to water ----------------

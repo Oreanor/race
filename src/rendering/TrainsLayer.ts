@@ -11,8 +11,8 @@ import type { Position } from '@/game/VehicleController';
 // trams (and every car until the models arrive) are instanced box parts.
 
 const MAX = 80;
-/** every rail car is scaled to this length (the models keep their proportions) */
-export const RAIL_CAR_LENGTH = 13;
+/** every rail car model is scaled to this height (they keep their proportions; lengths differ) */
+const RAIL_CAR_HEIGHT = 4.3;
 
 const MODELS = {
   lead: '/models/trains/train.glb',
@@ -84,13 +84,15 @@ function hazed(material: THREE.Material, world: SimpleLitUniforms) {
   return m;
 }
 
-type ModelParts = { meshes: THREE.InstancedMesh[]; base: THREE.Matrix4[] };
+type ModelParts = { meshes: THREE.InstancedMesh[]; base: THREE.Matrix4[]; length: number };
 
 export function trainsLayer(): MapLayer & {
   scene: THREE.Scene;
   placement: THREE.Matrix4;
   fuse: (world?: SimpleLitUniforms) => void;
   setCars: (cars: CarPose[], origin: Position, terrain: boolean) => void;
+  /** a rail car's length as drawn, once its model is in (null before) */
+  carLength: (trainId: string, index: number, kind: string) => number | null;
 } {
   let map: ThreeMap | null = null;
   const scene = new THREE.Scene();
@@ -107,7 +109,7 @@ export function trainsLayer(): MapLayer & {
   const models = new Map<ModelName, ModelParts>();
   let loading = false;
 
-  /** Each model: its parts as instanced meshes, normalised to RAIL_CAR_LENGTH along +z, wheels at y = 0. */
+  /** Each model: its parts as instanced meshes, RAIL_CAR_HEIGHT tall, long side along +z, wheels at y = 0. */
   function loadModels() {
     if (loading) return;
     loading = true;
@@ -119,13 +121,13 @@ export function trainsLayer(): MapLayer & {
         const bounds = new THREE.Box3().setFromObject(root);
         const size = bounds.getSize(new THREE.Vector3());
         const center = bounds.getCenter(new THREE.Vector3());
-        const scale = RAIL_CAR_LENGTH / Math.max(size.x, size.z);
+        const scale = RAIL_CAR_HEIGHT / size.y;
         // long side → +z (the car's forward), centred, standing on y = 0
         const normalise = new THREE.Matrix4()
           .makeRotationY((size.x >= size.z ? -Math.PI / 2 : 0) + (BACKWARDS.has(name) ? Math.PI : 0))
           .multiply(new THREE.Matrix4().makeScale(scale, scale, scale))
           .multiply(new THREE.Matrix4().makeTranslation(-center.x, -bounds.min.y, -center.z));
-        const parts: ModelParts = { meshes: [], base: [] };
+        const parts: ModelParts = { meshes: [], base: [], length: Math.max(size.x, size.z) * scale };
         root.traverse((node) => {
           const mesh = node as THREE.Mesh;
           if (!mesh.isMesh) return;
@@ -216,6 +218,10 @@ export function trainsLayer(): MapLayer & {
           mesh.instanceMatrix.needsUpdate = true;
         }
       }
+    },
+    carLength(trainId, index, kind) {
+      if (kind !== 'rail') return null;
+      return models.get(modelFor({ trainId, index, kind: 'rail', front: [0, 0], back: [0, 0] }))?.length ?? null;
     },
     onAdd(nextMap) {
       map = nextMap;

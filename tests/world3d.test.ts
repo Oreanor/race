@@ -83,17 +83,24 @@ test('tile plan orders tiles by distance and respects the radius', () => {
 });
 
 test('footprints index every building with closed ring ranges', () => {
-  const data = buildTile(pbf, tile, { chunks: 4, windows: false });
+  const data = buildTile(pbf, tile, { chunks: 4, windows: false, detailed: { region: 'Portugal' } });
   const f = data.footprints;
   const count = f.buildingStart.length - 1;
   assert.equal(count, data.stats.buildings);
   assert.equal(f.bounds.length, count * 4);
+  assert.equal(f.roofs.length, count * 8);
   assert.equal(f.ringStart[f.ringStart.length - 1] * 2, f.coords.length);
+  let pitched = 0;
   for (let b = 0; b < count; b++) {
     const r0 = f.buildingStart[b], r1 = f.buildingStart[b + 1];
     assert.ok(r1 > r0);
     for (let r = r0; r < r1; r++) assert.ok(f.ringStart[r + 1] - f.ringStart[r] >= 3);
+    const o = b * 8;
+    assert.ok(f.roofs[o + 1] >= f.roofs[o] - 1e-6); // peak ≥ eaves
+    assert.ok(Math.abs(f.heights[b] - f.roofs[o + 1]) < 1e-4); // height stores the peak
+    if (f.roofs[o + 6] > 0) pitched++;
   }
+  assert.ok(pitched > 0, 'some houses carry a pitched roof profile');
 });
 
 test('world tile: terrain, roads facing up, gameplay features and raw data kept', async () => {

@@ -320,9 +320,14 @@ export class ThreeMap {
 
   /** Next time of day: real → morning → day → evening → night → real. */
   cycleTime() {
-    this.timeMode = TIME_MODES[(TIME_MODES.indexOf(this.timeMode) + 1) % TIME_MODES.length];
+    return this.setTimeMode(TIME_MODES[(TIME_MODES.indexOf(this.timeMode) + 1) % TIME_MODES.length]);
+  }
+
+  /** Lock the sky to a mode (`real` follows the clock). */
+  setTimeMode(mode: TimeMode) {
+    this.timeMode = mode;
     const [lng, lat] = this.camera.state.center;
-    this.modeDate = this.timeMode === 'real' ? null : timeFor(this.timeMode, new Date(), lat, lng);
+    this.modeDate = mode === 'real' ? null : timeFor(mode, new Date(), lat, lng);
     this.lightClock = 0;
     this.emit('timemode', { mode: this.timeMode, clock: placeClock(this.shownTime(lat, lng), lat, lng) });
     this.triggerRepaint();

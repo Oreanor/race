@@ -9,8 +9,8 @@ export type Hub = { id: string; kind: HubKind; position: Position };
 
 /** coins per kilometre: 1000 km by sea ≈ 1000 coins, flying costs more */
 export const TARIFF: Record<HubKind, number> = { port: 1, airport: 1.5 };
-/** how close to the hub point the car has to be, meters (airport labels sit in big areas) */
-export const HUB_REACH: Record<HubKind, number> = { airport: 350, port: 140 };
+/** how close to the hub point the car has to be, meters (airport labels sit in big areas; ports want the nose at the pier) */
+export const HUB_REACH: Record<HubKind, number> = { airport: 350, port: 28 };
 const MIN_FARE = 50;
 
 const R = 6371.0088;

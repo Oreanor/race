@@ -93,7 +93,8 @@ type Train = {
   head: number;
   speed: number;
   cars: number;
-  carLength: number;
+  /** each car's own length (the models differ) */
+  lengths: number[];
   gap: number;
   maxSpeed: number;
   deadEnd: boolean;
@@ -101,7 +102,7 @@ type Train = {
 };
 
 const SPEC: Record<TrackKind, { carLength: number; gap: number; maxSpeed: number; cars: [number, number]; max: number }> = {
-  rail: { carLength: 13, gap: 0.35, maxSpeed: 22, cars: [4, 9], max: 1 }, // a locomotive and 3–8 wagons, 13 m each (the size the models are drawn at)
+  rail: { carLength: 13, gap: 0.35, maxSpeed: 22, cars: [4, 9], max: 1 }, // a locomotive and 3–8 wagons
   tram: { carLength: 11, gap: 0.8, maxSpeed: 11, cars: [2, 3], max: 3 },
 };
 const ACCEL = 0.8;
@@ -120,6 +121,8 @@ export class TrainTraffic {
 
   private network: RailNetwork;
   private limits: Record<TrackKind, number>;
+  /** the length of a car as it is drawn (models differ); null: the default for its kind */
+  carLength: (trainId: string, index: number, kind: TrackKind) => number | null = () => null;
 
   /** `limits`: how many trains / trams run at once (one train by default) */
   constructor(network: RailNetwork, limits: Partial<Record<TrackKind, number>> = {}) {
@@ -128,7 +131,13 @@ export class TrainTraffic {
   }
 
   private length(train: Train) {
-    return train.cars * train.carLength + (train.cars - 1) * train.gap;
+    return train.lengths.reduce((sum, l) => sum + l, 0) + (train.cars - 1) * train.gap;
+  }
+
+  /** pick up each car's drawn length once its model is in (falls back until then) */
+  private syncLengths(train: Train) {
+    const fallback = SPEC[train.kind].carLength;
+    for (let i = 0; i < train.cars; i++) train.lengths[i] = this.carLength(train.id, i, train.kind) ?? fallback;
   }
 
   private rebuild(train: Train) {
@@ -190,8 +199,9 @@ export class TrainTraffic {
     const out: CarPose[] = [];
     for (const train of this.trains) {
       for (let i = 0; i < train.cars; i++) {
-        const front = train.head - i * (train.carLength + train.gap);
-        out.push({ trainId: train.id, index: i, kind: train.kind, front: this.at(train, front), back: this.at(train, front - train.carLength) });
+        let front = train.head;
+        for (let k = 0; k < i; k++) front -= train.lengths[k] + train.gap;
+        out.push({ trainId: train.id, index: i, kind: train.kind, front: this.at(train, front), back: this.at(train, front - train.lengths[i]) });
       }
     }
     return out;
@@ -228,6 +238,7 @@ export class TrainTraffic {
    * (behind the camera); far beyond the haze always counts as hidden.
    */
   update(dt: number, player: Position, hidden: (p: Position) => boolean) {
+    for (const train of this.trains) this.syncLengths(train);
     const poses = this.poses();
     for (const train of this.trains) {
       this.extend(train, 400);
@@ -278,8 +289,10 @@ export class TrainTraffic {
     const cars = spec.cars[0] + Math.floor(Math.random() * (spec.cars[1] - spec.cars[0] + 1));
     const train: Train = {
       id: `${kind}-${++this.serial}`, kind, path: [start.id, second], points: [], cum: [], head: 0, speed: spec.maxSpeed * 0.6,
-      cars, carLength: spec.carLength, gap: spec.gap, maxSpeed: spec.maxSpeed, deadEnd: false, stoppedFor: 0,
+      cars, lengths: [], gap: spec.gap, maxSpeed: spec.maxSpeed, deadEnd: false, stoppedFor: 0,
     };
+    train.lengths = Array.from({ length: cars }, () => spec.carLength);
+    this.syncLengths(train);
     this.rebuild(train);
     const length = this.length(train);
     this.extend(train, length + 120);

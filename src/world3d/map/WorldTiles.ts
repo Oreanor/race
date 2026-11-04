@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { VectorTile } from '@mapbox/vector-tile';
 import { PbfReader } from 'pbf';
 import type { ChunkData } from '../tiles/buildTile';
+import { ROOF_STRIDE } from '../tiles/buildTile';
 import type { GeoFeature, MeshData, WorldTileData } from '../tiles/worldTile';
 import { bridgeDeck, gridGround } from '../tiles/worldTile';
 import { tileTemplate } from '../tiles/TileClient';
@@ -9,6 +10,14 @@ import { tilesAround, distanceToTile } from '../tiles/tilePlan';
 import { latFromMercator, lngFromMercator, mercatorX, mercatorY, tileAt, tileCorner, tileSpan, WORLD_SIZE, type LngLat, type TileId } from '../mercator';
 import { farBuildingMaterial, groundMaterial, overlayMaterial, roadMaterial, waterMaterial, type BaseUniforms } from './materials';
 import { VegetationRenderer } from './vegetation';
+import { roofClearanceAt, type RoofProfile } from '@/game/buildings/RoofGenerator';
+
+/** A nearby building for vehicle collisions: footprint + roof skin (crest already exaggerated). */
+export type BuildingCollider = {
+  rings: [number, number][][];
+  crest: number;
+  roof: RoofProfile;
+};
 
 export type WorldTilesOptions = {
   zoom: number;
@@ -385,7 +394,42 @@ export class WorldTiles {
     return out;
   }
 
-  private eachFootprint(center: LngLat, radius: number, visit: (rings: () => [number, number][][], height: number, ground: number) => void) {
+  /** Footprints with roof skins for vehicle collisions (`crest` already exaggerated). */
+  buildingsNear(center: LngLat, radius: number, exaggeration: number): BuildingCollider[] {
+    const out: BuildingCollider[] = [];
+    this.eachFootprint(center, radius, (rings, _height, _ground, roof, crest) => {
+      out.push({ rings: rings(), crest: crest * exaggeration, roof });
+    });
+    return out;
+  }
+
+  /**
+   * Roof altitude under a point (exaggerated meters), or null if none.
+   * Matches the drawn roof: flat slab or pitch falling from the ridge to the eaves.
+   */
+  roofAt(lng: number, lat: number, exaggeration: number): number | null {
+    let best: number | null = null;
+    const point: LngLat = [lng, lat];
+    this.eachFootprint(point, 4, (rings, _height, _ground, roof, crest) => {
+      const list = rings();
+      if (!insideLngLat(point, list[0]) || list.slice(1).some((hole) => insideLngLat(point, hole))) return;
+      const top = crest * exaggeration + roofClearanceAt(0, 0, roofInMeters(roof, lng, lat));
+      if (best == null || top > best) best = top;
+    });
+    return best;
+  }
+
+  private eachFootprint(
+    center: LngLat,
+    radius: number,
+    visit: (
+      rings: () => [number, number][][],
+      height: number,
+      ground: number,
+      roof: RoofProfile,
+      crest: number,
+    ) => void,
+  ) {
     const mx = mercatorX(center[0]), my = mercatorY(center[1]);
     for (const live of this.tiles.values()) {
       const data = live.data.buildings;
@@ -412,7 +456,21 @@ export class WorldTiles {
         };
         const gx = (f.bounds[i] + f.bounds[i + 2]) / 2, gz = (f.bounds[i + 1] + f.bounds[i + 3]) / 2;
         const ground = live.data.dem ? gridGround(live.data.ground.heights, this.options.grid, gx / span, gz / span) : 0;
-        visit(rings, f.heights[b], ground);
+        const o = b * ROOF_STRIDE;
+        const roofs = f.roofs;
+        const half = roofs?.[o + 6] ?? 0;
+        const crest = roofs?.[o + 7] ?? ground;
+        const eaves = roofs?.[o] ?? f.heights[b];
+        const peak = roofs?.[o + 1] ?? f.heights[b];
+        // ridge endpoints as lng/lat (stored in RoofPoint.x/z)
+        const roof: RoofProfile = half > 0
+          ? {
+            eaves, peak, half,
+            ridgeA: { x: lngFromMercator(cx + roofs[o + 2]), z: latFromMercator(cy - roofs[o + 3]) },
+            ridgeB: { x: lngFromMercator(cx + roofs[o + 4]), z: latFromMercator(cy - roofs[o + 5]) },
+          }
+          : { eaves, peak, half: 0, ridgeA: null, ridgeB: null };
+        visit(rings, f.heights[b], ground, roof, crest);
       }
     }
   }
@@ -427,17 +485,12 @@ export class WorldTiles {
     const length = Math.hypot(dx, dy);
     if (length < 0.5) return null;
     const mid: LngLat = [(from[0] + to[0]) / 2, (from[1] + to[1]) / 2];
-    const candidates: { rings: [number, number][][]; top: number }[] = [];
-    this.eachFootprint(mid, length / 2 + 30, (rings, height, ground) => candidates.push({ rings: rings(), top: ground * exaggeration + height }));
+    type Cand = { rings: [number, number][][]; crest: number; roof: RoofProfile; peak: number };
+    const candidates: Cand[] = [];
+    this.eachFootprint(mid, length / 2 + 30, (rings, height, _ground, roof, crest) => {
+      candidates.push({ rings: rings(), crest: crest * exaggeration, roof, peak: crest * exaggeration + height });
+    });
     if (!candidates.length) return null;
-    const inside = (p: LngLat, ring: [number, number][]) => {
-      let hit = false;
-      for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-        const a = ring[i], b = ring[j];
-        if ((a[1] > p[1]) !== (b[1] > p[1]) && p[0] < (b[0] - a[0]) * (p[1] - a[1]) / (b[1] - a[1]) + a[0]) hit = !hit;
-      }
-      return hit;
-    };
     const steps = Math.ceil(length / 0.75);
     const m = (q: LngLat): [number, number] => [(q[0] - from[0]) * 111319.49 * cos, (q[1] - from[1]) * 111319.49];
     for (let s = 1; s <= steps; s++) {
@@ -445,13 +498,15 @@ export class WorldTiles {
       const p: LngLat = [from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t];
       const altitude = fromAlt + (toAlt - fromAlt) * t;
       for (const c of candidates) {
-        if (altitude > c.top) continue;
-        if (!inside(p, c.rings[0]) || c.rings.slice(1).some((hole) => inside(p, hole))) continue;
+        if (altitude > c.peak) continue;
+        if (!insideLngLat(p, c.rings[0]) || c.rings.slice(1).some((hole) => insideLngLat(p, hole))) continue;
+        const roofHere = c.crest + roofClearanceAt(0, 0, roofInMeters(c.roof, p[0], p[1]));
+        if (altitude > roofHere) continue;
         const prevT = (s - 1) / steps;
         const q: LngLat = [from[0] + (to[0] - from[0]) * prevT, from[1] + (to[1] - from[1]) * prevT];
         const prevAlt = fromAlt + (toAlt - fromAlt) * prevT;
         // came in through the roof, or through a wall: find the crossed edge
-        if (prevAlt > c.top + 0.05) return { point: p, altitude: c.top, normal: [0, 1, 0] as [number, number, number] };
+        if (prevAlt > roofHere + 0.05) return { point: p, altitude: roofHere, normal: [0, 1, 0] as [number, number, number] };
         const [qx, qz] = m(q), [px, pz] = m(p);
         let best: { t: number; nx: number; nz: number } | null = null;
         for (const ring of c.rings) {
@@ -509,6 +564,34 @@ export class WorldTiles {
     for (const m of [this.roadMat, this.farMat, this.groundMat, this.waterMat, ...this.overlayMats]) m.dispose();
     this.vegetation.dispose();
   }
+}
+
+function insideLngLat(point: LngLat, ring: [number, number][]) {
+  let hit = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const a = ring[i], b = ring[j];
+    if ((a[1] > point[1]) !== (b[1] > point[1]) && point[0] < (b[0] - a[0]) * (point[1] - a[1]) / (b[1] - a[1]) + a[0]) hit = !hit;
+  }
+  return hit;
+}
+
+/** Ridge lng/lat (in RoofPoint.x/z) → true meters relative to an origin. */
+function roofInMeters(roof: RoofProfile, originLng: number, originLat: number): RoofProfile {
+  if (roof.half <= 0 || !roof.ridgeA || !roof.ridgeB) {
+    return { eaves: roof.eaves, peak: roof.peak, half: 0, ridgeA: null, ridgeB: null };
+  }
+  const cos = Math.cos(originLat * Math.PI / 180);
+  const toLocal = (lng: number, lat: number) => ({
+    x: (lng - originLng) * 111319.49 * cos,
+    z: (lat - originLat) * 111319.49,
+  });
+  return {
+    eaves: roof.eaves,
+    peak: roof.peak,
+    half: roof.half,
+    ridgeA: toLocal(roof.ridgeA.x, roof.ridgeA.z),
+    ridgeB: toLocal(roof.ridgeB.x, roof.ridgeB.z),
+  };
 }
 
 export { tileCorner };

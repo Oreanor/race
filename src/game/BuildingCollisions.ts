@@ -1,8 +1,22 @@
 import type { Position } from './VehicleController';
+import { roofClearanceAt, type RoofProfile } from './buildings/RoofGenerator';
 
 type Point = [number, number];
 export type Polygon = Point[][];
-type CollisionPolygon = { rings: Polygon; bounds: number[] };
+
+/** One building for collisions: footprint + roof skin (`crest` already exaggerated). */
+export type BuildingSolid = {
+  rings: Polygon;
+  crest: number;
+  roof: RoofProfile;
+};
+
+type CollisionPolygon = {
+  rings: Polygon;
+  bounds: number[];
+  crest: number;
+  roof: RoofProfile;
+};
 
 function inside(point: Point, ring: Point[]) {
   let hit = false;
@@ -46,27 +60,55 @@ export function circleHitsPolygon(point: Point, radius: number, polygon: Polygon
   return false;
 }
 
+/** Flat infinite-height stand-in when only rings are known (tests / spawn search). */
+function flatSolid(rings: Polygon): BuildingSolid {
+  return { rings, crest: 0, roof: { eaves: 1e9, peak: 1e9, half: 0, ridgeA: null, ridgeB: null } };
+}
+
 export class BuildingCollisions {
   origin: Position = [0, 0];
   polygons: CollisionPolygon[] = [];
+  private cos = 1;
 
   local(position: Position): Point {
     return [
-      (position[0] - this.origin[0]) * 111319.49 * Math.cos(this.origin[1] * Math.PI / 180),
+      (position[0] - this.origin[0]) * 111319.49 * this.cos,
       (position[1] - this.origin[1]) * 111319.49,
     ];
   }
 
   private world(point: Point): Position {
-    const cos = Math.cos(this.origin[1] * Math.PI / 180);
-    return [this.origin[0] + point[0] / (111319.49 * cos), this.origin[1] + point[1] / 111319.49];
+    return [this.origin[0] + point[0] / (111319.49 * this.cos), this.origin[1] + point[1] / 111319.49];
   }
 
-  update(origin: Position, polygons: Polygon[]) {
+  /** Absolute roof altitude at a local-metre point. */
+  private roofAlt(point: Point, polygon: CollisionPolygon) {
+    return polygon.crest + roofClearanceAt(point[0], point[1], polygon.roof);
+  }
+
+  /** Belly clears this building at `point` (small margin so we don't clip the skin). */
+  private clears(point: Point, polygon: CollisionPolygon, altitude: number) {
+    return altitude > this.roofAlt(point, polygon) - 0.05;
+  }
+
+  update(origin: Position, buildings: BuildingSolid[] | Polygon[]) {
     this.origin = [...origin];
-    this.polygons = polygons.map(rings => {
-      const localRings = rings.map(ring => ring.map(point => this.local(point)));
+    this.cos = Math.cos(this.origin[1] * Math.PI / 180);
+    const solids: BuildingSolid[] = buildings.length && buildings[0] != null && 'roof' in (buildings[0] as BuildingSolid)
+      ? buildings as BuildingSolid[]
+      : (buildings as Polygon[]).map(flatSolid);
+    this.polygons = solids.map((building) => {
+      const localRings = building.rings.map(ring => ring.map(point => this.local(point)));
       const outer = localRings[0];
+      const roof: RoofProfile = building.roof.half > 0 && building.roof.ridgeA && building.roof.ridgeB
+        ? {
+          eaves: building.roof.eaves,
+          peak: building.roof.peak,
+          half: building.roof.half,
+          ridgeA: { x: this.local([building.roof.ridgeA.x, building.roof.ridgeA.z])[0], z: this.local([building.roof.ridgeA.x, building.roof.ridgeA.z])[1] },
+          ridgeB: { x: this.local([building.roof.ridgeB.x, building.roof.ridgeB.z])[0], z: this.local([building.roof.ridgeB.x, building.roof.ridgeB.z])[1] },
+        }
+        : { eaves: building.roof.eaves, peak: building.roof.peak, half: 0, ridgeA: null, ridgeB: null };
       return {
         rings: localRings,
         bounds: [
@@ -75,60 +117,76 @@ export class BuildingCollisions {
           Math.max(...outer.map(point => point[0])),
           Math.max(...outer.map(point => point[1])),
         ],
+        crest: building.crest,
+        roof,
       };
     });
   }
 
-  blocked(from: Position, to: Position, heading: number, scale = 1) {
-    return this.hits(this.local(from), this.local(to), heading, scale);
+  /** Highest roof under a world position, or null. */
+  supportAt(position: Position): number | null {
+    const point = this.local(position);
+    let best: number | null = null;
+    for (const polygon of this.polygons) {
+      const [x0, y0, x1, y1] = polygon.bounds;
+      if (point[0] < x0 || point[0] > x1 || point[1] < y0 || point[1] > y1) continue;
+      if (!inside(point, polygon.rings[0] ?? []) || polygon.rings.slice(1).some(ring => inside(point, ring))) continue;
+      const top = this.roofAlt(point, polygon);
+      if (best == null || top > best) best = top;
+    }
+    return best;
+  }
+
+  blocked(from: Position, to: Position, heading: number, scale = 1, altitude = -Infinity) {
+    return this.hits(this.local(from), this.local(to), heading, scale, altitude);
   }
 
   /** Glancing hits slide along the wall; head-on stops. */
-  resolve(from: Position, to: Position, heading: number, scale = 1) {
+  resolve(from: Position, to: Position, heading: number, scale = 1, altitude = -Infinity) {
     const start = this.local(from);
     const end = this.local(to);
-    if (!this.hits(start, end, heading, scale)) return { position: to, stopped: false, slid: false };
-    const startDepth = this.depth(start, heading, scale);
-    if (startDepth > 0 && this.depth(end, heading, scale) < startDepth - 1e-6 && !this.deepens(start, end, heading, scale)) {
+    if (!this.hits(start, end, heading, scale, altitude)) return { position: to, stopped: false, slid: false };
+    const startDepth = this.depth(start, heading, scale, altitude);
+    if (startDepth > 0 && this.depth(end, heading, scale, altitude) < startDepth - 1e-6 && !this.deepens(start, end, heading, scale, altitude)) {
       return { position: to, stopped: false, slid: false };
     }
-    const slid = this.slide(start, end, heading, scale);
-    if (slid && !this.hits(start, slid, heading, scale)) {
+    const slid = this.slide(start, end, heading, scale, altitude);
+    if (slid && !this.hits(start, slid, heading, scale, altitude)) {
       return { position: this.world(slid), stopped: false, slid: true };
     }
-    if (slid && this.hits(start, start, heading, scale) && !this.deepens(start, slid, heading, scale)) {
+    if (slid && this.hits(start, start, heading, scale, altitude) && !this.deepens(start, slid, heading, scale, altitude)) {
       return { position: this.world(slid), stopped: false, slid: true };
     }
-    const clamped = this.clamp(start, end, heading, scale);
+    const clamped = this.clamp(start, end, heading, scale, altitude);
     const moved = Math.hypot(clamped[0] - start[0], clamped[1] - start[1]) > 0.05;
     return { position: moved ? this.world(clamped) : from, stopped: true, slid: false };
   }
 
-  private hits(from: Point, to: Point, heading: number, scale: number) {
+  private hits(from: Point, to: Point, heading: number, scale: number, altitude: number) {
     const count = Math.max(1, Math.ceil(Math.hypot(to[0] - from[0], to[1] - from[1]) / 0.4));
-    const startDepth = this.depth(from, heading, scale);
+    const startDepth = this.depth(from, heading, scale, altitude);
     for (let step = 0; step <= count; step++) {
       const t = step / count;
       const center: Point = [from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t];
-      const depth = this.depth(center, heading, scale);
+      const depth = this.depth(center, heading, scale, altitude);
       if (startDepth === 0 && depth > 0) return true;
       if (startDepth > 0 && depth > startDepth + 1e-4) return true;
     }
-    return startDepth > 0 && this.depth(to, heading, scale) >= startDepth - 1e-4;
+    return startDepth > 0 && this.depth(to, heading, scale, altitude) >= startDepth - 1e-4;
   }
 
-  private deepens(from: Point, to: Point, heading: number, scale: number) {
-    const start = this.depth(from, heading, scale);
+  private deepens(from: Point, to: Point, heading: number, scale: number, altitude: number) {
+    const start = this.depth(from, heading, scale, altitude);
     const count = Math.max(1, Math.ceil(Math.hypot(to[0] - from[0], to[1] - from[1]) / 0.4));
     for (let step = 1; step <= count; step++) {
       const t = step / count;
       const point: Point = [from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t];
-      if (this.depth(point, heading, scale) > start + 1e-6) return true;
+      if (this.depth(point, heading, scale, altitude) > start + 1e-6) return true;
     }
     return false;
   }
 
-  private depth(center: Point, heading: number, scale: number) {
+  private depth(center: Point, heading: number, scale: number, altitude: number) {
     let deepest = 0;
     const radius = 1.2 * scale;
     for (const shift of [-1.1, 0, 1.1]) {
@@ -137,13 +195,14 @@ export class BuildingCollisions {
       for (const polygon of this.polygons) {
         const [x0, y0, x1, y1] = polygon.bounds;
         if (point[0] + radius < x0 || point[0] - radius > x1 || point[1] + radius < y0 || point[1] - radius > y1) continue;
+        if (this.clears(point, polygon, altitude)) continue;
         deepest = Math.max(deepest, polygonPenetrationDepth(point, radius, polygon.rings));
       }
     }
     return deepest;
   }
 
-  private contact(center: Point, heading: number, scale: number) {
+  private contact(center: Point, heading: number, scale: number, altitude: number) {
     const radius = 1.2 * scale;
     let best: { point: Point; polygon: CollisionPolygon; depth: number } | null = null;
     for (const shift of [-1.1, 0, 1.1]) {
@@ -152,6 +211,7 @@ export class BuildingCollisions {
       for (const polygon of this.polygons) {
         const [x0, y0, x1, y1] = polygon.bounds;
         if (point[0] + radius < x0 || point[0] - radius > x1 || point[1] + radius < y0 || point[1] - radius > y1) continue;
+        if (this.clears(point, polygon, altitude)) continue;
         const depth = polygonPenetrationDepth(point, radius, polygon.rings);
         if (depth <= 0) continue;
         if (!best || depth > best.depth) best = { point, polygon, depth };
@@ -203,13 +263,13 @@ export class BuildingCollisions {
     return [nx, ny];
   }
 
-  private slide(from: Point, to: Point, heading: number, scale: number) {
+  private slide(from: Point, to: Point, heading: number, scale: number, altitude: number) {
     const count = Math.max(1, Math.ceil(Math.hypot(to[0] - from[0], to[1] - from[1]) / 0.4));
     let normal: Point | null = null;
     for (let step = 0; step <= count && !normal; step++) {
       const t = step / count;
       const center: Point = [from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t];
-      const hit = this.contact(center, heading, scale);
+      const hit = this.contact(center, heading, scale, altitude);
       if (!hit) continue;
       normal = this.outward(hit.point, hit.polygon);
     }
@@ -224,13 +284,13 @@ export class BuildingCollisions {
     return [from[0] + sx, from[1] + sy] as Point;
   }
 
-  private clamp(from: Point, to: Point, heading: number, scale: number) {
+  private clamp(from: Point, to: Point, heading: number, scale: number, altitude: number) {
     let lo = 0;
     let hi = 1;
     for (let i = 0; i < 10; i++) {
       const mid = (lo + hi) / 2;
       const point: Point = [from[0] + (to[0] - from[0]) * mid, from[1] + (to[1] - from[1]) * mid];
-      if (this.hits(from, point, heading, scale)) hi = mid;
+      if (this.hits(from, point, heading, scale, altitude)) hi = mid;
       else lo = mid;
     }
     if (lo < 0.04) return from;

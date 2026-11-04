@@ -41,6 +41,8 @@ type MapMarker = {
 };
 
 export type Quality = 'low' | 'medium' | 'high';
+/** Interface look only — not the sun in the world. */
+export type Theme = 'light' | 'night';
 export type Settings = {
   terrain: boolean;
   follow: boolean;
@@ -48,6 +50,7 @@ export type Settings = {
   quality: Quality;
   buildingDetail: BuildingDetail;
   architecture: ArchitectureSetting;
+  theme: Theme;
 };
 
 const DRIVER_NAMES = ['Ines', 'Tiago', 'Marta', 'Rui', 'Leonor', 'Duarte', 'Beatriz', 'Nuno', 'Sofia', 'Miguel', 'Rafael', 'Ana'];
@@ -282,6 +285,8 @@ export class GameEngine {
       this.map.addLayer(this.fuelLayer);
       this.trainLayer = trainsLayer();
       this.map.addLayer(this.trainLayer);
+      const layer = this.trainLayer;
+      this.trainTraffic.carLength = (trainId, index, kind) => layer.carLength(trainId, index, kind);
       this.combatLayer = vehicleLayer(
         car,
         this.renderVehicle,
@@ -638,7 +643,7 @@ export class GameEngine {
     const applyPosition = (participant: typeof participants[number], next: [number, number]) => {
       const { controller } = participant;
       if (next === controller.position
-        || this.collisions.blocked(controller.position, next, controller.heading)
+        || this.collisions.blocked(controller.position, next, controller.heading, 1, participant.id === 'player' ? this.altitude : -Infinity)
         || this.thicket.blocked(controller.position, next)) return;
       const water = this.water.resolve(controller.position, next, controller.heading);
       if (!water.stopped) controller.position = water.position;
@@ -1883,9 +1888,7 @@ export class GameEngine {
       const rate = 14 + Math.min(22, Math.abs(gap) * 8);
       return current + gap * (1 - Math.exp(-dt * rate));
     };
-    if (!this.settings.terrain) {
-      this.wheelTargets = { altitude: 0, pitch: 0, roll: 0, ready: true };
-    } else if (!this.wheelTargets.ready || now - this.wheelSampleTime >= 48) {
+    if (!this.wheelTargets.ready || now - this.wheelSampleTime >= 48) {
       this.wheelSampleTime = now;
       const heading = this.renderVehicle.heading;
       const forwardEast = Math.sin(heading);
@@ -1894,7 +1897,14 @@ export class GameEngine {
       const rightNorth = -Math.sin(heading);
       const reach = this.car.length * 0.38;
       const track = 0.85;
-      const sample = (along: number, side: number) => this.map.queryTerrainElevation(offsetPosition(this.renderVehicle.position, forwardEast * along + rightEast * side, forwardNorth * along + rightNorth * side));
+      // terrain and roofs both support the car; clear a building only above its skin
+      const sample = (along: number, side: number) => {
+        const at = offsetPosition(this.renderVehicle.position, forwardEast * along + rightEast * side, forwardNorth * along + rightNorth * side);
+        const terrain = this.settings.terrain ? this.map.queryTerrainElevation(at) : 0;
+        const roof = this.collisions.supportAt(at);
+        if (terrain == null && roof == null) return null;
+        return Math.max(terrain ?? -Infinity, roof ?? -Infinity);
+      };
       const frontLeft = sample(reach, -track);
       const frontRight = sample(reach, track);
       const rearLeft = sample(-reach, -track);
@@ -1924,8 +1934,8 @@ export class GameEngine {
         add(-bumper, 0, sample(-bumper, 0));
         this.wheelTargets = {
           altitude: supportAltitude(supports, pitch, roll),
-          pitch,
-          roll,
+          pitch: this.settings.terrain ? pitch : 0,
+          roll: this.settings.terrain ? roll : 0,
           ready: true,
         };
       }
@@ -2032,7 +2042,8 @@ export class GameEngine {
   private *collectWorldThree(refreshTiles: boolean): Generator<null, void> {
     const world = this.threeMap!.world;
     if (refreshTiles) this.tilesIngested = true;
-    this.collisions.update(this.vehicle.position, world.footprintsNear(this.vehicle.position, 260));
+    const exag = this.map.getTerrain()?.exaggeration ?? 1;
+    this.collisions.update(this.vehicle.position, world.buildingsNear(this.vehicle.position, 260, this.settings.terrain ? exag : 0));
     yield null;
     // place the car on a road only once roads around it are actually in
     if (!this.spawnResolved && this.map.querySourceFeatures(this.sourceId, { sourceLayer: 'transportation' }).length) this.resolveSpawn();
@@ -2133,7 +2144,7 @@ export class GameEngine {
         // consumption follows the car's own distance (scale-independent)
         this.fuel.burn((this.vehicle.distance - travelled), 1 / 60, driveKeys.has('Space'));
         {
-          const building = this.collisions.resolve(previous, this.vehicle.position, this.vehicle.heading);
+          const building = this.collisions.resolve(previous, this.vehicle.position, this.vehicle.heading, 1, this.altitude);
           if (building.stopped) {
             this.vehicle.position = building.position;
             this.vehicle.heading = oldHeading;
@@ -2310,7 +2321,11 @@ export class GameEngine {
       this.hud(this.vehicle.speed * 3.6, this.vehicle.distance, this.fps, this.hudParticipants());
       const near = nearestStation(this.vehicle.position, [...this.stations.values()]);
       const hub = nearestHub(this.vehicle.position, [...this.hubs.values()]);
-      this.onFuel({ level: this.fuel.level, tank: this.fuel.spec.tank, refuelling: this.refuelling, station: near ? near.distance : null, money: Math.floor(this.playerMoney), hub: hub ? { kind: hub.hub.kind, distance: hub.distance } : null });
+      // only hint the hub when you're close enough that it matters (not from across town)
+      const hubHud = hub && hub.distance < (hub.hub.kind === 'airport' ? 800 : 120)
+        ? { kind: hub.hub.kind, distance: hub.distance }
+        : null;
+      this.onFuel({ level: this.fuel.level, tank: this.fuel.spec.tank, refuelling: this.refuelling, station: near ? near.distance : null, money: Math.floor(this.playerMoney), hub: hubHud });
     }
     this.worldFresh = false;
     if (!this.mapShown) this.settleBoot();

@@ -78,6 +78,9 @@ export type TileStats = {
  * coords: x, z pairs, tile-local mercator meters. ringStart[i] is the first pair
  * of ring i; buildingStart[b] is the first ring of building b (ring 0 = outer).
  * Both arrays carry a terminal entry. bounds: minX, minZ, maxX, maxZ per building.
+ * heights: peak roof clearance (m) above the building base.
+ * roofs: 8 floats per building — eaves, peak, ridgeAx, ridgeAz, ridgeBx, ridgeBz,
+ * halfWidth (true m; 0 = flat), crest (raw DEM under the footprint).
  */
 export type FootprintData = {
   coords: Float32Array;
@@ -85,7 +88,11 @@ export type FootprintData = {
   buildingStart: Uint32Array;
   bounds: Float32Array;
   heights: Float32Array;
+  roofs: Float32Array;
 };
+
+/** floats per building in FootprintData.roofs */
+export const ROOF_STRIDE = 8;
 
 /** Small roof props, instanced: chimneys and vents (same rules as BuildingManager). */
 export type AccentData = { chimney: InstanceSet; vent: InstanceSet };
@@ -349,6 +356,7 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
   const fpBuildings: number[] = [];
   const fpBounds: number[] = [];
   const fpHeights: number[] = [];
+  const fpRoofs: number[] = [];
 
   // walls are collected and resolved per tile, then emitted (see pass 2)
   type Face = {
@@ -495,6 +503,7 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
           }
         }
         fpBounds.push(bx0, bz0, bx1, bz1);
+        // peak filled in after the roof is chosen (wall height until then)
         fpHeights.push(height);
 
         const clear = height - base;
@@ -591,6 +600,20 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
         }
         const triangles = ridge ? [] : earcut(flat, holes, 2);
         const capY = recipe ? top + ROOF_LIP : top;
+        // collision roof: pitched falls from the ridge to the eaves; flat is a slab
+        const eavesY = ridge ? ridge.eavesY : capY;
+        const peakY = ridge ? ridge.ridgeY : capY;
+        fpHeights[fpHeights.length - 1] = peakY;
+        if (ridge) {
+          fpRoofs.push(
+            eavesY, peakY,
+            chunk.cx + ridge.ridgeA.x * toMerc, chunk.cz + ridge.ridgeA.z * toMerc,
+            chunk.cx + ridge.ridgeB.x * toMerc, chunk.cz + ridge.ridgeB.z * toMerc,
+            ridge.halfWidth, crest,
+          );
+        } else {
+          fpRoofs.push(eavesY, peakY, 0, 0, 0, 0, 0, crest);
+        }
         if (triangles.length) {
           const start = chunk.positions.length / 3;
           for (let i = 0; i < flat.length; i += 2) {
@@ -715,15 +738,17 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
     buildingStart: new Uint32Array(fpBuildings),
     bounds: new Float32Array(fpBounds),
     heights: new Float32Array(fpHeights),
+    roofs: new Float32Array(fpRoofs),
   };
-  stats.bytes += footprints.coords.byteLength + footprints.ringStart.byteLength + footprints.buildingStart.byteLength + footprints.bounds.byteLength;
+  stats.bytes += footprints.coords.byteLength + footprints.ringStart.byteLength + footprints.buildingStart.byteLength
+    + footprints.bounds.byteLength + footprints.heights.byteLength + footprints.roofs.byteLength;
   return { tile, corner, metersScale, chunks, footprints, accents: { chimney: chimneys.done(), vent: vents.done() }, stats };
 }
 
 /** Typed arrays to hand to postMessage as transferables. */
 export function transferables(data: TileData): ArrayBuffer[] {
   const f = data.footprints;
-  const out: ArrayBuffer[] = [f.coords.buffer, f.ringStart.buffer, f.buildingStart.buffer, f.bounds.buffer, f.heights.buffer] as ArrayBuffer[];
+  const out: ArrayBuffer[] = [f.coords.buffer, f.ringStart.buffer, f.buildingStart.buffer, f.bounds.buffer, f.heights.buffer, f.roofs.buffer] as ArrayBuffer[];
   for (const set of [data.accents.chimney, data.accents.vent]) out.push(set.matrices.buffer as ArrayBuffer, set.ground.buffer as ArrayBuffer, set.colors!.buffer as ArrayBuffer);
   for (const c of data.chunks) {
     out.push(c.positions.buffer as ArrayBuffer, c.normals.buffer as ArrayBuffer, c.colors.buffer as ArrayBuffer,

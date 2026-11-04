@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { cars, cities, type City } from '@/config/vehicle.config';
 import { findPlaces } from '@/game/findPlaces';
 import { healthColor } from '@/game/health';
-import { GameEngine, type BountyOffer, type FuelHud, type HudParticipant, type PlayerCarry, type ServiceOffer, type Settings, type TravelOffer } from '@/game/GameEngine';
+import { GameEngine, type BountyOffer, type FuelHud, type HudParticipant, type PlayerCarry, type ServiceOffer, type Settings, type Theme, type TravelOffer } from '@/game/GameEngine';
 import { EVACUATION_COST } from '@/game/Fuel';
 import { formatNumber, LANGS, setLang, t, type Lang, type MessageKey } from '@/i18n';
 import { useLang } from '@/i18n/react';
@@ -157,13 +157,23 @@ export default function Game() {
   // a bought ticket: what the player takes to the next city, and drive on arrival
   const carryRef = useRef<PlayerCarry | null>(null);
   const arriveRef = useRef(false);
-  const [settings, setSettings] = useState<Settings>({
-    terrain: true,
-    follow: true,
-    sensitivity: 1,
-    quality: 'high',
-    buildingDetail: 'high',
-    architecture: 'auto',
+  const [settings, setSettings] = useState<Settings>(() => {
+    // like language: saved choice, else the browser's light/dark preference
+    let theme: Theme = 'light';
+    try {
+      const saved = localStorage.getItem('cityRider.theme');
+      if (saved === 'night' || saved === 'light') theme = saved;
+      else if (window.matchMedia('(prefers-color-scheme: dark)').matches) theme = 'night';
+    } catch { /* private mode */ }
+    return {
+      terrain: true,
+      follow: true,
+      sensitivity: 1,
+      quality: 'high',
+      buildingDetail: 'high',
+      architecture: 'auto',
+      theme,
+    };
   });
 
   // Recreate the engine only when the city changes. Car swaps reuse the live map.
@@ -322,7 +332,13 @@ export default function Game() {
     return () => window.removeEventListener('keydown', onKey);
   }, [perfOn]);
 
-  const update = (patch: Partial<Settings>) => setSettings(s => ({ ...s, ...patch }));
+  const update = (patch: Partial<Settings>) => setSettings(s => {
+    const next = { ...s, ...patch };
+    if (patch.theme) {
+      try { localStorage.setItem('cityRider.theme', patch.theme); } catch { /* private mode */ }
+    }
+    return next;
+  });
   const closeSettings = () => setSettingsOpen(false);
   const exitToMenu = () => {
     setSettingsOpen(false);
@@ -352,7 +368,7 @@ export default function Game() {
   );
 
   return (
-    <main className={driving ? 'game-shell is-driving' : 'game-shell'}>
+    <main className={`game-shell${driving ? ' is-driving' : ''}`} data-theme={settings.theme}>
       <div ref={host} className="map" />
       <div ref={aimRef} className="aim-reticle" aria-hidden="true"><span /></div>
       <div className="compass" aria-hidden="true">
@@ -477,6 +493,17 @@ export default function Game() {
         >
           <div className="ui-form">
             <label>{t('settings.language')}<select value={lang} onChange={e => setLang(e.target.value as Lang)}>{LANGS.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select></label>
+            <div className="ui-theme-row">
+              <span>{t('settings.theme')}</span>
+              <div className="ui-theme" role="group" aria-label={t('settings.theme')}>
+                <button type="button" className={`ui-theme-btn${settings.theme === 'light' ? ' is-on' : ''}`} aria-pressed={settings.theme === 'light'} aria-label={t('theme.light')} onClick={() => update({ theme: 'light' as Theme })}>
+                  <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="12" cy="12" r="4" fill="currentColor"/><path d="M12 2v2.5M12 19.5V22M4.2 4.2l1.8 1.8M18 18l1.8 1.8M2 12h2.5M19.5 12H22M4.2 19.8 6 18M18 6l1.8-1.8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" fill="none"/></svg>
+                </button>
+                <button type="button" className={`ui-theme-btn${settings.theme === 'night' ? ' is-on' : ''}`} aria-pressed={settings.theme === 'night'} aria-label={t('theme.night')} onClick={() => update({ theme: 'night' as Theme })}>
+                  <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M16.5 3.5a8.5 8.5 0 1 0 4 14.2A7 7 0 1 1 16.5 3.5Z" fill="currentColor"/></svg>
+                </button>
+              </div>
+            </div>
             <label>{t('settings.detail')}<select value={settings.buildingDetail} onChange={e => update({ buildingDetail: e.target.value as Settings['buildingDetail'] })}><option value="off">{t('level.off')}</option><option value="low">{t('level.low')}</option><option value="medium">{t('level.medium')}</option><option value="high">{t('level.high')}</option></select></label>
             <label className="toggle">{t('settings.follow')}<input type="checkbox" checked={settings.follow} onChange={e => update({ follow: e.target.checked })} /></label>
             <label className="toggle">{t('settings.terrain')}<input type="checkbox" checked={settings.terrain} onChange={e => update({ terrain: e.target.checked })} /></label>

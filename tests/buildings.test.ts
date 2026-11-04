@@ -129,6 +129,18 @@ test('only near-rectangular footprints get a pitched roof', () => {
   assert.equal(canPitch([{ x: 0, z: 0 }, { x: 10, z: 0 }, { x: 12, z: 4 }, { x: 8, z: 8 }, { x: 0, z: 6 }]), false);
 });
 
+import { roofClearanceAt } from '../src/game/buildings/RoofGenerator.ts';
+test('roof clearance falls from the ridge to the eaves', () => {
+  const roof = {
+    eaves: 10, peak: 13, half: 4,
+    ridgeA: { x: 0, z: -6 }, ridgeB: { x: 0, z: 6 },
+  };
+  assert.equal(roofClearanceAt(0, 0, roof), 13);
+  assert.ok(Math.abs(roofClearanceAt(4, 0, roof) - 10) < 1e-6);
+  assert.ok(roofClearanceAt(2, 0, roof) > 11 && roofClearanceAt(2, 0, roof) < 12);
+  assert.equal(roofClearanceAt(0, 0, { eaves: 8, peak: 8, half: 0, ridgeA: null, ridgeB: null }), 8);
+});
+
 test('the same footprint is drawn once, even if the ring starts elsewhere', () => {
   const ring: [number, number][] = [[-8.4, 40.2], [-8.4, 40.2001], [-8.3999, 40.2001]];
   const turned: [number, number][] = [ring[1], ring[2], ring[0]];

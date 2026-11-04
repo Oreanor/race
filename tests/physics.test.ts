@@ -104,6 +104,39 @@ test('building collision footprint grows with the car scale',()=>{
   assert.equal(collision.blocked([0,0],[0,2/meters],0,2),true);
 });
 
+test('a car clears a building only above its roof skin', () => {
+  const collision = new BuildingCollisions();
+  const meters = 111319.49;
+  // 20×20 m house centred east of the origin, ridge along north, 8 m eaves / 10 m peak
+  const rings: [number, number][][] = [[
+    [10 / meters, -10 / meters], [30 / meters, -10 / meters],
+    [30 / meters, 10 / meters], [10 / meters, 10 / meters], [10 / meters, -10 / meters],
+  ]];
+  collision.update([0, 0], [{
+    rings,
+    crest: 0,
+    roof: {
+      eaves: 8, peak: 10, half: 10,
+      ridgeA: { x: 20 / meters, z: -10 / meters },
+      ridgeB: { x: 20 / meters, z: 10 / meters },
+    },
+  }]);
+  // on the ground the house is a wall
+  assert.equal(collision.blocked([0, 0], [20 / meters, 0], Math.PI / 2, 1, 0), true);
+  // skim the eaves (stop just inside the west wall): the nose sits further in under a higher pitch
+  assert.equal(collision.blocked([0, 0], [11 / meters, 0], Math.PI / 2, 1, 7.5), true);
+  assert.equal(collision.blocked([0, 0], [11 / meters, 0], Math.PI / 2, 1, 8.5), false);
+  // through the ridge below the peak: still hits
+  assert.equal(collision.blocked([0, 0], [20 / meters, 0], Math.PI / 2, 1, 9.5), true);
+  // above the peak: clears the whole house
+  assert.equal(collision.blocked([0, 0], [20 / meters, 0], Math.PI / 2, 1, 10.2), false);
+  // roof support follows the pitch
+  const eave = collision.supportAt([11 / meters, 0]);
+  const ridge = collision.supportAt([20 / meters, 0]);
+  assert.ok(eave != null && ridge != null);
+  assert.ok(eave! < 8.4 && ridge! > 9.6, `eave ${eave} ridge ${ridge}`);
+});
+
 import { supportAltitude } from '../src/game/groundSupport.ts';
 import { healthColor } from '../src/game/health.ts';
 import { Euler, Vector3 } from 'three';
