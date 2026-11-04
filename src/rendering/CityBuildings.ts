@@ -77,17 +77,49 @@ export function cityLayer(start: [number, number], onPublish?: (parts: BuildingP
   sync: (parts: BuildingPart[], terrain: boolean, focus: [number, number]) => void;
   follow: (focus: [number, number], carY: number | null, budget?: number, driving?: boolean) => void;
   configure: (options: { detail: BuildingDetail; architecture: ArchitectureSetting; region: string }) => void;
+  shoot: (cam: [number, number], camAlt: number, ground: [number, number], groundAlt: number, mark?: boolean) => { point: [number, number]; altitude: number } | null;
+  markGround: (point: [number, number], altitude: number) => void;
   cellCount: () => number;
   pendingCount: () => number;
+  isSettled: () => boolean;
 } {
   const origin: [number, number] = [start[0], start[1]];
   let built: BuildingPart[] = [];
   let builtTerrain = false;
+  let builtContent = '';
   let lastFocus: [number, number] = [start[0], start[1]];
   const scene = new THREE.Scene();
   const camera = new THREE.Camera();
+  const bulletHoleCapacity = 512;
+  const bulletHoleGeometry = new THREE.CircleGeometry(0.07, 16);
+  const bulletHoleMaterial = new MeshBasicMaterial({
+    color: '#120f0d',
+    side: DoubleSide,
+    transparent: true,
+    opacity: 0.96,
+    depthTest: false,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -8,
+    polygonOffsetUnits: -8,
+  });
+  const bulletHoleMesh = new THREE.InstancedMesh(bulletHoleGeometry, bulletHoleMaterial, bulletHoleCapacity);
+  bulletHoleMesh.count = 0;
+  bulletHoleMesh.frustumCulled = false;
+  bulletHoleMesh.renderOrder = 20;
+  const bulletHoleBlocks = new THREE.InstancedBufferAttribute(new Float32Array(bulletHoleCapacity), 1);
+  bulletHoleMesh.geometry.setAttribute('blockId', bulletHoleBlocks);
+  scene.add(bulletHoleMesh);
+  const bulletHoles: { position: [number, number]; x: number; z: number; matrix: THREE.Matrix4; block: number }[] = [];
+  const bulletHoleTransform = new THREE.Object3D();
+  let lastBulletCull = 0;
+  let cityQuietUntil = 0;
   const fade = createFadeMap();
+  installFade(bulletHoleMaterial, fade.texture, false);
   const details = new BuildingManager(scene, fade.texture);
+  function bumpCityQuiet(ms = 1600) {
+    cityQuietUntil = Math.max(cityQuietUntil, performance.now() + ms);
+  }
   const ghostMaterials = new Map<MeshBasicMaterial | MeshLambertMaterial, MeshBasicMaterial | MeshLambertMaterial>();
   let volumes: Volume[] = [];
   let stampBlock = 0;
@@ -244,7 +276,52 @@ export function cityLayer(start: [number, number], onPublish?: (parts: BuildingP
       scene.remove(mesh);
     }
     for (const geometry of geometries) geometry.dispose();
+    if (bulletHoles.length) {
+      const kept = bulletHoles.filter((hole) => !holeOnCell(cell, hole.x, hole.z));
+      if (kept.length !== bulletHoles.length) {
+        bulletHoles.length = 0;
+        bulletHoles.push(...kept);
+        updateBulletHoleInstances();
+      }
+    }
     cells.delete(id);
+  }
+
+  function holeOnCell(cell: BuiltCell, x: number, z: number) {
+    for (const volume of cell.volumes) {
+      if (x >= volume.minX - 1 && x <= volume.maxX + 1 && z >= volume.minZ - 1 && z <= volume.maxZ + 1) return true;
+    }
+    return Math.hypot(x - cell.x, z - cell.z) < CELL * 0.55;
+  }
+
+  function insideFootprint(x: number, z: number, footprint: { x: number; z: number }[]) {
+    let inside = false;
+    for (let i = 0, j = footprint.length - 1; i < footprint.length; j = i++) {
+      const a = footprint[i];
+      const b = footprint[j];
+      if (((a.z > z) !== (b.z > z)) && (x < (b.x - a.x) * (z - a.z) / ((b.z - a.z) || 1e-9) + a.x)) inside = !inside;
+    }
+    return inside;
+  }
+
+  function blockAt(x: number, z: number, y: number) {
+    let best = 0;
+    let bestDist = Infinity;
+    for (const volume of volumes) {
+      if (x < volume.minX - 1.5 || x > volume.maxX + 1.5 || z < volume.minZ - 1.5 || z > volume.maxZ + 1.5) continue;
+      if (y < volume.base - 1.5 || y > volume.top + 2) continue;
+      if (!insideFootprint(x, z, volume.footprint) && (
+        x < volume.minX || x > volume.maxX || z < volume.minZ || z > volume.maxZ
+      )) continue;
+      const cx = (volume.minX + volume.maxX) * 0.5;
+      const cz = (volume.minZ + volume.maxZ) * 0.5;
+      const dist = Math.hypot(x - cx, z - cz);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = volume.block;
+      }
+    }
+    return best;
   }
 
   function blockFor(key: string) {
@@ -255,10 +332,23 @@ export function cityLayer(start: [number, number], onPublish?: (parts: BuildingP
     return block;
   }
 
+  function contentKey(parts: BuildingPart[], terrain: boolean) {
+    let hash = terrain ? 17 : 3;
+    hash = Math.imul(hash, 33) ^ parts.length;
+    for (const part of parts) {
+      for (let i = 0; i < part.key.length; i++) hash = Math.imul(hash, 33) ^ part.key.charCodeAt(i);
+    }
+    return String(hash);
+  }
+
   function sync(parts: BuildingPart[], terrain: boolean, focus: [number, number]) {
+    lastFocus = focus;
+    const nextContent = contentKey(parts, terrain);
+    // Focus-only follows must not invalidate already-built cells.
+    if (nextContent === builtContent && terrain === builtTerrain && built.length) return;
     built = parts;
     builtTerrain = terrain;
-    lastFocus = focus;
+    builtContent = nextContent;
     groupsDirty = true;
   }
 
@@ -267,10 +357,111 @@ export function cityLayer(start: [number, number], onPublish?: (parts: BuildingP
     isDriving = driving || carY != null;
     lastFocus = focus;
     const local = project(origin, focus);
+    if (bulletHoles.length && performance.now() - lastBulletCull >= 500) {
+      lastBulletCull = performance.now();
+      const retained = bulletHoles.filter(hole => Math.hypot(hole.x - local.x, hole.z - local.z) <= 180);
+      if (retained.length !== bulletHoles.length) {
+        bulletHoles.length = 0;
+        bulletHoles.push(...retained);
+        updateBulletHoleInstances();
+      }
+    }
     pump(budget);
+    details.setStreaming(groupsDirty || queue.length > 0 || Boolean(activeBuild));
     details.update(local.x, local.z);
     if (carY == null) clearSight();
     else reveal(local.x, local.z, carY);
+  }
+
+  function updateBulletHoleInstances() {
+    bulletHoles.forEach((hole, index) => {
+      bulletHoleMesh.setMatrixAt(index, hole.matrix);
+      bulletHoleBlocks.setX(index, hole.block);
+    });
+    bulletHoleMesh.count = bulletHoles.length;
+    bulletHoleMesh.instanceMatrix.needsUpdate = true;
+    bulletHoleBlocks.needsUpdate = true;
+  }
+
+  function pushBulletHole(matrix: THREE.Matrix4, point: [number, number], x: number, z: number, block: number) {
+    if (bulletHoles.length >= bulletHoleCapacity) bulletHoles.shift();
+    bulletHoles.push({ position: point, x, z, matrix: matrix.clone(), block });
+    updateBulletHoleInstances();
+  }
+
+  function shoot(cam: [number, number], camAlt: number, groundAim: [number, number], groundAlt: number, mark = true): { point: [number, number]; altitude: number } | null {
+    const startPoint = project(origin, cam);
+    const endPoint = project(origin, groundAim);
+    const dx = endPoint.x - startPoint.x;
+    const dy = groundAlt - camAlt;
+    const dz = endPoint.z - startPoint.z;
+    const span = Math.hypot(dx, dy, dz);
+    if (span < 0.5) return null;
+    let nearest: { t: number; point: [number, number]; x: number; z: number; y: number; nx: number; nz: number } | null = null;
+    for (const cell of cells.values()) {
+      if (!cell.shown) continue;
+      for (const part of cell.parts) {
+        for (let ringIndex = 0; ringIndex < part.rings.length; ringIndex++) {
+          const ring = dedupe(part.rings[ringIndex]);
+          const hole = ringIndex > 0;
+          for (let i = 0; i < ring.length; i++) {
+            const a = project(origin, ring[i]);
+            const b = project(origin, ring[(i + 1) % ring.length]);
+            const sx = b.x - a.x;
+            const sz = b.z - a.z;
+            const denominator = dx * sz - dz * sx;
+            if (Math.abs(denominator) < 1e-8) continue;
+            const qx = a.x - startPoint.x;
+            const qz = a.z - startPoint.z;
+            const t = (qx * sz - qz * sx) / denominator;
+            const u = (qx * dz - qz * dx) / denominator;
+            if (t <= 0.01 || t > 1.05 || u < 0 || u > 1 || (nearest && t >= nearest.t)) continue;
+            const hit: [number, number] = [cam[0] + (groundAim[0] - cam[0]) * t, cam[1] + (groundAim[1] - cam[1]) * t];
+            const terrain = builtTerrain ? map.queryTerrainElevation(hit) ?? 0 : 0;
+            const hitY = camAlt + dy * t;
+            const floor = terrain + part.base;
+            const roof = terrain + Math.max(part.base + 3, part.height);
+            if (hitY < floor - 0.5 || hitY > roof + 0.8) continue;
+            const edgeNormal = outward(a, b, hole);
+            const facesShooter = dx * edgeNormal.nx + dz * edgeNormal.nz < 0;
+            const normal = facesShooter
+              ? edgeNormal
+              : { ...edgeNormal, nx: -edgeNormal.nx, nz: -edgeNormal.nz };
+            nearest = {
+              t, point: hit, x: startPoint.x + dx * t, z: startPoint.z + dz * t, y: hitY,
+              nx: normal.nx, nz: normal.nz,
+            };
+          }
+        }
+      }
+    }
+    if (!nearest) return null;
+    const y = nearest.y;
+    if (mark) {
+      bulletHoleTransform.position.set(nearest.x + nearest.nx * 0.12, y, nearest.z + nearest.nz * 0.12);
+      bulletHoleTransform.rotation.set(0, Math.atan2(nearest.nx, nearest.nz), 0);
+      bulletHoleTransform.scale.setScalar(1);
+      bulletHoleTransform.updateMatrix();
+      pushBulletHole(
+        bulletHoleTransform.matrix,
+        nearest.point,
+        nearest.x,
+        nearest.z,
+        blockAt(nearest.x + nearest.nx * 0.12, nearest.z + nearest.nz * 0.12, y),
+      );
+      map.triggerRepaint();
+    }
+    return { point: nearest.point, altitude: y };
+  }
+
+  function markGround(point: [number, number], altitude: number) {
+    const local = project(origin, point);
+    bulletHoleTransform.position.set(local.x, altitude + 0.04, local.z);
+    bulletHoleTransform.rotation.set(-Math.PI / 2, 0, Math.random() * Math.PI * 2);
+    bulletHoleTransform.scale.setScalar(0.9 + Math.random() * 0.25);
+    bulletHoleTransform.updateMatrix();
+    pushBulletHole(bulletHoleTransform.matrix, point, local.x, local.z, 0);
+    map?.triggerRepaint();
   }
 
   function clearSight() {
@@ -352,15 +543,19 @@ export function cityLayer(start: [number, number], onPublish?: (parts: BuildingP
     return map.getCenterElevation();
   }
 
-  function cellStamp(parts: BuildingPart[], sample: number) {
-    const ground = sample <= -900 ? -999 : Math.round(sample / 4) * 4;
-    let hash = (builtTerrain ? 17 : 3) ^ ground ^ (detail === 'off' ? 1 : 2) ^ Math.round(origin[0] * 1e4) ^ Math.round(origin[1] * 1e4);
+  function cellContentStamp(parts: BuildingPart[]) {
+    let hash = (builtTerrain ? 17 : 3) ^ (detail === 'off' ? 1 : 2) ^ Math.round(origin[0] * 1e4) ^ Math.round(origin[1] * 1e4);
     for (let i = 0; i < architecture.length; i++) hash = Math.imul(hash, 33) ^ architecture.charCodeAt(i);
     const paletteColors = [...portuguesePastel.wallColors, ...portuguesePastel.roofColors, ...portuguesePastel.windowColors, portuguesePastel.frameColor];
     for (const color of paletteColors) for (let i = 0; i < color.length; i++) hash = Math.imul(hash, 33) ^ color.charCodeAt(i);
     const keys = parts.map((part) => part.key).sort();
     for (const key of keys) for (let i = 0; i < key.length; i++) hash = Math.imul(hash, 33) ^ key.charCodeAt(i);
     return String(hash);
+  }
+
+  function cellStamp(parts: BuildingPart[], sample: number) {
+    const ground = sample <= -900 ? -999 : Math.round(sample / 4) * 4;
+    return `${ground}|${cellContentStamp(parts)}`;
   }
 
   function publish() {
@@ -411,7 +606,22 @@ export function cityLayer(start: [number, number], onPublish?: (parts: BuildingP
     queue = [];
     activeBuild = null;
     for (const group of planned.values()) {
-      if (cells.get(group.id)?.stamp === group.stamp) continue;
+      const existing = cells.get(group.id);
+      if (existing?.stamp === group.stamp) continue;
+      const sample = sampleCell(group) ?? -999;
+      const groundQuant = sample <= -900 ? -999 : Math.round(sample / 4) * 4;
+      // Same buildings + tiny DEM jitter: keep the drawn cell, only refresh the stamp.
+      if (
+        existing
+        && existing.keys.size === group.parts.length
+        && group.parts.every((part) => existing.keys.has(part.key))
+        && Math.abs(existing.ground - groundQuant) < 8
+        && existing.style === `${detail}|${architecture}|${builtTerrain ? 1 : 0}|${portuguesePastel.wallColors.join(',')}|${portuguesePastel.roofColors.join(',')}|${portuguesePastel.windowColors.join(',')}|${portuguesePastel.frameColor}`
+      ) {
+        existing.stamp = group.stamp;
+        existing.ground = groundQuant;
+        continue;
+      }
       const dx = group.x - focus.x;
       const dz = group.z - focus.z;
       queue.push({ id: group.id, dist: dx * dx + dz * dz });
@@ -493,6 +703,12 @@ export function cityLayer(start: [number, number], onPublish?: (parts: BuildingP
       }
     }
     if (!changed && deferCellReplacement(cellDistance(group.x, group.z, focus.x, focus.z, CELL), Boolean(sameStyle), Boolean(existing), shift)) return 'same';
+    // Intro splash: never rebuild an already-shown cell — shared-wall churn recolors roofs/walls in waves.
+    if (existing && !isDriving) {
+      existing.stamp = group.stamp;
+      patience.delete(group.id);
+      return 'same';
+    }
     // Shared-wall ownership changes when neighbours arrive. Rebuild the whole
     // cell and swap it atomically; appending leaves obsolete walls/windows alive.
     const parts = group.parts;
@@ -635,6 +851,7 @@ export function cityLayer(start: [number, number], onPublish?: (parts: BuildingP
     patience.delete(group.id);
     dropCell(group.id);
     cells.set(group.id, { parts: group.parts, stamp: group.stamp, meshes, ghosts, volumes: builtVolumes, models, x: group.x, z: group.z, shown: true, keys: new Set(group.parts.map((part) => part.key)), ground: groundQuant, style: styleNow });
+    bumpCityQuiet();
     map?.triggerRepaint();
     return 'built';
   }
@@ -672,8 +889,17 @@ export function cityLayer(start: [number, number], onPublish?: (parts: BuildingP
     sync,
     follow,
     configure,
+    shoot,
+    markGround,
     cellCount: () => cells.size,
-    pendingCount: () => queue.length + (groupsDirty ? 1 : 0),
+    pendingCount: () => queue.length + (groupsDirty ? 1 : 0) + (activeBuild ? 1 : 0),
+    isSettled: () => (
+      !groupsDirty
+      && queue.length === 0
+      && !activeBuild
+      && performance.now() >= cityQuietUntil
+      && details.isSettled()
+    ),
     onAdd(nextMap, gl) {
       map = nextMap;
       ensureMaterials();
@@ -702,6 +928,8 @@ export function cityLayer(start: [number, number], onPublish?: (parts: BuildingP
     onRemove() {
       for (const id of [...cells.keys()]) dropCell(id);
       details.dispose();
+      bulletHoleGeometry.dispose();
+      bulletHoleMaterial.dispose();
       for (const material of [...wallMaterials, ...roofMaterials, litWall, litRoof, litWindows]) material.dispose();
       for (const material of ghostMaterials.values()) material.dispose();
       for (const texture of wallTextures) texture.dispose();

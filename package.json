@@ -7,24 +7,27 @@
     "build": "next build --webpack",
     "start": "next start --hostname 0.0.0.0",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test tests/physics.test.ts tests/buildings.test.ts tests/water.test.ts tests/vegetation.test.ts",
+    "test": "node --experimental-strip-types --test tests/physics.test.ts tests/buildings.test.ts tests/water.test.ts tests/vegetation.test.ts tests/world3d.test.ts tests/fuel.test.ts tests/travel.test.ts",
     "postinstall": "node scripts/copy-worker.mjs"
   },
   "dependencies": {
+    "@mapbox/vector-tile": "^3.0.0",
+    "earcut": "^3.2.4",
+    "maplibre-gl": "^6.0.0",
     "next": "^16.0.0",
+    "pbf": "^5.1.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "maplibre-gl": "^6.0.0",
     "three": "^0.180.0"
   },
   "devDependencies": {
-    "typescript": "^5.9.0",
+    "@tailwindcss/postcss": "^4.0.0",
+    "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "@types/node": "^22.0.0",
     "@types/three": "^0.180.0",
     "tailwindcss": "^4.0.0",
-    "@tailwindcss/postcss": "^4.0.0"
+    "typescript": "^5.9.0"
   },
   "type": "module"
 }

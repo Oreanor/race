@@ -1,9 +1,12 @@
 import * as THREE from 'three';
 import { MercatorCoordinate, type CustomLayerInterface, type Map as LibreMap } from 'maplibre-gl';
-import { limitVegetation, PLANT_CAP, planVegetation, type Plant, type VegetationInput } from '@/game/Vegetation';
+import { limitVegetation, PLANT_CAP, planParkFences, planVegetation, type FenceEdge, type Plant, type VegetationInput } from '@/game/Vegetation';
 import type { Position } from '@/game/VehicleController';
 
 const LIMIT = PLANT_CAP;
+const FENCE_POST_H = 1.28;
+const POST_CAP = 14000;
+const RAIL_CAP = 26000;
 type VegetationBatch = {
   leaves: THREE.InstancedMesh[];
   trunks: THREE.InstancedMesh;
@@ -19,6 +22,8 @@ export function vegetationLayer(origin: Position): CustomLayerInterface & { sync
     new THREE.ConeGeometry(1, 2, 7),
   ];
   const trunk = new THREE.CylinderGeometry(0.13, 0.23, 1, 6);
+  const postGeometry = new THREE.BoxGeometry(0.09, 1, 0.09);
+  const railGeometry = new THREE.BoxGeometry(1, 0.06, 0.05);
 
   scene.add(new THREE.HemisphereLight(0xf4faff, 0x8faac4, 1.15));
   const sun = new THREE.DirectionalLight(0xfffaf0, 0.65);
@@ -38,6 +43,19 @@ export function vegetationLayer(origin: Position): CustomLayerInterface & { sync
   }
   let shown = batch(), staging = batch();
   scene.add(...shown.leaves, shown.trunks);
+
+  const fencePostMaterial = new THREE.MeshLambertMaterial({ color: '#4a4036' });
+  const fenceRailMaterial = new THREE.MeshLambertMaterial({ color: '#5c5145' });
+  const fencePosts = new THREE.InstancedMesh(postGeometry, fencePostMaterial, POST_CAP);
+  const fenceRails = new THREE.InstancedMesh(railGeometry, fenceRailMaterial, RAIL_CAP);
+  fencePosts.count = 0;
+  fenceRails.count = 0;
+  fencePosts.frustumCulled = false;
+  fenceRails.frustumCulled = false;
+  fencePosts.renderOrder = 4;
+  fenceRails.renderOrder = 4;
+  scene.add(fencePosts, fenceRails);
+
   let map: LibreMap, renderer: THREE.WebGLRenderer;
   let pending: { input: VegetationInput; terrain: boolean } | null = null;
   let work: Generator<null, void> | null = null;
@@ -48,6 +66,77 @@ export function vegetationLayer(origin: Position): CustomLayerInterface & { sync
     .scale(new THREE.Vector3(meters, -meters, meters)).multiply(new THREE.Matrix4().makeRotationX(Math.PI / 2));
   const ground = new Map<string, number>();
   const retainedPlants = new Map<string, Plant>();
+  const fenceGround = new Map<string, number>();
+
+  function sampleElevation(lngLat: Position, terrain: boolean) {
+    if (!terrain || !map) return 0;
+    return map.queryTerrainElevation(lngLat) ?? 0;
+  }
+
+  function lngLatOf(x: number, z: number): Position {
+    const cos = Math.cos(origin[1] * Math.PI / 180);
+    return [origin[0] + x / (111319.49 * cos), origin[1] + (-z) / 111319.49];
+  }
+
+  function elevationAt(x: number, z: number, terrain: boolean) {
+    const key = `${x.toFixed(1)},${z.toFixed(1)}`;
+    let height = fenceGround.get(key);
+    if (height == null) {
+      height = sampleElevation(lngLatOf(x, z), terrain);
+      fenceGround.set(key, height);
+    }
+    return height;
+  }
+
+  function placeFence(edges: FenceEdge[], terrain: boolean) {
+    fencePosts.count = 0;
+    fenceRails.count = 0;
+    const postStep = 2.15;
+    edgeLoop: for (const edge of edges) {
+      if (fencePosts.count >= POST_CAP) break;
+      const dx = edge.bx - edge.ax;
+      const dz = edge.bz - edge.az;
+      const length = Math.hypot(dx, dz);
+      if (length < 0.5) continue;
+      const yaw = Math.atan2(dx, dz) - Math.PI / 2;
+      const count = Math.max(1, Math.ceil(length / postStep));
+      let prevX = edge.ax;
+      let prevZ = edge.az;
+      let prevY = elevationAt(edge.ax, edge.az, terrain);
+      for (let i = 0; i <= count; i++) {
+        if (fencePosts.count >= POST_CAP) break edgeLoop;
+        const t = i / count;
+        const x = edge.ax + dx * t;
+        const z = edge.az + dz * t;
+        const y = elevationAt(x, z, terrain);
+        object.position.set(x, y + FENCE_POST_H * 0.5, z);
+        object.rotation.set(0, yaw, 0);
+        object.scale.set(1, FENCE_POST_H, 1);
+        object.updateMatrix();
+        fencePosts.setMatrixAt(fencePosts.count++, object.matrix);
+        if (i > 0) {
+          const mx = (prevX + x) * 0.5;
+          const mz = (prevZ + z) * 0.5;
+          const my = (prevY + y) * 0.5;
+          const railLen = Math.hypot(x - prevX, z - prevZ);
+          if (railLen > 0.2 && fenceRails.count + 2 <= RAIL_CAP) {
+            for (const lift of [0.38, 0.82]) {
+              object.position.set(mx, my + lift, mz);
+              object.rotation.set(0, yaw, 0);
+              object.scale.set(railLen, 1, 1);
+              object.updateMatrix();
+              fenceRails.setMatrixAt(fenceRails.count++, object.matrix);
+            }
+          }
+        }
+        prevX = x;
+        prevZ = z;
+        prevY = y;
+      }
+    }
+    fencePosts.instanceMatrix.needsUpdate = true;
+    fenceRails.instanceMatrix.needsUpdate = true;
+  }
 
   function* rebuild(job: NonNullable<typeof pending>): Generator<null, void> {
     const planned = yield* planVegetation(job.input);
@@ -65,7 +154,7 @@ export function vegetationLayer(origin: Position): CustomLayerInterface & { sync
         ground.delete(key);
       } else activePlants.push(plant);
     }
-    const plants = limitVegetation(activePlants, east, north);
+    const plants = limitVegetation(activePlants, east, north, job.input.plantCap ?? PLANT_CAP);
     for (const mesh of staging.leaves) mesh.count = 0;
     staging.trunks.count = 0;
     let placed = 0;
@@ -115,6 +204,10 @@ export function vegetationLayer(origin: Position): CustomLayerInterface & { sync
     shown.leafMaterial.opacity = 1;
     shown.barkMaterial.opacity = 1;
     scene.add(...shown.leaves, shown.trunks);
+
+    const fenceEdges = yield* planParkFences(job.input);
+    if (fenceGround.size > 12000) fenceGround.clear();
+    placeFence(fenceEdges, job.terrain);
   }
 
   return {
@@ -150,6 +243,12 @@ export function vegetationLayer(origin: Position): CustomLayerInterface & { sync
         group.leafMaterial.dispose();
         group.barkMaterial.dispose();
       }
+      fencePosts.dispose();
+      fenceRails.dispose();
+      fencePostMaterial.dispose();
+      fenceRailMaterial.dispose();
+      postGeometry.dispose();
+      railGeometry.dispose();
       for (const geometry of foliage) geometry.dispose();
       trunk.dispose();
       renderer?.dispose();

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { VehicleController } from '../src/game/VehicleController.ts';
+import { resolveVehicleCollision, VehicleController } from '../src/game/VehicleController.ts';
 import { VehiclePose } from '../src/game/VehiclePose.ts';
 
 test('render motion is uniform across 60, 120 and 144 Hz frames', () => {
@@ -42,6 +42,25 @@ import { circleHitsPolygon, BuildingCollisions } from '../src/game/BuildingColli
 const config={maxSpeed:25,reverseSpeed:25/3.6,acceleration:7,braking:12,drag:1.7,handbrake:22,wheelbase:2.6};
 test('speed is limited and steering works while accelerating',()=>{const v=new VehicleController([0,40],0);for(let i=0;i<600;i++)v.step(1/60,new Set(['KeyW','KeyA']),config);assert.equal(v.speed,25);assert.ok(v.heading<0);assert.ok(v.distance>100);});
 test('top speed scales with the car',()=>{const v=new VehicleController([0,40],0);for(let i=0;i<600;i++)v.step(1/60,new Set(['KeyW']),{...config,scale:10});assert.equal(v.speed,250);});
+test('a faster vehicle pushes the slower vehicle out of its footprint', () => {
+  const meters = 111319.49;
+  const a = { position: [0, 0] as [number, number], heading: 0, speed: 20, length: 4.2 };
+  const b = { position: [0, 3 / meters] as [number, number], heading: 0, speed: 5, length: 4.2 };
+  const collision = resolveVehicleCollision(a, b);
+  assert.ok(collision);
+  assert.equal(collision.slower, 'b');
+  assert.deepEqual(collision.a, a.position);
+  assert.ok(collision.b[1] > b.position[1]);
+  assert.ok((collision.b[1] - a.position[1]) * meters > 4.2);
+});
+test('parallel vehicles outside each other width do not collide', () => {
+  const meters = 111319.49;
+  const collision = resolveVehicleCollision(
+    { position: [0, 0], heading: 0, speed: 20, length: 4.2 },
+    { position: [2.2 / meters, 0], heading: 0, speed: 5, length: 4.2 },
+  );
+  assert.equal(collision, null);
+});
 test('reverse reaches reverse speed',()=>{const v=new VehicleController([0,40],0);for(let i=0;i<300;i++)v.step(1/60,new Set(['KeyS']),config);assert.equal(v.speed,-config.reverseSpeed);});
 test('space holds a fifty percent faster cap',()=>{const v=new VehicleController([0,40],0);for(let i=0;i<800;i++)v.step(1/60,new Set(['KeyW']),config);assert.equal(v.speed,config.maxSpeed);for(let i=0;i<800;i++)v.step(1/60,new Set(['KeyW','Space']),config);assert.equal(v.speed,config.maxSpeed*1.5);v.step(1/60,new Set(['KeyW']),config);assert.equal(v.speed,config.maxSpeed);});
 test('handbrake turns the nose while the car keeps sliding',()=>{
@@ -69,9 +88,34 @@ test('a car overlapping a building can move out but not deeper into it',()=>{
   assert.equal(collision.blocked([12/meters,0],[5/meters,0],Math.PI/2),false);
   assert.equal(collision.blocked([12/meters,0],[25/meters,0],Math.PI/2),true);
 });
+test('vehicle width keeps wheels clear of a wall while driving alongside it',()=>{
+  const collision=new BuildingCollisions();
+  const meters=111319.49;
+  const wall: [number,number][][]=[[[1.1/meters,-5/meters],[3/meters,-5/meters],[3/meters,5/meters],[1.1/meters,5/meters],[1.1/meters,-5/meters]]];
+  collision.update([0,0],[wall]);
+  assert.equal(collision.blocked([0,0],[0,2/meters],0),true);
+});
+test('building collision footprint grows with the car scale',()=>{
+  const collision=new BuildingCollisions();
+  const meters=111319.49;
+  const wall: [number,number][][]=[[[2.1/meters,-5/meters],[3/meters,-5/meters],[3/meters,5/meters],[2.1/meters,5/meters],[2.1/meters,-5/meters]]];
+  collision.update([0,0],[wall]);
+  assert.equal(collision.blocked([0,0],[0,2/meters],0),false);
+  assert.equal(collision.blocked([0,0],[0,2/meters],0,2),true);
+});
 
 import { supportAltitude } from '../src/game/groundSupport.ts';
+import { healthColor } from '../src/game/health.ts';
 import { Euler, Vector3 } from 'three';
+test('health colors switch at the two thirds and one third thresholds', () => {
+  assert.equal(healthColor(661, 1000), 'green');
+  assert.equal(healthColor(660, 1000), 'yellow');
+  assert.equal(healthColor(331, 1000), 'yellow');
+  assert.equal(healthColor(330, 1000), 'red');
+  assert.equal(healthColor(0, 1000), 'red');
+});
+
+import { advanceTrafficBot, createTrafficBot, TrafficRoadNetwork } from '../src/game/TrafficBots.ts';
 
 test('terrain support keeps wheels and belly above slopes even while tilt is catching up', () => {
   for (const pitch of [-0.3, 0, 0.3]) for (const roll of [-0.25, 0, 0.25]) {
@@ -86,6 +130,147 @@ test('terrain support keeps wheels and belly above slopes even while tilt is cat
       assert.ok(altitude+point.y >= sample.height-1e-9);
     }
   }
+});
+
+test('traffic bots follow connected road geometry using vehicle physics', () => {
+  const network = new TrafficRoadNetwork();
+  network.addFeatures([{
+    geometry: {
+      type: 'LineString',
+      coordinates: [[0, 0], [0.0012, 0], [0.0012, 0.0045]],
+    },
+    properties: { class: 'secondary' },
+  }]);
+  const start = network.nearest([0, 0], new Set(), 0, 20);
+  assert.ok(start);
+  const route = network.route(start.id, Math.PI / 2, 0);
+  assert.ok(route.length > 10);
+  assert.ok(route.some(point => point[1] > 0.0001));
+
+  const bot = createTrafficBot('bot-0', 'Ines', cars[1], network, [0, 0], Math.PI / 2, new Set());
+  const initialPosition = [...bot.position] as [number, number];
+  for (let frame = 0; frame < 120; frame++) {
+    advanceTrafficBot(bot, 1 / 60, network, {
+      ...vehicleConfig,
+      acceleration: bot.car.acceleration,
+      maxSpeed: bot.car.maxSpeed,
+    });
+  }
+  const traveled = Math.hypot(
+    (bot.position[0] - initialPosition[0]) * 111319.49 * Math.cos(initialPosition[1] * Math.PI / 180),
+    (bot.position[1] - initialPosition[1]) * 111319.49,
+  );
+  assert.ok(bot.controller.distance > 0);
+  assert.ok(traveled > 5 && traveled <= bot.controller.distance + 0.1);
+  assert.ok(Math.abs(bot.heading - Math.PI / 2) < 0.2);
+});
+
+test('traffic bots wait at a road-network frontier instead of reversing', () => {
+  const network = new TrafficRoadNetwork();
+  network.addFeatures([{
+    geometry: { type: 'LineString', coordinates: [[0, 0], [0.001, 0]] },
+    properties: { class: 'minor' },
+  }]);
+  const bot = createTrafficBot('bot-1', 'Tiago', cars[1], network, [0, 0], Math.PI / 2, new Set());
+  const initialPosition = [...bot.position] as [number, number];
+  for (let frame = 0; frame < 120; frame++) {
+    advanceTrafficBot(bot, 1 / 60, network, {
+      ...vehicleConfig,
+      acceleration: bot.car.acceleration,
+      maxSpeed: bot.car.maxSpeed,
+    });
+  }
+  assert.deepEqual(bot.position, initialPosition);
+  assert.equal(bot.controller.speed, 0);
+});
+
+test('mission destinations are selected ahead on the loaded road network', () => {
+  const network = new TrafficRoadNetwork();
+  network.addFeatures([{
+    geometry: {
+      type: 'LineString',
+      coordinates: [[0, 0], [0.0012, 0], [0.0012, 0.0045]],
+    },
+    properties: { class: 'secondary' },
+  }]);
+
+  const destination = network.destinationAhead([0, 0], Math.PI / 2, 417);
+  assert.ok(destination);
+  assert.ok(destination[0] > 0.0001);
+  const start = network.nearest([0, 0]);
+  assert.ok(start);
+  const route = network.route(start.id, Math.PI / 2, 0, destination);
+  assert.ok(route.length > 1);
+  assert.ok(Math.hypot(
+    (route[route.length - 1][0] - destination[0]) * 111319.49,
+    (route[route.length - 1][1] - destination[1]) * 111319.49,
+  ) < 5);
+});
+
+test('road pickups are spaced along loaded streets and remain inside the visible radius', () => {
+  const network = new TrafficRoadNetwork();
+  network.addFeatures([{
+    geometry: { type: 'LineString', coordinates: [[0, 0], [0.003, 0]] },
+    properties: { class: 'secondary' },
+  }]);
+
+  const pickups = network.pickupLocations([0, 0], 330);
+  assert.equal(pickups.length, 4);
+  assert.equal(new Set(pickups.map(pickup => pickup.id)).size, pickups.length);
+  for (const pickup of pickups) {
+    assert.equal(pickup.position[1], 0);
+    assert.ok(pickup.position[0] * 111319.49 <= 330);
+  }
+  for (let index = 1; index < pickups.length; index++) {
+    assert.ok(Math.abs((pickups[index].position[0] - pickups[index - 1].position[0]) * 111319.49 - 75) < 0.1);
+  }
+});
+
+test('road pickups keep their minimum spacing across short road segments', () => {
+  const network = new TrafficRoadNetwork();
+  const features = Array.from({ length: 8 }, (_, index) => ({
+    geometry: {
+      type: 'LineString' as const,
+      coordinates: [
+        [index * 0.0004, 0],
+        [(index + 1) * 0.0004, 0],
+      ],
+    },
+    properties: { class: 'secondary' },
+  }));
+  network.addFeatures(features);
+
+  const pickups = network.pickupLocations([0, 0], 350);
+  assert.ok(pickups.length > 1);
+  for (let index = 0; index < pickups.length; index++) {
+    for (let other = index + 1; other < pickups.length; other++) {
+      const distance = (pickups[other].position[0] - pickups[index].position[0]) * 111319.49;
+      assert.ok(Math.abs(distance) >= 74.9);
+    }
+  }
+});
+
+test('road network ingests new streets without rebuilding the whole graph', () => {
+  const network = new TrafficRoadNetwork();
+  network.addFeatures([{
+    geometry: { type: 'LineString', coordinates: [[0, 0], [0.0012, 0]] },
+    properties: { class: 'secondary' },
+  }]);
+  assert.equal(network.flushRebuild(), true);
+  assert.equal(network.flushRebuild(), false);
+  const first = network.nearest([0, 0]);
+  assert.ok(first);
+
+  network.addFeatures([{
+    geometry: { type: 'LineString', coordinates: [[0.0012, 0], [0.0012, 0.0015]] },
+    properties: { class: 'secondary' },
+  }]);
+  assert.equal(network.flushRebuild(), true);
+  const corner = network.nearest([0.0012, 0]);
+  assert.ok(corner);
+  const route = network.route(first!.id, Math.PI / 2, 0, [0.0012, 0.0015]);
+  assert.ok(route.length > 1);
+  assert.ok(route.some(point => point[1] > 0.0005));
 });
 
 import { zoomForDistance } from '../src/config/camera.config.ts';

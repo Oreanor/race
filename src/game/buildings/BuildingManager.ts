@@ -129,6 +129,9 @@ export class BuildingManager {
   private view: BuildingView = { detail: 'high', architecture: 'auto', region: '', colors: HOUSE_PALETTE, originKey: '' };
   private focus = { x: 0, z: 0 };
   private roofsDirty = false;
+  private roofQuietUntil = 0;
+  private streaming = false;
+  private roofsRevealed = false;
   private roofMesh: Mesh | null = null;
   private roofGhost: Mesh | null = null;
   private roofMaterial: MeshBasicMaterial;
@@ -184,6 +187,39 @@ export class BuildingManager {
     if (this.roofGhost) this.roofGhost.visible = visible;
   }
 
+  setStreaming(busy: boolean) {
+    this.streaming = busy;
+    if (busy) {
+      // Only blank pitched roofs before the first settled reveal — never after, or the city flashes again.
+      if (!this.roofsRevealed) this.hidePitchedRoofs();
+      if (this.roofsDirty) this.roofQuietUntil = Math.max(this.roofQuietUntil, performance.now() + 1200);
+    }
+  }
+
+  isSettled() {
+    if (this.streaming || this.roofsDirty || this.dirty.size > 0 || performance.now() < this.roofQuietUntil) return false;
+    let needsPitched = false;
+    for (const model of this.models.values()) {
+      if (!model.wantsRoof) continue;
+      needsPitched = true;
+      break;
+    }
+    if (needsPitched && !(this.roofMesh && this.roofMesh.visible)) return false;
+    return true;
+  }
+
+  private hidePitchedRoofs() {
+    if (this.roofMesh) this.roofMesh.visible = false;
+    if (this.roofGhost) this.roofGhost.visible = false;
+  }
+
+  private markRoofsDirty() {
+    this.roofsDirty = true;
+    if (!this.roofsRevealed) this.hidePitchedRoofs();
+    // Coalesce many cell publishes into one pitched-roof rebuild so intro doesn't flicker.
+    this.roofQuietUntil = Math.max(this.roofQuietUntil, performance.now() + (this.streaming ? 1200 : 450));
+  }
+
   setModels(models: BuildingModel[], originKey: string) {
     this.view.originKey = originKey;
     const seen = new Set<string>();
@@ -197,10 +233,10 @@ export class BuildingManager {
       const pitched = this.view.detail !== 'off' && this.view.detail !== 'low' && model.rectangular && recipe.roofKind !== 'flat';
       if (prev) {
         for (const pool of Object.values(this.pools)) pool.remove(model.key);
-        if (prev.wantsRoof !== pitched || Math.abs(prev.crest - model.crest) > 0.35) this.roofsDirty = true;
+        if (prev.wantsRoof !== pitched || Math.abs(prev.crest - model.crest) > 0.35) this.markRoofsDirty();
       } else {
         added = true;
-        if (pitched) this.roofsDirty = true;
+        if (pitched) this.markRoofsDirty();
       }
       this.models.set(model.key, { ...model, sig, recipe, lod: prev?.lod, wantsRoof: pitched });
     }
@@ -243,6 +279,7 @@ export class BuildingManager {
   dispose() {
     this.clearInstances();
     this.clearRoof();
+    this.roofsRevealed = false;
     for (const pool of Object.values(this.pools)) this.scene.remove(pool.mesh);
     for (const geometry of Object.values(this.geometries)) geometry.dispose();
     this.frameMaterial.dispose();
@@ -264,16 +301,17 @@ export class BuildingManager {
   private removeInstances(key: string) {
     for (const pool of Object.values(this.pools)) pool.remove(key);
     const model = this.models.get(key);
-    if (model?.wantsRoof) this.roofsDirty = true;
+    if (model?.wantsRoof) this.markRoofsDirty();
     if (model) model.wantsRoof = false;
   }
 
   private process() {
+    const started = performance.now();
     if (this.dirty.size) {
       const batch = [...this.dirty].map((key) => this.models.get(key)).filter((model): model is Recorded => Boolean(model));
       batch.sort((a, b) => distance(a.footprint, this.focus) - distance(b.footprint, this.focus));
       const budget = this.primed ? 7 : 16;
-      const deadline = performance.now() + 2;
+      const deadline = started + 2;
       for (let i = 0; i < batch.length && i < budget; i++) {
         this.rebuild(batch[i]);
         this.dirty.delete(batch[i].key);
@@ -282,7 +320,14 @@ export class BuildingManager {
       if (!this.dirty.size) this.primed = true;
     }
     for (const pool of Object.values(this.pools)) pool.flush();
-    if (this.roofsDirty) this.rebuildRoofs();
+    // Hold the global pitched-roof mesh while cells are still arriving, then rebuild once.
+    if (
+      this.roofsDirty
+      && !this.dirty.size
+      && !this.streaming
+      && performance.now() >= this.roofQuietUntil
+      && performance.now() - started < 2.5
+    ) this.rebuildRoofs();
   }
 
   private rebuild(model: Recorded) {
@@ -291,7 +336,7 @@ export class BuildingManager {
     const pitched = this.view.detail !== 'off' && detail !== 'low' && model.rectangular && model.recipe.roofKind !== 'flat';
     if (model.wantsRoof !== pitched) {
       model.wantsRoof = pitched;
-      this.roofsDirty = true;
+      this.markRoofsDirty();
     }
     if (pitched || detail !== 'high') return;
     if (model.recipe.features.chimney) this.addRoofAccent(model, false);
@@ -316,14 +361,16 @@ export class BuildingManager {
 
   private rebuildRoofs() {
     this.roofsDirty = false;
-    this.clearRoof();
     for (const model of this.models.values()) {
       if (!model.wantsRoof) continue;
       this.pools.chimney.remove(model.key);
       this.pools.vent.remove(model.key);
     }
     const pitched = [...this.models.values()].filter((model) => model.wantsRoof);
-    if (!pitched.length) return;
+    if (!pitched.length) {
+      this.clearRoof();
+      return;
+    }
     const positions: number[] = [];
     const normals: number[] = [];
     const colors: number[] = [];
@@ -343,20 +390,35 @@ export class BuildingManager {
       if (model.recipe.features.chimney && this.view.detail === 'high') this.addRoofAccent(model, roof);
       if (model.recipe.features.vent && this.view.detail === 'high') this.addVent(model, roof);
     }
-    if (!positions.length) return;
+    if (!positions.length) {
+      this.clearRoof();
+      return;
+    }
     const geometry = new BufferGeometry();
     geometry.setAttribute('position', new BufferAttribute(new Float32Array(positions), 3));
     geometry.setAttribute('normal', new BufferAttribute(new Float32Array(normals), 3));
     geometry.setAttribute('color', new BufferAttribute(new Float32Array(colors), 3));
     geometry.setAttribute('blockId', new BufferAttribute(new Float32Array(blocks), 1));
-    this.roofMesh = new Mesh(geometry, this.roofMaterial);
-    this.roofMesh.frustumCulled = false;
-    this.roofGhost = new Mesh(geometry, this.roofGhostMaterial);
-    this.roofGhost.frustumCulled = false;
-    this.roofGhost.renderOrder = 3;
-    this.roofGhost.visible = false;
-    this.scene.add(this.roofMesh);
-    this.scene.add(this.roofGhost);
+    const nextRoof = new Mesh(geometry, this.roofMaterial);
+    nextRoof.frustumCulled = false;
+    const nextGhost = new Mesh(geometry, this.roofGhostMaterial);
+    nextGhost.frustumCulled = false;
+    nextGhost.renderOrder = 3;
+    nextGhost.visible = this.roofGhost?.visible ?? false;
+    // Swap atomically so pitched roofs don't blink away for a frame.
+    const previousRoof = this.roofMesh;
+    const previousGhost = this.roofGhost;
+    this.roofMesh = nextRoof;
+    this.roofGhost = nextGhost;
+    nextRoof.visible = true;
+    this.roofsRevealed = true;
+    this.scene.add(nextRoof);
+    this.scene.add(nextGhost);
+    if (previousGhost) this.scene.remove(previousGhost);
+    if (previousRoof) {
+      this.scene.remove(previousRoof);
+      previousRoof.geometry.dispose();
+    }
     for (const pool of [this.pools.chimney, this.pools.vent]) pool.flush();
   }
 
@@ -369,6 +431,7 @@ export class BuildingManager {
     this.scene.remove(this.roofMesh);
     this.roofMesh.geometry.dispose();
     this.roofMesh = null;
+    this.roofsRevealed = false;
   }
 }
 

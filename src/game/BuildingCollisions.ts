@@ -57,6 +57,11 @@ export class BuildingCollisions {
     ];
   }
 
+  private world(point: Point): Position {
+    const cos = Math.cos(this.origin[1] * Math.PI / 180);
+    return [this.origin[0] + point[0] / (111319.49 * cos), this.origin[1] + point[1] / 111319.49];
+  }
+
   update(origin: Position, polygons: Polygon[]) {
     this.origin = [...origin];
     this.polygons = polygons.map(rings => {
@@ -74,32 +79,161 @@ export class BuildingCollisions {
     });
   }
 
-  blocked(from: Position, to: Position, heading: number) {
-    const start = this.local(from), end = this.local(to);
-    const count = Math.max(1, Math.ceil(Math.hypot(end[0] - start[0], end[1] - start[1]) / 0.4));
-    const startDepth = this.depth(start, heading);
+  blocked(from: Position, to: Position, heading: number, scale = 1) {
+    return this.hits(this.local(from), this.local(to), heading, scale);
+  }
 
+  /** Glancing hits slide along the wall; head-on stops. */
+  resolve(from: Position, to: Position, heading: number, scale = 1) {
+    const start = this.local(from);
+    const end = this.local(to);
+    if (!this.hits(start, end, heading, scale)) return { position: to, stopped: false, slid: false };
+    const startDepth = this.depth(start, heading, scale);
+    if (startDepth > 0 && this.depth(end, heading, scale) < startDepth - 1e-6 && !this.deepens(start, end, heading, scale)) {
+      return { position: to, stopped: false, slid: false };
+    }
+    const slid = this.slide(start, end, heading, scale);
+    if (slid && !this.hits(start, slid, heading, scale)) {
+      return { position: this.world(slid), stopped: false, slid: true };
+    }
+    if (slid && this.hits(start, start, heading, scale) && !this.deepens(start, slid, heading, scale)) {
+      return { position: this.world(slid), stopped: false, slid: true };
+    }
+    const clamped = this.clamp(start, end, heading, scale);
+    const moved = Math.hypot(clamped[0] - start[0], clamped[1] - start[1]) > 0.05;
+    return { position: moved ? this.world(clamped) : from, stopped: true, slid: false };
+  }
+
+  private hits(from: Point, to: Point, heading: number, scale: number) {
+    const count = Math.max(1, Math.ceil(Math.hypot(to[0] - from[0], to[1] - from[1]) / 0.4));
+    const startDepth = this.depth(from, heading, scale);
     for (let step = 0; step <= count; step++) {
       const t = step / count;
-      const center: Point = [start[0] + (end[0] - start[0]) * t, start[1] + (end[1] - start[1]) * t];
-      const depth = this.depth(center, heading);
+      const center: Point = [from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t];
+      const depth = this.depth(center, heading, scale);
       if (startDepth === 0 && depth > 0) return true;
       if (startDepth > 0 && depth > startDepth + 1e-4) return true;
     }
-
-    return startDepth > 0 && this.depth(end, heading) >= startDepth - 1e-4;
+    return startDepth > 0 && this.depth(to, heading, scale) >= startDepth - 1e-4;
   }
 
-  private depth(center: Point, heading: number) {
+  private deepens(from: Point, to: Point, heading: number, scale: number) {
+    const start = this.depth(from, heading, scale);
+    const count = Math.max(1, Math.ceil(Math.hypot(to[0] - from[0], to[1] - from[1]) / 0.4));
+    for (let step = 1; step <= count; step++) {
+      const t = step / count;
+      const point: Point = [from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t];
+      if (this.depth(point, heading, scale) > start + 1e-6) return true;
+    }
+    return false;
+  }
+
+  private depth(center: Point, heading: number, scale: number) {
     let deepest = 0;
+    const radius = 1.2 * scale;
     for (const shift of [-1.1, 0, 1.1]) {
-      const point: Point = [center[0] + Math.sin(heading) * shift, center[1] + Math.cos(heading) * shift];
+      const scaledShift = shift * scale;
+      const point: Point = [center[0] + Math.sin(heading) * scaledShift, center[1] + Math.cos(heading) * scaledShift];
       for (const polygon of this.polygons) {
         const [x0, y0, x1, y1] = polygon.bounds;
-        if (point[0] + 0.95 < x0 || point[0] - 0.95 > x1 || point[1] + 0.95 < y0 || point[1] - 0.95 > y1) continue;
-        deepest = Math.max(deepest, polygonPenetrationDepth(point, 0.95, polygon.rings));
+        if (point[0] + radius < x0 || point[0] - radius > x1 || point[1] + radius < y0 || point[1] - radius > y1) continue;
+        deepest = Math.max(deepest, polygonPenetrationDepth(point, radius, polygon.rings));
       }
     }
     return deepest;
+  }
+
+  private contact(center: Point, heading: number, scale: number) {
+    const radius = 1.2 * scale;
+    let best: { point: Point; polygon: CollisionPolygon; depth: number } | null = null;
+    for (const shift of [-1.1, 0, 1.1]) {
+      const scaledShift = shift * scale;
+      const point: Point = [center[0] + Math.sin(heading) * scaledShift, center[1] + Math.cos(heading) * scaledShift];
+      for (const polygon of this.polygons) {
+        const [x0, y0, x1, y1] = polygon.bounds;
+        if (point[0] + radius < x0 || point[0] - radius > x1 || point[1] + radius < y0 || point[1] - radius > y1) continue;
+        const depth = polygonPenetrationDepth(point, radius, polygon.rings);
+        if (depth <= 0) continue;
+        if (!best || depth > best.depth) best = { point, polygon, depth };
+      }
+    }
+    return best;
+  }
+
+  private outward(point: Point, polygon: CollisionPolygon): Point {
+    let best = Infinity;
+    let ax = 0, ay = 0, bx = 0, by = 0;
+    for (const ring of polygon.rings) {
+      for (let i = 0; i < ring.length; i++) {
+        const a = ring[i];
+        const b = ring[(i + 1) % ring.length];
+        const distance = Math.sqrt(distanceSquared(point, a, b));
+        if (distance < best) {
+          best = distance;
+          ax = a[0]; ay = a[1];
+          bx = b[0]; by = b[1];
+        }
+      }
+    }
+    const dx = bx - ax;
+    const dy = by - ay;
+    const t = Math.max(0, Math.min(1, ((point[0] - ax) * dx + (point[1] - ay) * dy) / (dx * dx + dy * dy || 1)));
+    const closest: Point = [ax + t * dx, ay + t * dy];
+    let nx = point[0] - closest[0];
+    let ny = point[1] - closest[1];
+    const length = Math.hypot(nx, ny);
+    if (length < 0.001) {
+      const span = Math.hypot(dx, dy) || 1;
+      nx = -dy / span;
+      ny = dx / span;
+    } else {
+      nx /= length;
+      ny /= length;
+    }
+    const solid = inside(point, polygon.rings[0] ?? [])
+      && !polygon.rings.slice(1).some(ring => inside(point, ring));
+    // Push out of the building: if we're inside, flip so normal points outward.
+    if (solid) {
+      nx = -nx;
+      ny = -ny;
+    } else if (inside([closest[0] + nx * 0.35, closest[1] + ny * 0.35], polygon.rings[0] ?? [])) {
+      nx = -nx;
+      ny = -ny;
+    }
+    return [nx, ny];
+  }
+
+  private slide(from: Point, to: Point, heading: number, scale: number) {
+    const count = Math.max(1, Math.ceil(Math.hypot(to[0] - from[0], to[1] - from[1]) / 0.4));
+    let normal: Point | null = null;
+    for (let step = 0; step <= count && !normal; step++) {
+      const t = step / count;
+      const center: Point = [from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t];
+      const hit = this.contact(center, heading, scale);
+      if (!hit) continue;
+      normal = this.outward(hit.point, hit.polygon);
+    }
+    if (!normal) return null;
+    const dx = to[0] - from[0];
+    const dy = to[1] - from[1];
+    const into = dx * normal[0] + dy * normal[1];
+    // Remove only the component pushing into the wall; keep the tangent.
+    const sx = into < 0 ? dx - normal[0] * into : dx;
+    const sy = into < 0 ? dy - normal[1] * into : dy;
+    if (Math.hypot(sx, sy) < 1e-8) return null;
+    return [from[0] + sx, from[1] + sy] as Point;
+  }
+
+  private clamp(from: Point, to: Point, heading: number, scale: number) {
+    let lo = 0;
+    let hi = 1;
+    for (let i = 0; i < 10; i++) {
+      const mid = (lo + hi) / 2;
+      const point: Point = [from[0] + (to[0] - from[0]) * mid, from[1] + (to[1] - from[1]) * mid];
+      if (this.hits(from, point, heading, scale)) hi = mid;
+      else lo = mid;
+    }
+    if (lo < 0.04) return from;
+    return [from[0] + (to[0] - from[0]) * lo, from[1] + (to[1] - from[1]) * lo] as Point;
   }
 }

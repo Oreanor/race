@@ -93,25 +93,36 @@ test('roadside plant identity does not depend on road feature order',()=>{
     [...reversed].filter(plant=>plant.key.startsWith('r:')).sort((a,b)=>a.key.localeCompare(b.key)),
   );
 });
-test('a park stops the car except on the road through it',()=>{
+test('open park lawn is driveable; only woods stay solid',()=>{
   const thicket=new ThicketCollision();
   const park=feature([ring(-80,-80,160,160)],'park');
   const road={geometry:{type:'LineString',coordinates:[p(-90,0),p(90,0)]},properties:{class:'primary'}};
   thicket.update([0,0],[park],[road]);
+  assert.equal(thicket.blocked([0,0],[0,30/M]),false);
+  assert.equal(thicket.blocked([0,0],[40/M,0]),false);
+  thicket.update([0,0],[feature([ring(-80,-80,160,160)],'wood')],[road]);
   assert.equal(thicket.blocked([0,0],[0,30/M]),true);
   assert.equal(thicket.blocked([0,0],[40/M,0]),false);
   thicket.update([0,0],[feature([ring(-80,-80,160,160)],'grass')],[]);
   assert.equal(thicket.blocked([0,0],[0,30/M]),false);
 });
-test('a park blocks the car footprint before its center crosses the boundary',()=>{
+test('a forest blocks the car footprint before its center crosses the boundary',()=>{
   const thicket=new ThicketCollision();
-  thicket.update([0,0],[feature([ring(10,-20,60,40)],'park')],[]);
+  thicket.update([0,0],[feature([ring(10,-20,60,40)],'wood')],[]);
   assert.equal(thicket.blocked(p(8.5,0),p(9.2,0)),true);
   assert.equal(thicket.blocked(p(8,0),p(8.5,0)),false);
 });
 test('a car inside a forest can head toward the edge but not deeper into it',()=>{
   const thicket=new ThicketCollision();
-  thicket.update([0,0],[feature([ring(-80,-80,160,160)],'park')],[]);
+  thicket.update([0,0],[feature([ring(-80,-80,160,160)],'wood')],[]);
   assert.equal(thicket.blocked([0,30/M],[0,40/M]),false);
   assert.equal(thicket.blocked([0,30/M],[0,20/M]),true);
+});
+test('a park tree stops the car while empty grass beside it does not',()=>{
+  const thicket=new ThicketCollision();
+  thicket.update([0,0],[feature([ring(-80,-80,160,160)],'park')],[]);
+  // Same hash grid as Vegetation dense band: tree at gx=1,gy=-1.
+  const tree=p(10.645853500366211,-5.086665012836457);
+  assert.equal(thicket.blocked(p(40,40),p(40.5,40)),false);
+  assert.equal(thicket.blocked(p(10.645853500366211-2.5,-5.086665012836457),tree),true);
 });

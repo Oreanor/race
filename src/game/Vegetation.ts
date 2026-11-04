@@ -3,7 +3,10 @@ import type { MapFeature } from './WaterCollisionController.ts';
 import type { Position } from './VehicleController.ts';
 
 export type Plant = { key: string; position: Position; x: number; z: number; seed: number; bush: boolean; variant: number };
+export type FenceEdge = { ax: number; az: number; bx: number; bz: number };
 export const PLANT_CAP = 1800;
+/** Must stay near ThicketCollision's ±900 m solid window so drive-blocking greens stay marked. */
+export const FENCE_REACH = 880;
 const PLANT_DENSITY = 0.5;
 type Area = { rings: Position[][]; bounds: number[]; kind: string };
 const M = 111319.49;
@@ -12,7 +15,7 @@ export function plantRandom(x: number, y: number, salt = 0) {
   h = Math.imul(h ^ (h >>> 13), 1274126177);
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
-export function limitVegetation(plants: Plant[], focusEast: number, focusNorth: number) {
+export function limitVegetation(plants: Plant[], focusEast: number, focusNorth: number, plantCap = PLANT_CAP) {
   const distance = (plant: Plant) => Math.hypot(plant.x - focusEast, plant.z + focusNorth);
   const sorted = plants.sort((a, b) => distance(a) - distance(b));
   const nearPlants: Plant[] = [], middle: Plant[] = [], far: Plant[] = [];
@@ -27,12 +30,15 @@ export function limitVegetation(plants: Plant[], focusEast: number, focusNorth: 
     const stride = plants.length / limit;
     return Array.from({ length: limit }, (_, index) => plants[Math.floor(index * stride)]);
   };
-  const selected = spread(nearPlants, 450)
-    .concat(spread(middle, 900), spread(far, 450));
-  if (selected.length >= PLANT_CAP) return selected.slice(0, PLANT_CAP);
+  const nearLimit = Math.min(450, Math.ceil(plantCap * 0.25));
+  const midLimit = Math.min(900, Math.ceil(plantCap * 0.5));
+  const farLimit = Math.max(0, plantCap - nearLimit - midLimit);
+  const selected = spread(nearPlants, nearLimit)
+    .concat(spread(middle, midLimit), spread(far, farLimit));
+  if (selected.length >= plantCap) return selected.slice(0, plantCap);
   const included = new Set(selected.map(plant => plant.key));
   for (const plant of sorted) {
-    if (selected.length >= PLANT_CAP) break;
+    if (selected.length >= plantCap) break;
     if (!included.has(plant.key)) selected.push(plant);
   }
   return selected;
@@ -67,17 +73,41 @@ function onRoad(roads: {a: Position; b: Position; width: number}[], p: Position,
       && segmentDistance(p, r.a, r.b) < pad;
   });
 }
-const THICK = /^(wood|forest|park|garden)$/;
+/** Dense planting band (still open lawn between trees). */
+const DENSE = /^(wood|forest|park|garden)$/;
+/** Solid drive-block + fence: real woods only. Parks stay open except at trees. */
+const SOLID = /^(wood|forest)$/;
+const SOFT = /^(park|garden)$/;
+const TREE_SPACING = 8;
+const TREE_KEEP = 0.62;
 function featureKind(feature: MapFeature) {
   return String(feature.properties?.subclass ?? feature.properties?.class ?? '');
 }
-export type VegetationInput = { green: MapFeature[]; obstacles: MapFeature[]; roads: MapFeature[]; focus: Position; origin: Position };
+export function isThicketKind(kind: string) {
+  return SOLID.test(kind);
+}
+export function isSoftGreenKind(kind: string) {
+  return SOFT.test(kind);
+}
+export type VegetationInput = {
+  green: MapFeature[];
+  obstacles: MapFeature[];
+  roads: MapFeature[];
+  focus: Position;
+  origin: Position;
+  plantCap?: number;
+  reachScale?: number;
+  /** fence planning radius in meters (default FENCE_REACH); whole-tile planning passes more */
+  fenceReach?: number;
+};
 
 // Yield throughout preparation and sampling so tile arrivals never monopolize a frame.
 export function* planVegetation(input: VegetationInput): Generator<null, Plant[]> {
   const cos = Math.cos(input.origin[1] * Math.PI / 180);
   const local = (p: Position): Position => [(p[0]-input.origin[0])*M*cos, (p[1]-input.origin[1])*M];
   const focus = local(input.focus);
+  const reachScale = input.reachScale ?? 1;
+  const plantCap = input.plantCap ?? PLANT_CAP;
   const greens: Area[] = [], obstacles: Area[] = [];
   let steps = 0;
   for (const [features, target] of [[input.green, greens], [input.obstacles, obstacles]] as const) {
@@ -92,7 +122,7 @@ export function* planVegetation(input: VegetationInput): Generator<null, Plant[]
         const bounds = [Infinity,Infinity,-Infinity,-Infinity];
         for (const p of rings[0]) { bounds[0]=Math.min(bounds[0],p[0]);bounds[1]=Math.min(bounds[1],p[1]);bounds[2]=Math.max(bounds[2],p[0]);bounds[3]=Math.max(bounds[3],p[1]); }
         const area = {rings,bounds,kind};
-        if (near(area,focus,700)) target.push(area);
+        if (near(area,focus,700 * reachScale)) target.push(area);
       }
     }
   }
@@ -106,21 +136,22 @@ export function* planVegetation(input: VegetationInput): Generator<null, Plant[]
     const lines = f.geometry.type === 'LineString' ? [f.geometry.coordinates as Position[]] : f.geometry.type === 'MultiLineString' ? f.geometry.coordinates as Position[][] : [];
     for (const line of lines) {
       const points = line.map(local);
-      if (width > 4 && points.some(point => Math.hypot(point[0] - focus[0], point[1] - focus[1]) <= 720)) roadsideLines.push({ points, width });
+      const roadReach = 720 * reachScale;
+      if (width > 4 && points.some(point => Math.hypot(point[0] - focus[0], point[1] - focus[1]) <= roadReach)) roadsideLines.push({ points, width });
       for (let i=1;i<points.length;i++) {
         const a=points[i-1],b=points[i];
-        if (Math.min(a[0],b[0])>focus[0]+720 || Math.max(a[0],b[0])<focus[0]-720 || Math.min(a[1],b[1])>focus[1]+720 || Math.max(a[1],b[1])<focus[1]-720) continue;
+        if (Math.min(a[0],b[0])>focus[0]+roadReach || Math.max(a[0],b[0])<focus[0]-roadReach || Math.min(a[1],b[1])>focus[1]+roadReach || Math.max(a[1],b[1])<focus[1]-roadReach) continue;
         roads.push({a,b,width});
       }
     }
   }
   const plants: Plant[] = [];
   const seen = new Set<string>();
-  const thick = greens.filter(area => THICK.test(area.kind));
+  const thick = greens.filter(area => DENSE.test(area.kind));
   const bands: { areas: Area[]; spacing: number; reach: number; keep: number; tag: string; inset: number; min: number }[] = [
-    { areas: thick, spacing: 8, reach: 700, keep: 0.62, tag: 'b', inset: 0, min: 0 },
-    { areas: greens.filter(area => /^(scrub|shrubbery|flowerbed)$/.test(area.kind)), spacing: 8.5, reach: 430, keep: 0.72, tag: 's', inset: 1.4, min: 0 },
-    { areas: greens.filter(area => /^(grass|grassland|meadow|village_green)$/.test(area.kind)), spacing: 15, reach: 520, keep: 0.4, tag: 'g', inset: 2.2, min: 0 },
+    { areas: thick, spacing: TREE_SPACING, reach: 700 * reachScale, keep: TREE_KEEP, tag: 'b', inset: 0, min: 0 },
+    { areas: greens.filter(area => /^(scrub|shrubbery|flowerbed)$/.test(area.kind)), spacing: 8.5, reach: 430 * reachScale, keep: 0.72, tag: 's', inset: 1.4, min: 0 },
+    { areas: greens.filter(area => /^(grass|grassland|meadow|village_green)$/.test(area.kind)), spacing: 15, reach: 520 * reachScale, keep: 0.4, tag: 'g', inset: 2.2, min: 0 },
   ];
   for (const band of bands) {
     for (const area of band.areas) {
@@ -161,7 +192,7 @@ export function* planVegetation(input: VegetationInput): Generator<null, Plant[]
         if (++steps % 128 === 0) yield null;
         const t = along / length;
         const center: Position = [a[0] + dx * t, a[1] + dy * t];
-        if (Math.hypot(center[0] - focus[0], center[1] - focus[1]) > 650) continue;
+        if (Math.hypot(center[0] - focus[0], center[1] - focus[1]) > 650 * reachScale) continue;
         const centerX = Math.round(center[0] / spacing), centerY = Math.round(center[1] / spacing);
         for (const side of [-1, 1]) {
           const offset = line.width + 3.5 + plantRandom(centerX, centerY, 19) * 1.8;
@@ -188,20 +219,132 @@ export function* planVegetation(input: VegetationInput): Generator<null, Plant[]
       traveled += length;
     }
   }
-  return limitVegetation(plants, focus[0], focus[1]);
+  return limitVegetation(plants, focus[0], focus[1], plantCap);
 }
 
-// Woods, forests, parks and gardens stop the car. A road cut through them stays open.
+/** Outer contours of drive-blocking woods/forests, with gaps at roads. Parks stay unfenced. */
+export function* planParkFences(input: VegetationInput): Generator<null, FenceEdge[]> {
+  const cos = Math.cos(input.origin[1] * Math.PI / 180);
+  const local = (p: Position): Position => [(p[0] - input.origin[0]) * M * cos, (p[1] - input.origin[1]) * M];
+  const focus = local(input.focus);
+  // Keep full reach even when plant density is scaled down while driving.
+  const reach = input.fenceReach ?? FENCE_REACH;
+  const edges: FenceEdge[] = [];
+  let steps = 0;
+
+  const roads: { a: Position; b: Position; width: number }[] = [];
+  for (const feature of input.roads) {
+    if (++steps % 64 === 0) yield null;
+    if (feature.properties?.brunnel === 'tunnel') continue;
+    const kind = String(feature.properties?.class ?? '');
+    // Match ThicketCollision road widths so fence gaps align with drive-through cuts.
+    const width = /path|foot|cycle|pedestrian|steps/.test(kind) ? 4 : /motorway|trunk|primary/.test(kind) ? 17 : /secondary|tertiary/.test(kind) ? 12 : 8;
+    const lines = feature.geometry.type === 'LineString'
+      ? [feature.geometry.coordinates as Position[]]
+      : feature.geometry.type === 'MultiLineString'
+        ? feature.geometry.coordinates as Position[][]
+        : [];
+    for (const line of lines) {
+      const points = line.map(local);
+      for (let i = 1; i < points.length; i++) {
+        const a = points[i - 1], b = points[i];
+        if (Math.min(a[0], b[0]) > focus[0] + reach || Math.max(a[0], b[0]) < focus[0] - reach
+          || Math.min(a[1], b[1]) > focus[1] + reach || Math.max(a[1], b[1]) < focus[1] - reach) continue;
+        roads.push({ a, b, width });
+      }
+    }
+  }
+
+  // Same clearance pad as ThicketCollision.depth so posts don't claim open road cuts.
+  const blocked = (p: Position) => onRoad(roads, p, 1.6);
+
+  for (const feature of input.green) {
+    if (++steps % 32 === 0) yield null;
+    const kind = featureKind(feature);
+    if (!isThicketKind(kind)) continue;
+    const polys = feature.geometry.type === 'Polygon'
+      ? [feature.geometry.coordinates as Position[][]]
+      : feature.geometry.type === 'MultiPolygon'
+        ? feature.geometry.coordinates as Position[][][]
+        : [];
+    for (const poly of polys) {
+      const rings = poly
+        .map((ring) => {
+          const points = ring.map(local);
+          if (points.length >= 2) {
+            const first = points[0], last = points[points.length - 1];
+            if (Math.hypot(first[0] - last[0], first[1] - last[1]) < 1e-4) points.pop();
+          }
+          return points;
+        })
+        .filter((ring) => ring.length >= 3);
+      if (!rings.length) continue;
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const point of rings[0]) {
+        minX = Math.min(minX, point[0]); minY = Math.min(minY, point[1]);
+        maxX = Math.max(maxX, point[0]); maxY = Math.max(maxY, point[1]);
+      }
+      if (maxX < focus[0] - reach || minX > focus[0] + reach || maxY < focus[1] - reach || minY > focus[1] + reach) continue;
+
+      // Fence every ring: outer perimeter and holes (inner lakes / clearings).
+      for (const ring of rings) {
+        for (let i = 0; i < ring.length; i++) {
+          if (++steps % 96 === 0) yield null;
+          const a = ring[i];
+          const b = ring[(i + 1) % ring.length];
+          const dx = b[0] - a[0], dy = b[1] - a[1];
+          const length = Math.hypot(dx, dy);
+          if (length < 0.7) continue;
+          const ux = dx / length, uy = dy / length;
+          let runStart: Position | null = null;
+          const flush = (from: Position, to: Position) => {
+            if (Math.hypot(to[0] - from[0], to[1] - from[1]) < 0.55) return;
+            if (Math.hypot((from[0] + to[0]) * 0.5 - focus[0], (from[1] + to[1]) * 0.5 - focus[1]) > reach) return;
+            edges.push({ ax: from[0], az: -from[1], bx: to[0], bz: -to[1] });
+          };
+          const step = 1.6;
+          for (let along = 0; along <= length + 1e-6; along += step) {
+            const t = Math.min(1, along / length);
+            const point: Position = [a[0] + ux * length * t, a[1] + uy * length * t];
+            const open = !blocked(point);
+            if (open && !runStart) runStart = point;
+            if (!open && runStart) {
+              flush(runStart, point);
+              runStart = null;
+            }
+          }
+          if (runStart) flush(runStart, b);
+        }
+      }
+    }
+  }
+  // Nearest edges first so instance caps still mark the thickets you can hit.
+  edges.sort((left, right) => {
+    const leftEast = (left.ax + left.bx) * 0.5;
+    const leftNorth = -(left.az + left.bz) * 0.5;
+    const rightEast = (right.ax + right.bx) * 0.5;
+    const rightNorth = -(right.az + right.bz) * 0.5;
+    return Math.hypot(leftEast - focus[0], leftNorth - focus[1]) - Math.hypot(rightEast - focus[0], rightNorth - focus[1]);
+  });
+  return edges;
+}
+
+// Woods/forests stay solid. Parks/gardens are open lawn — only planted trees stop the car.
 export class ThicketCollision {
   origin: Position = [0, 0];
   solids: { rings: Polygon; bounds: number[] }[] = [];
+  soft: Area[] = [];
   roads: { a: Position; b: Position; width: number }[] = [];
   local(p: Position): Position { return [(p[0] - this.origin[0]) * M * Math.cos(this.origin[1] * Math.PI / 180), (p[1] - this.origin[1]) * M]; }
   update(origin: Position, greens: MapFeature[], roads: MapFeature[]) {
     this.origin = [...origin];
     this.solids = [];
+    this.soft = [];
     for (const feature of greens) {
-      if (!THICK.test(featureKind(feature))) continue;
+      const kind = featureKind(feature);
+      const solid = isThicketKind(kind);
+      const soft = isSoftGreenKind(kind);
+      if (!solid && !soft) continue;
       const polys = feature.geometry.type === 'Polygon' ? [feature.geometry.coordinates as Polygon] : feature.geometry.type === 'MultiPolygon' ? feature.geometry.coordinates as Polygon[] : [];
       for (const poly of polys) {
         const rings = poly.map(ring => ring.map(point => this.local(point))).filter(ring => ring.length >= 3);
@@ -209,7 +352,8 @@ export class ThicketCollision {
         const outer = rings[0];
         const bounds = [Math.min(...outer.map(p => p[0])), Math.min(...outer.map(p => p[1])), Math.max(...outer.map(p => p[0])), Math.max(...outer.map(p => p[1]))];
         if (bounds[2] < -900 || bounds[0] > 900 || bounds[3] < -900 || bounds[1] > 900) continue;
-        this.solids.push({ rings, bounds });
+        if (solid) this.solids.push({ rings, bounds });
+        else this.soft.push({ rings, bounds, kind });
       }
     }
     this.roads = [];
@@ -222,7 +366,7 @@ export class ThicketCollision {
     }
   }
   blocked(from: Position, to: Position) {
-    if (!this.solids.length) return false;
+    if (!this.solids.length && !this.soft.length) return false;
     const start = this.local(from), end = this.local(to);
     const count = Math.max(1, Math.ceil(Math.hypot(end[0] - start[0], end[1] - start[1]) / 0.45));
     const startDepth = this.depth(start);
@@ -243,6 +387,34 @@ export class ThicketCollision {
       const [x0, y0, x1, y1] = solid.bounds;
       if (point[0] + radius < x0 || point[0] - radius > x1 || point[1] + radius < y0 || point[1] - radius > y1) continue;
       deepest = Math.max(deepest, polygonPenetrationDepth(point, radius, solid.rings));
+    }
+    if (deepest === 0) deepest = this.treeDepth(point);
+    return deepest;
+  }
+  /** Same plant grid as planVegetation dense band — open grass between trees stays free. */
+  private treeDepth(point: Position) {
+    let deepest = 0;
+    const reach = TREE_SPACING + 2.6;
+    for (const area of this.soft) {
+      if (!near(area, point, reach)) continue;
+      const gx0 = Math.floor((point[0] - reach) / TREE_SPACING);
+      const gx1 = Math.ceil((point[0] + reach) / TREE_SPACING);
+      const gy0 = Math.floor((point[1] - reach) / TREE_SPACING);
+      const gy1 = Math.ceil((point[1] + reach) / TREE_SPACING);
+      for (let gx = gx0; gx <= gx1; gx++) {
+        for (let gy = gy0; gy <= gy1; gy++) {
+          if (plantRandom(gx, gy) > TREE_KEEP * PLANT_DENSITY) continue;
+          const plant: Position = [
+            (gx + 0.18 + plantRandom(gx, gy, 11) * 0.64) * TREE_SPACING,
+            (gy + 0.18 + plantRandom(gx, gy, 29) * 0.64) * TREE_SPACING,
+          ];
+          if (!contains(area, plant) || onRoad(this.roads, plant)) continue;
+          const bush = plantRandom(gx, gy, 47) < 0.28;
+          const hit = bush ? 1.35 : 1.85;
+          const dist = Math.hypot(point[0] - plant[0], point[1] - plant[1]);
+          if (dist < hit) deepest = Math.max(deepest, hit - dist);
+        }
+      }
     }
     return deepest;
   }

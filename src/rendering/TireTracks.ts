@@ -29,7 +29,7 @@ export class TireTracks {
       if(this.direction&&direction.x*this.direction.x+direction.y*this.direction.y<0.25)this.stroke++;
       this.direction=direction;this.last=[...here];
       for(let wheel=0;wheel<2;wheel++){
-        const side=(wheel===0?-0.78:0.78)*scale,back=carLength*0.34*scale;
+        const side=(wheel===0?-0.85:0.85)*scale,back=carLength*0.31*scale;
         const position=offsetPosition(here,-Math.sin(heading)*back+Math.cos(heading)*side,-Math.cos(heading)*back-Math.sin(heading)*side);
         const elevation=ground(position);
         if(elevation==null){this.stroke++;continue;}

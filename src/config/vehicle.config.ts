@@ -1,8 +1,9 @@
 export const vehicleConfig = { maxSpeed: 25, reverseSpeed: 25/3.6, acceleration: 7, braking: 12, drag: 1.7, handbrake: 22, wheelbase: 2.6 };
+// fuel: tank in litres, game-scaled consumption in litres per km (range ≈ tank / perKm)
 export const cars = [
-  { id: '01', name: 'Ferrari Diaboro', label: 'Первый характер', path: '/models/car.glb', length: 4.2, yaw: Math.PI/2, offset: 0.42, color: '#f1a453', acceleration: 16, maxSpeed: 50 },
-  { id: '02', name: 'Ford 31', label: 'Другой взгляд на город', path: '/models/car-2.glb', length: 4.2, yaw: Math.PI/2, offset: 0.42, color: '#a4b9a0', acceleration: 12, maxSpeed: 33 },
-  { id: '03', name: 'Howler', label: 'Громкий характер', path: '/models/car-3.glb', length: 4.2, yaw: Math.PI/2, offset: 0.42, color: '#c4b7a2', acceleration: 9.5, maxSpeed: 25 },
+  { id: '01', name: 'Ferrari Diaboro', label: 'Первый характер', path: '/models/car.glb', length: 4.2, yaw: Math.PI/2, color: '#f1a453', acceleration: 16, maxSpeed: 50, fuel: { tank: 45, perKm: 2.4 } },
+  { id: '02', name: 'Ford 31', label: 'Другой взгляд на город', path: '/models/car-2.glb', length: 4.2, yaw: Math.PI/2, color: '#a4b9a0', acceleration: 12, maxSpeed: 33, fuel: { tank: 55, perKm: 1.3 } },
+  { id: '03', name: 'Howler', label: 'Громкий характер', path: '/models/car-3.glb', length: 4.2, yaw: Math.PI/2, color: '#c4b7a2', acceleration: 9.5, maxSpeed: 25, fuel: { tank: 70, perKm: 3.0 } },
 ];
 export const cities = [
   { name:'Coimbra', country:'Portugal', coords:[-8.42922,40.20805] as [number,number], heading:145, road:'Avenida Emídio Navarro', note:'У реки, среди холмов' },
