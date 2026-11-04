@@ -150,7 +150,9 @@ export function buildGround(vt: VectorTile, span: number, grid: number, dem: Flo
   // ---- water: level from the banks, carve the bed --------------------------
   const waters = polygonsOf('water').map((w) => {
     const outline = w.rings[0];
-    const samples = outline.filter((p) => p[0] >= 0 && p[1] >= 0 && p[0] <= span && p[1] <= span).map((p) => heightAt(p[0], p[1])).sort((a, b) => a - b);
+    // banks inside the tile; when the whole outline lies outside, the nearest edge heights
+    const inTile = outline.filter((p) => p[0] >= 0 && p[1] >= 0 && p[0] <= span && p[1] <= span);
+    const samples = (inTile.length ? inTile : outline).map((p) => heightAt(p[0], p[1])).sort((a, b) => a - b);
     const level = samples.length ? samples[Math.floor(samples.length * 0.25)] : 0;
     return { ...w, level, pool: w.props.class === 'swimming_pool' };
   });
@@ -159,11 +161,27 @@ export function buildGround(vt: VectorTile, span: number, grid: number, dem: Flo
     let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
     for (const [x, z] of w.rings[0]) { x0 = Math.min(x0, x); z0 = Math.min(z0, z); x1 = Math.max(x1, x); z1 = Math.max(z1, z); }
     const depth = w.pool ? 1.6 : 2.4;
-    for (let j = Math.max(0, Math.ceil(z0 / cs)); j <= Math.min(grid, Math.floor(z1 / cs)); j++)
-      for (let i = Math.max(0, Math.ceil(x0 / cs)); i <= Math.min(grid, Math.floor(x1 / cs)); i++) {
-        if (!inside(i * cs, j * cs, w.rings)) continue;
-        H[j * n + i] = Math.min(H[j * n + i], w.level - depth);
-        wet[j * n + i] = 1;
+    // shoreline segments, to find the grid points just outside the bank
+    const edges: [Pt, Pt][] = [];
+    for (const ring of w.rings) for (let i = 0; i < ring.length; i++) edges.push([ring[i], ring[(i + 1) % ring.length]]);
+    const nearShore = (x: number, z: number) => {
+      for (const [a, b] of edges) {
+        const dx = b[0] - a[0], dz = b[1] - a[1];
+        const t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (z - a[1]) * dz) / (dx * dx + dz * dz || 1)));
+        if (Math.hypot(x - a[0] - t * dx, z - a[1] - t * dz) < cs * 1.05) return true;
+      }
+      return false;
+    };
+    for (let j = Math.max(0, Math.ceil(z0 / cs) - 1); j <= Math.min(grid, Math.floor(z1 / cs) + 1); j++)
+      for (let i = Math.max(0, Math.ceil(x0 / cs) - 1); i <= Math.min(grid, Math.floor(x1 / cs) + 1); i++) {
+        if (inside(i * cs, j * cs, w.rings)) {
+          H[j * n + i] = Math.min(H[j * n + i], w.level - depth);
+          wet[j * n + i] = 1;
+        } else if (!w.pool && nearShore(i * cs, j * cs)) {
+          // the bank right next to the water dips just under it: the ground
+          // between grid points never rises through the water surface
+          H[j * n + i] = Math.min(H[j * n + i], w.level - 0.35);
+        }
       }
   }
 
