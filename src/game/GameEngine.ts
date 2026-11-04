@@ -246,6 +246,12 @@ export class GameEngine {
     });
     this.map.on('error', () => this.say(t('status.mapError')));
     // key T cycles the time of day in our world; tell the player which one
+    // Shift+T: the season (trees), also only for this player
+    this.map.on('seasonmode', (event) => {
+      const season = event.season as 'spring' | 'summer' | 'autumn' | 'winter';
+      const name = t(`seasonName.${season}`);
+      this.say(event.mode === 'real' ? t('season.real', { name }) : t('season.set', { name }), true);
+    });
     this.threeMap?.on('timemode', (event) => {
       const mode = event.mode as 'real' | 'morning' | 'day' | 'evening' | 'night' | undefined;
       if (mode) this.say(t(`time.${mode}`, { clock: String(event.clock ?? '') }), true);

@@ -25,6 +25,8 @@ const SUN = new THREE.Vector3(0.45, 0.8, 0.3).normalize();
 
 /** Seconds, shared by every foliage material; the host advances it each frame. */
 export const worldTime = { value: 0 };
+/** Season weights (spring, summer, autumn, winter), blended by the host on a change. */
+export const seasonWeights = { value: new THREE.Vector4(0, 1, 0, 0) };
 
 /** Uniforms with fog effectively off, for hosts without a world (MapLibre mode). */
 export function standaloneUniforms(): SimpleLitUniforms {
@@ -44,8 +46,10 @@ export function standaloneUniforms(): SimpleLitUniforms {
   };
 }
 
-export function simpleLit(color: THREE.ColorRepresentation, uniforms: SimpleLitUniforms, options: { side?: THREE.Side; foliage?: boolean; shiny?: boolean } = {}) {
+export function simpleLit(color: THREE.ColorRepresentation, uniforms: SimpleLitUniforms, options: { side?: THREE.Side; foliage?: boolean; shiny?: boolean; broadleaf?: boolean; branches?: boolean } = {}) {
   const defines: Record<string, string> = {};
+  if (options.broadleaf) defines.BROADLEAF = '';
+  if (options.branches) defines.BRANCHES = '';
   if (options.foliage) defines.FOLIAGE = '';
   if (options.shiny) defines.SHINY = '';
   return new THREE.ShaderMaterial({
@@ -55,11 +59,14 @@ export function simpleLit(color: THREE.ColorRepresentation, uniforms: SimpleLitU
       ...uniforms,
       uColor: { value: new THREE.Color(color) }, // linear working colour
       uTime: worldTime,
+      uSeason: seasonWeights,
     },
     vertexShader: /* glsl */ `
       uniform float uExag;
       uniform float uTime;
+      uniform vec4 uSeason;
       attribute float iGround;
+      varying float vHash;
       varying vec3 vNormal;
       varying vec3 vWorld;
       varying vec3 vTint;
@@ -70,7 +77,21 @@ export function simpleLit(color: THREE.ColorRepresentation, uniforms: SimpleLitU
       varying float vLocalY;
       void main() {
         vLocalY = position.y;
-        vec4 p = vec4(position, 1.0);
+        vec3 local = position;
+        vHash = 0.0;
+        #ifdef USE_INSTANCING
+          vHash = fract(sin(dot(instanceMatrix[3].xz, vec2(12.9898, 78.233))) * 43758.5453);
+        #endif
+        #ifdef BROADLEAF
+          // winter: the crown shrinks away (each tree a little apart), leaving bare branches
+          float leafy = clamp((1.0 - uSeason.w) * 1.6 - vHash * 0.6, 0.0, 1.0);
+          local = mix(vec3(0.0, 0.45, 0.0), local, leafy);
+        #endif
+        #ifdef BRANCHES
+          // bare branches only show while there is some winter
+          if (uSeason.w < 0.01) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
+        #endif
+        vec4 p = vec4(local, 1.0);
         vec3 n = normal;
         #ifdef USE_INSTANCING
           p = instanceMatrix * p;
@@ -129,28 +150,39 @@ export function simpleLit(color: THREE.ColorRepresentation, uniforms: SimpleLitU
       varying vec3 vNormal;
       varying vec3 vWorld;
       varying vec3 vTint;
+      varying float vHash;
+      uniform vec4 uSeason;
       #ifdef FOLIAGE
         varying float vShade;
       #endif
       varying float vLocalY;
       void main() {
         vec3 n = normalize(vNormal);
+        vec3 tint = vTint;
+        #ifdef BROADLEAF
+          // one colour per tree for the season (linear colours)
+          float h = vHash;
+          vec3 summer = tint.g < max(tint.r, tint.b) ? vec3(0.078, 0.21, 0.042) : tint;
+          vec3 spring = h < 0.45 ? vec3(0.89, 0.39, 0.55) : h < 0.65 ? vec3(0.9, 0.86, 0.79) : vec3(0.27, 0.58, 0.14);
+          vec3 autumn = h < 0.3 ? vec3(0.77, 0.45, 0.045) : h < 0.6 ? vec3(0.69, 0.18, 0.024) : h < 0.85 ? vec3(0.48, 0.056, 0.025) : vec3(0.39, 0.37, 0.07);
+          tint = spring * uSeason.x + summer * uSeason.y + autumn * (uSeason.z + uSeason.w);
+        #endif
         if (!gl_FrontFacing) n = -n;
         #ifdef FOLIAGE
           // soft foliage: wrapped light (no hard terminator), gentle top-to-bottom
           // shading, leaf-clump dapple and a bright rim like light through leaves
           float wrap = dot(n, uSun) * 0.5 + 0.5;
           vec3 light = uAmbient * (0.8 + 0.11 * n.y) + uSunColor * 0.68 * wrap * wrap + headlight(vWorld, n);
-          vec3 color = uColor * vTint * light;
+          vec3 color = uColor * tint * light;
           color *= mix(0.74, 1.08, vShade);
           float dapple = sin(vWorld.x * 2.1 + vWorld.y * 0.7) * sin(vWorld.z * 2.3 - vWorld.y * 1.3) * sin(vWorld.y * 2.7 + vWorld.x * 0.9);
           color *= 1.0 + 0.09 * dapple;
           vec3 toEye = normalize(uCameraPos - vWorld);
           float rim = pow(1.0 - max(dot(n, toEye), 0.0), 2.0);
-          color += uColor * vTint * vec3(0.18, 0.22, 0.1) * rim;
+          color += uColor * tint * vec3(0.18, 0.22, 0.1) * rim;
         #else
           vec3 light = uAmbient * (0.69 + 0.25 * n.y) + uSunColor * 0.68 * max(dot(n, uSun), 0.0) + headlight(vWorld, n);
-          vec3 color = uColor * vTint * light;
+          vec3 color = uColor * tint * light;
         #endif
         #ifdef SHINY
           // a little metal: soft sun highlight plus a cool sky sheen on top

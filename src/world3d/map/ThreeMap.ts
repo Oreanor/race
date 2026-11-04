@@ -3,9 +3,10 @@ import { MapCamera, mercatorPerMeter, mercatorX01, mercatorY01 } from './camera'
 import { WorldTiles, defaultWorldOptions } from './WorldTiles';
 import { baseUniforms, facadeMask, type BaseUniforms } from './materials';
 import type { GeoFeature } from '../tiles/worldTile';
-import { worldTime, type SimpleLitUniforms } from './simpleLit';
+import { seasonWeights, worldTime, type SimpleLitUniforms } from './simpleLit';
 import { computeLighting, timeFor, TIME_MODES, type Lighting, type TimeMode } from './lighting';
 import { placeClock, placeMoment } from '../placeTime';
+import { seasonAt, SEASON_MODES, SEASONS, type Season, type SeasonMode } from '../seasons';
 import { SkyBodies } from './sky';
 
 // A small stand-in for maplibregl.Map, backed by our own Three.js world.
@@ -114,6 +115,9 @@ export class ThreeMap {
   private mask: THREE.Texture;
   /** real time, or a typical morning / day / evening / night of today here (key T) */
   private timeMode: TimeMode = 'real';
+  /** Shift+T: the place's real season or a chosen one (local to this player) */
+  private seasonMode: SeasonMode = 'real';
+  private seasonClock = 0;
   private modeDate: Date | null = null;
   /** fixed wall-clock time from ?time=HH:MM (testing) */
   /** ?time=HH:MM: that time on the clocks of the place on screen */
@@ -438,6 +442,7 @@ export class ThreeMap {
     // stream around what the camera looks at, plus a bit toward the viewer
     this.world.update(cam.state.center);
     worldTime.value = performance.now() / 1000;
+    this.updateSeason();
     // tiles past the opaque fog are pure fog colour (= sky): skip them entirely
     // high above the city the haze moves out with the camera, so the whole area shows
     const above = Math.max(0, cam.cameraAltitude() - cam.state.elevation);
@@ -489,6 +494,37 @@ export class ThreeMap {
     this.emit('render', {});
   }
 
+  /** Next season: real → spring → summer → autumn → winter → real. */
+  cycleSeason() {
+    this.seasonMode = SEASON_MODES[(SEASON_MODES.indexOf(this.seasonMode) + 1) % SEASON_MODES.length];
+    this.emit('seasonmode', { mode: this.seasonMode, season: this.season() });
+    this.triggerRepaint();
+    return this.seasonMode;
+  }
+  /** The season shown: chosen, or the real one at the place on screen. */
+  season(): Season {
+    if (this.seasonMode !== 'real') return this.seasonMode;
+    const [lng, lat] = this.camera.state.center;
+    return seasonAt(this.shownTime(lat, lng), lat);
+  }
+  /** Blend the trees toward the season over about a second. */
+  private updateSeason() {
+    const now = performance.now();
+    const dt = this.seasonClock ? Math.min(0.1, (now - this.seasonClock) / 1000) : 1;
+    this.seasonClock = now;
+    const target = SEASONS.indexOf(this.season());
+    const w = seasonWeights.value;
+    const step = dt / 1.1;
+    let moving = false;
+    for (let i = 0; i < 4; i++) {
+      const goal = i === target ? 1 : 0;
+      const value = w.getComponent(i);
+      const next = goal > value ? Math.min(goal, value + step) : Math.max(goal, value - step);
+      if (next !== value) moving = true;
+      w.setComponent(i, next);
+    }
+    if (moving) this.triggerRepaint();
+  }
   /** The moment the world is lit for: the place's real time unless T or ?time= says otherwise. */
   private shownTime(lat: number, lng: number) {
     if (this.modeDate) return this.modeDate;
@@ -594,7 +630,8 @@ export class ThreeMap {
     listen(window, 'keydown', ((e: KeyboardEvent) => {
       if (e.code !== 'KeyT' || e.repeat) return;
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement) return;
-      this.cycleTime();
+      if (e.shiftKey) this.cycleSeason();
+      else this.cycleTime();
     }) as EventListener);
   }
 

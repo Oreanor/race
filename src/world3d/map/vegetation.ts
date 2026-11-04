@@ -3,7 +3,7 @@ import type { InstanceSet, VegetationData } from '../tiles/vegetationTile';
 import type { BaseUniforms } from './materials';
 import { simpleLit } from './simpleLit';
 import { createPieceGeometries } from '@/game/buildings/BuildingGeometry';
-import { createCrowns } from './treeShapes';
+import { createBranches, createCrowns } from './treeShapes';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 const pieces = createPieceGeometries();
@@ -12,7 +12,7 @@ const crowns = createCrowns();
 // Draws the per-tile vegetation planned in the worker. Shared low-poly shapes,
 // one InstancedMesh per shape per tile; ground height and fog in the shader.
 
-type Kind = 'trunk' | 'leaf0' | 'leaf1' | 'leaf2' | 'leaf3' | 'post' | 'rail' | 'chimney' | 'vent' | 'lamp';
+type Kind = 'trunk' | 'branch' | 'leaf0' | 'leaf1' | 'leaf2' | 'leaf3' | 'post' | 'rail' | 'chimney' | 'vent' | 'lamp';
 
 /** Street lamp: pole, arm reaching over the road (+X), lamp head. Meters. */
 function lampGeometry() {
@@ -36,6 +36,7 @@ export class VegetationRenderer {
   constructor(uniforms: BaseUniforms) {
     this.geometries = {
       trunk: new THREE.CylinderGeometry(0.13, 0.23, 1, 5),
+      branch: createBranches(),
       leaf0: crowns.round,
       leaf1: crowns.umbrella,
       leaf2: crowns.conifer,
@@ -49,8 +50,11 @@ export class VegetationRenderer {
     };
     const lambert = (color: string | number) => simpleLit(color, uniforms);
     const leaf = simpleLit(0xffffff, uniforms, { foliage: true });
+    // broadleaf crowns follow the season; evergreens (pines, firs, hedges) do not
+    const broadleaf = simpleLit(0xffffff, uniforms, { foliage: true, broadleaf: true });
     this.materials = {
-      trunk: lambert(0x7a5a43), leaf0: leaf, leaf1: leaf, leaf2: leaf, leaf3: leaf,
+      trunk: lambert(0x7a5a43), branch: simpleLit(0x5e4a3a, uniforms, { branches: true }),
+      leaf0: broadleaf, leaf1: leaf, leaf2: leaf, leaf3: leaf,
       post: lambert('#4a4036'), rail: lambert('#5c5145'),
       chimney: lambert(0xffffff), vent: lambert(0xffffff),
       lamp: simpleLit('#9aa1a8', uniforms, { shiny: true }),
@@ -65,7 +69,7 @@ export class VegetationRenderer {
   /** Meshes for one tile, ready to add to the tile group. */
   build(data: VegetationData): THREE.InstancedMesh[] {
     return this.instanced([
-      ['trunk', data.trunks], ['leaf0', data.leaves[0]], ['leaf1', data.leaves[1]], ['leaf2', data.leaves[2]], ['leaf3', data.leaves[3]],
+      ['trunk', data.trunks], ['branch', data.leaves[0]], ['leaf0', data.leaves[0]], ['leaf1', data.leaves[1]], ['leaf2', data.leaves[2]], ['leaf3', data.leaves[3]],
       ['post', data.posts], ['rail', data.rails], ['lamp', data.lamps],
     ]);
   }
@@ -81,7 +85,7 @@ export class VegetationRenderer {
       geometry.setAttribute('iGround', new THREE.InstancedBufferAttribute(set.ground, 1));
       const mesh = new THREE.InstancedMesh(geometry, this.materials[kind], set.count);
       mesh.instanceMatrix = new THREE.InstancedBufferAttribute(set.matrices, 16);
-      if (set.colors) mesh.instanceColor = new THREE.InstancedBufferAttribute(set.colors, 3);
+      if (set.colors && kind !== 'branch') mesh.instanceColor = new THREE.InstancedBufferAttribute(set.colors, 3);
       mesh.count = set.count;
       mesh.matrixAutoUpdate = false;
       mesh.computeBoundingSphere();

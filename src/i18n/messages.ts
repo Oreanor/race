@@ -9,6 +9,12 @@ export const LANGS: { id: Lang; name: string; locale: string }[] = [
 ];
 
 const en = {
+  'season.real': 'Season here now · {name}',
+  'season.set': 'Season · {name}',
+  'seasonName.spring': 'spring, in blossom',
+  'seasonName.summer': 'summer',
+  'seasonName.autumn': 'autumn',
+  'seasonName.winter': 'winter, bare trees',
   'ramp.blocked': 'No room for a ramp here',
   'settings.stats': 'Performance stats',
   'poi.fuel': '⛽ Fuel',
@@ -159,6 +165,12 @@ const en = {
 export type MessageKey = keyof typeof en;
 
 const pt: Partial<Record<MessageKey, string>> = {
+  'season.real': 'Estação local agora · {name}',
+  'season.set': 'Estação · {name}',
+  'seasonName.spring': 'primavera, em flor',
+  'seasonName.summer': 'verão',
+  'seasonName.autumn': 'outono',
+  'seasonName.winter': 'inverno, árvores nuas',
   'ramp.blocked': 'Não há espaço para a rampa',
   'settings.stats': 'Estatísticas de desempenho',
   'poi.fuel': '⛽ Posto',
@@ -295,6 +307,12 @@ const pt: Partial<Record<MessageKey, string>> = {
 };
 
 const ru: Partial<Record<MessageKey, string>> = {
+  'season.real': 'Сезон здесь сейчас · {name}',
+  'season.set': 'Сезон · {name}',
+  'seasonName.spring': 'весна, цветение',
+  'seasonName.summer': 'лето',
+  'seasonName.autumn': 'осень',
+  'seasonName.winter': 'зима, голые деревья',
   'ramp.blocked': 'Тут трамплин не поставить',
   'settings.stats': 'Статистика производительности',
   'poi.fuel': '⛽ АЗС',

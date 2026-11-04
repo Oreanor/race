@@ -88,3 +88,42 @@ export function createCrowns(): Record<CrownShape, THREE.BufferGeometry> {
     ]),
   };
 }
+
+/** A limb between two points (crown space). */
+function limb(from: THREE.Vector3, to: THREE.Vector3, r0: number, r1: number) {
+  const length = from.distanceTo(to);
+  const g = new THREE.CylinderGeometry(r1, r0, length, 5, 1, true);
+  g.translate(0, length / 2, 0);
+  g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), to.clone().sub(from).normalize()));
+  g.translate(from.x, from.y, from.z);
+  return g.toNonIndexed();
+}
+
+/**
+ * Bare broadleaf for winter, in the same space as the round crown (radius 1,
+ * height 1, base at y = 0): the stem carries on up, five limbs fork out with twigs.
+ */
+export function createBranches() {
+  const parts: THREE.BufferGeometry[] = [];
+  const v = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
+  parts.push(limb(v(0, -0.08, 0), v(0, 0.62, 0), 0.07, 0.035));
+  for (let i = 0; i < 5; i++) {
+    const a = i * 1.2566 + (i % 2) * 0.35;
+    const base = v(0, 0.12 + (i % 3) * 0.1, 0);
+    const reach = 0.62 + (i % 2) * 0.16;
+    const tip = v(Math.cos(a) * reach, 0.72 + (i % 3) * 0.09, Math.sin(a) * reach);
+    parts.push(limb(base, tip, 0.04, 0.012));
+    // two twigs from two thirds along each limb
+    const mid = base.clone().lerp(tip, 0.6);
+    for (const turn of [-0.6, 0.6]) {
+      const b = a + turn;
+      parts.push(limb(mid, v(Math.cos(b) * (reach + 0.12), tip.y + 0.14, Math.sin(b) * (reach + 0.12)), 0.018, 0.006));
+    }
+  }
+  // a short leader at the top
+  parts.push(limb(v(0, 0.55, 0), v(0.06, 0.95, -0.04), 0.03, 0.008));
+  const merged = mergeGeometries(parts, false)!;
+  for (const p of parts) p.dispose();
+  merged.deleteAttribute('uv');
+  return merged;
+}

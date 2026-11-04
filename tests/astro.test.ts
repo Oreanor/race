@@ -30,3 +30,13 @@ test('time of the place, not of the player', async () => {
   assert.equal(placeMoment(noonUtc, 55.75, 37.6, 22, 30).toISOString(), '2026-11-04T19:30:00.000Z');
   assert.equal(placeClock(new Date('2026-07-01T12:00:00Z'), 40.2, -8.42), '13:00'); // summer time
 });
+
+test('season of the place: hemisphere and tropics', async () => {
+  const { seasonAt } = await import('../src/world3d/seasons.ts');
+  const nov = new Date('2026-11-04T12:00:00Z');
+  assert.equal(seasonAt(nov, 40.2), 'autumn'); // Coimbra
+  assert.equal(seasonAt(nov, -33.9), 'spring'); // Sydney
+  assert.equal(seasonAt(nov, 1.3), 'summer'); // Singapore: always green
+  assert.equal(seasonAt(new Date('2026-01-20T12:00:00Z'), 55.75), 'winter');
+  assert.equal(seasonAt(new Date('2026-04-15T12:00:00Z'), 48.85), 'spring');
+});
