@@ -124,8 +124,16 @@ test('world tile: terrain, roads facing up, gameplay features and raw data kept'
     if (cross < 0) up++; else down++;
   }
   assert.equal(down, 0, `downward road triangles: ${down} of ${up + down}`);
-  assert.ok(r.ground.every((g) => g === 50));
+  // roads follow the ground (lowered only near water beds) or ride bridge decks
+  assert.ok(r.ground.every((g) => g >= 47 && g <= 50.6));
   assert.ok(data.buildings.chunks.every((c) => c.ground.every((g) => g === 50)));
+  // vector ground: land use drawn as polygons, flat water at bank level, beds carved below
+  const g = data.ground;
+  assert.ok(g.layers.reduce((n, l) => n + l.index.length, 0) > 3000);
+  assert.ok(g.water.index.length > 100 && g.water.ground.every((h) => Math.abs(h - 50) < 1e-3));
+  assert.ok(g.water.shore && g.water.shore.length === g.water.ground.length);
+  assert.ok(g.heights.some((h) => h < 49), 'water beds are carved');
+  assert.ok(data.bridges.length % 6 === 0);
 });
 
 test('coplanar walls: the taller keeps the shared stretch, the rest of the lower one survives', async () => {

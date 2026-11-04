@@ -4,11 +4,9 @@
 // built here and transferred to the main thread in one message. Because the
 // DEM arrives with the tile, nothing on the main thread ever sees a tile
 // without its final heights.
-import { VectorTile } from '@mapbox/vector-tile';
-import { PbfReader } from 'pbf';
-import { buildWorldTile, paintGround, worldTransferables, type WorldBuildOptions } from './worldTile.ts';
+import { buildWorldTile, worldTransferables, type WorldBuildOptions } from './worldTile.ts';
 import { decodeTerrarium, DEM_SIZE } from './dem.ts';
-import { latFromMercator, tileCorner, tileSpan, type TileId } from '../mercator.ts';
+import type { TileId } from '../mercator.ts';
 
 type Job = {
   type: 'world';
@@ -16,7 +14,6 @@ type Job = {
   tile: TileId;
   vectorUrl: string;
   demUrl: string | null;
-  raster: number;
   options: Omit<WorldBuildOptions, 'dem'>;
 };
 type Request = Job | { type: 'cancel'; id: number };
@@ -64,16 +61,9 @@ scope.onmessage = async (event: MessageEvent<Request>) => {
     if (controller.signal.aborted) return;
     const data = buildWorldTile(buffer, message.tile, { ...message.options, dem });
 
-    const canvas = new OffscreenCanvas(message.raster, message.raster);
-    const ctx = canvas.getContext('2d')!;
-    const span = tileSpan(message.tile.z);
-    const metersScale = Math.cos(latFromMercator(tileCorner(message.tile)[1] - span / 2) * Math.PI / 180);
-    paintGround(ctx, message.raster, new VectorTile(new PbfReader(data.raw)), metersScale, span);
-    const raster = canvas.transferToImageBitmap();
-
     scope.postMessage(
-      { id: message.id, ok: true, data, raster, fetchMs, buildMs: performance.now() - started - fetchMs },
-      [...worldTransferables(data), raster],
+      { id: message.id, ok: true, data, fetchMs, buildMs: performance.now() - started - fetchMs },
+      worldTransferables(data),
     );
   } catch (error) {
     const aborted = controller.signal.aborted;

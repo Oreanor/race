@@ -5,9 +5,9 @@
 // place, mountain_peak, names…) can be decoded later for visualisation.
 
 import { PbfReader } from 'pbf';
-import { VectorTile, type VectorTileLayer } from '@mapbox/vector-tile';
+import { VectorTile } from '@mapbox/vector-tile';
 import { buildTile, transferables as buildingTransferables, type TileData } from './buildTile.ts';
-import { DEM_SIZE, sampleDem } from './dem.ts';
+import { buildGround, groundTransferables, type GroundData } from './groundVector.ts';
 import { latFromMercator, tileCorner, tileSpan, type TileId } from '../mercator.ts';
 import { buildVegetation, vegetationTransferables, type VegetationData } from './vegetationTile.ts';
 import { roadStyle } from './roadStyle.ts';
@@ -36,7 +36,10 @@ export type WorldTileData = {
   corner: [number, number];
   metersScale: number;
   dem: Float32Array | null;
-  terrain: MeshData;
+  /** terrain, land-use overlays and water, all vector */
+  ground: GroundData;
+  /** bridge decks: x0, z0, x1, z1, half width, deck height (tile-local mercator meters, m) */
+  bridges: Float32Array;
   roads: MeshData;
   buildings: TileData;
   vegetation: VegetationData;
@@ -56,166 +59,30 @@ export type WorldBuildOptions = {
   region: string;
 };
 
-// ---- ground raster ---------------------------------------------------------
-
-const BACKGROUND = '#dcdad3';
-const GREEN = '#b1d59b';
-const WOOD = '#69a577';
-const WATER = '#52b8ca';
-const WATERWAY = '#369fb7';
-
-function landColor(layer: string, cls: string, sub: string) {
-  if (layer === 'park') return GREEN;
-  if (layer === 'landcover') {
-    if (cls === 'wood') return WOOD;
-    if (cls === 'sand') return '#efe3c2';
-    if (cls === 'rock') return '#d6d2c8';
-    if (cls === 'ice') return '#f3f6f6';
-    if (cls === 'wetland') return '#a9cfa6';
-    return GREEN; // grass, farmland, …
-  }
-  if (/park|grass|cemetery|pitch|playground|garden/.test(cls) || /park|garden/.test(sub)) return GREEN;
-  if (/residential|neighbourhood|suburb|quarter/.test(cls)) return '#e5e2da';
-  if (/school|hospital|university|college|kindergarten|library/.test(cls)) return '#f8dfda';
-  if (/commercial|retail|industrial|railway|military/.test(cls)) return '#e3e0d8';
-  if (/stadium|track/.test(cls)) return '#d5d3c9';
-  return null;
-}
-
-type Ctx = OffscreenCanvasRenderingContext2D;
-
-function tracePolygon(ctx: Ctx, layer: VectorTileLayer, index: number, scale: number) {
-  const rings = layer.feature(index).loadGeometry();
-  ctx.beginPath();
-  for (const ring of rings) {
-    ring.forEach((p, i) => (i ? ctx.lineTo(p.x * scale, p.y * scale) : ctx.moveTo(p.x * scale, p.y * scale)));
-    ctx.closePath();
-  }
-}
-
-/** Paints the flat ground layers into a canvas covering exactly the tile. */
-export function paintGround(ctx: Ctx, size: number, vt: VectorTile, metersScale: number, span: number) {
-  ctx.fillStyle = BACKGROUND;
-  ctx.fillRect(0, 0, size, size);
-  const passes: [string, (p: Record<string, unknown>) => string | null][] = [
-    ['landuse', (p) => landColor('landuse', String(p.class ?? ''), String(p.subclass ?? ''))],
-    ['landcover', (p) => landColor('landcover', String(p.class ?? ''), String(p.subclass ?? ''))],
-    ['park', () => GREEN],
-    ['water', (p) => (p.class === 'swimming_pool' ? '#7fd0de' : WATER)],
-  ];
-  for (const [name, color] of passes) {
-    const layer = vt.layers[name];
-    if (!layer) continue;
-    const scale = size / layer.extent;
-    for (let i = 0; i < layer.length; i++) {
-      const feature = layer.feature(i);
-      if (feature.type !== 3) continue;
-      const fill = color(feature.properties);
-      if (!fill) continue;
-      ctx.fillStyle = fill;
-      tracePolygon(ctx, layer, i, scale);
-      ctx.fill('evenodd');
-    }
-  }
-  // Roads in the raster too: far tiles draw only this (no ribbon geometry).
-  const roads = vt.layers.transportation;
-  if (roads) {
-    const scale = size / roads.extent;
-    const pxPerMeter = size / (span * metersScale);
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    for (const pass of ['casing', 'fill'] as const) {
-      for (let i = 0; i < roads.length; i++) {
-        const feature = roads.feature(i);
-        if (feature.type !== 2 || feature.properties.brunnel === 'tunnel') continue;
-        const style = roadStyle(String(feature.properties.class ?? ''), String(feature.properties.subclass ?? ''), Number(feature.properties.ramp) === 1);
-        if (!style) continue;
-        ctx.strokeStyle = pass === 'fill' ? style.fill : style.casing;
-        ctx.lineWidth = Math.max(0.8, (style.width + (pass === 'casing' ? 0.36 : 0)) * pxPerMeter);
-        ctx.beginPath();
-        for (const line of feature.loadGeometry()) line.forEach((p, j) => (j ? ctx.lineTo(p.x * scale, p.y * scale) : ctx.moveTo(p.x * scale, p.y * scale)));
-        ctx.stroke();
-      }
-    }
-  }
-  const waterway = vt.layers.waterway;
-  if (waterway) {
-    const scale = size / waterway.extent;
-    const pxPerMeter = size / (span * metersScale);
-    ctx.strokeStyle = WATERWAY;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    for (let i = 0; i < waterway.length; i++) {
-      const feature = waterway.feature(i);
-      if (feature.type !== 2 || feature.properties.brunnel === 'tunnel') continue;
-      const cls = String(feature.properties.class ?? '');
-      ctx.lineWidth = Math.max(1, (cls === 'river' ? 14 : cls === 'canal' ? 8 : 2.5) * pxPerMeter);
-      ctx.beginPath();
-      for (const line of feature.loadGeometry()) line.forEach((p, j) => (j ? ctx.lineTo(p.x * scale, p.y * scale) : ctx.moveTo(p.x * scale, p.y * scale)));
-      ctx.stroke();
-    }
-  }
-}
-
-// ---- terrain mesh ----------------------------------------------------------
-
 /**
- * Height of the terrain grid at tile fraction (u, v) ∈ [0,1]², bilinear over the
- * grid samples. Roads, plants and the car use this, so they sit exactly on the
- * ground mesh instead of on the finer raw DEM.
+ * Height of the terrain grid at tile fraction (u, v) ∈ [0,1]², exactly as the
+ * terrain mesh draws it (two planar triangles per cell, diagonal u + v = 1).
+ * Roads, plants and the car use this, so they sit on the visible ground.
  */
-export function gridGround(ground: Float32Array, grid: number, u: number, v: number) {
+export function gridGround(heights: Float32Array, grid: number, u: number, v: number) {
   const n = grid + 1;
   const x = Math.min(grid, Math.max(0, u * grid)), y = Math.min(grid, Math.max(0, v * grid));
-  const x0 = Math.min(grid - 1, Math.floor(x)), y0 = Math.min(grid - 1, Math.floor(y));
-  const fx = x - x0, fy = y - y0;
-  const a = ground[y0 * n + x0], b = ground[y0 * n + x0 + 1];
-  const c = ground[(y0 + 1) * n + x0], d = ground[(y0 + 1) * n + x0 + 1];
-  return (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy;
+  const i = Math.min(grid - 1, Math.floor(x)), j = Math.min(grid - 1, Math.floor(y));
+  const fu = x - i, fv = y - j;
+  const ha = heights[j * n + i], hb = heights[j * n + i + 1], hc = heights[(j + 1) * n + i], hd = heights[(j + 1) * n + i + 1];
+  return fu + fv <= 1 ? ha + (hb - ha) * fu + (hc - ha) * fv : hd + (hc - hd) * (1 - fu) + (hb - hd) * (1 - fv);
 }
 
-function terrainMesh(span: number, grid: number, dem: Float32Array | null): MeshData {
-  const n = grid + 1;
-  const skirt = 4 * n; // one extra vertex per edge vertex, hanging down
-  const positions = new Float32Array((n * n + skirt) * 3);
-  const ground = new Float32Array(n * n + skirt);
-  const uvs = new Float32Array((n * n + skirt) * 2);
-  const index: number[] = [];
-  const height = (u: number, v: number) => dem ? sampleDem(dem, u * DEM_SIZE, v * DEM_SIZE) : 0;
-  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
-    const k = j * n + i;
-    const u = i / grid, v = j / grid;
-    positions.set([u * span, 0, v * span], k * 3);
-    ground[k] = height(u, v);
-    uvs.set([u, v], k * 2);
+/** Deck height if (x, z) lies on a bridge, else null. */
+export function bridgeDeck(bridges: Float32Array, x: number, z: number): number | null {
+  let deck: number | null = null;
+  for (let i = 0; i < bridges.length; i += 6) {
+    const ax = bridges[i], az = bridges[i + 1], bx = bridges[i + 2], bz = bridges[i + 3], half = bridges[i + 4];
+    const dx = bx - ax, dz = bz - az;
+    const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz || 1)));
+    if (Math.hypot(x - ax - t * dx, z - az - t * dz) <= half * 1.4) deck = Math.max(deck ?? -Infinity, bridges[i + 5]);
   }
-  for (let j = 0; j < grid; j++) for (let i = 0; i < grid; i++) {
-    const a = j * n + i, b = a + 1, c = a + n, d = c + 1;
-    // CCW seen from +Y (x right, z down the screen when looking from above)
-    index.push(a, c, b, b, c, d);
-  }
-  // Skirts hide hairline cracks where neighbouring tiles sample their own DEM edge.
-  let s = n * n;
-  const edges: number[][] = [
-    Array.from({ length: n }, (_, i) => i),
-    Array.from({ length: n }, (_, i) => (n - 1) * n + (n - 1 - i)),
-    Array.from({ length: n }, (_, j) => (n - 1 - j) * n),
-    Array.from({ length: n }, (_, j) => j * n + n - 1),
-  ];
-  for (const edge of edges) {
-    const first = s;
-    for (const k of edge) {
-      positions.set([positions[k * 3], -6, positions[k * 3 + 2]], s * 3);
-      ground[s] = ground[k];
-      uvs.set([uvs[k * 2], uvs[k * 2 + 1]], s * 2);
-      s++;
-    }
-    for (let t = 0; t < n - 1; t++) {
-      const a = edge[t], b = edge[t + 1], c = first + t, d = first + t + 1;
-      index.push(a, b, c, b, d, c, a, c, b, b, c, d); // both windings: skirts are seen from either side
-    }
-  }
-  return { positions, ground, uvs, index: new Uint32Array(index) };
+  return deck;
 }
 
 // ---- roads -----------------------------------------------------------------
@@ -231,7 +98,7 @@ class RoadBuilder {
   colors: number[] = [];
   index: number[] = [];
 
-  private groundAt: (x: number, z: number) => number;
+  groundAt: (x: number, z: number) => number;
   constructor(groundAt: (x: number, z: number) => number) { this.groundAt = groundAt; }
 
   private vertex(x: number, y: number, z: number, rgb: [number, number, number]) {
@@ -289,8 +156,26 @@ function clipSegment(ax: number, ay: number, bx: number, by: number, extent: num
   return [ax + dx * t0, ay + dy * t0, ax + dx * t1, ay + dy * t1];
 }
 
-function roadMesh(vt: VectorTile, span: number, metersScale: number, groundAt: (x: number, z: number) => number): MeshData {
+function roadMesh(vt: VectorTile, span: number, metersScale: number, groundAt: (x: number, z: number) => number, bridges: number[]): MeshData {
   const builder = new RoadBuilder(groundAt);
+  // streams, canals, ditches: thin water ribbons (rivers come as water polygons)
+  const ways = vt.layers.waterway;
+  if (ways) {
+    const k = span / ways.extent;
+    const toMerc = 1 / metersScale;
+    const rgb = hex('#4aa9c4');
+    for (let i = 0; i < ways.length; i++) {
+      const f = ways.feature(i);
+      if (f.type !== 2 || f.properties.brunnel === 'tunnel') continue;
+      const cls = String(f.properties.class ?? '');
+      if (cls === 'river') continue;
+      const half = (cls === 'canal' ? 4 : 1.3) * toMerc;
+      for (const line of f.loadGeometry()) for (let j = 0; j + 1 < line.length; j++) {
+        const c = clipSegment(line[j].x, line[j].y, line[j + 1].x, line[j + 1].y, ways.extent);
+        if (c) builder.segment(c[0] * k, c[1] * k, c[2] * k, c[3] * k, half, 0.04, rgb, 10 * toMerc);
+      }
+    }
+  }
   const layer = vt.layers.transportation;
   if (layer) {
     const k = span / layer.extent;
@@ -310,7 +195,15 @@ function roadMesh(vt: VectorTile, span: number, metersScale: number, groundAt: (
         // Round joins only where the line actually bends (or ends); straight runs
         // and gentle curves need none. Narrow paths get cheaper discs.
         const steps = style.width < 2 ? 6 : 8;
+        const isBridge = p.brunnel === 'bridge';
         for (const line of feature.loadGeometry()) {
+          // bridges: one flat deck at the height of their banks, never down into the river
+          if (isBridge && line.length > 1) {
+            const a = line[0], z = line[line.length - 1];
+            const deck = Math.max(groundAt(a.x * k, a.y * k), groundAt(z.x * k, z.y * k)) + 0.5;
+            builder.groundAt = () => deck;
+            if (pass === 'fill') for (let j = 0; j + 1 < line.length; j++) bridges.push(line[j].x * k, line[j].y * k, line[j + 1].x * k, line[j + 1].y * k, half, deck);
+          } else builder.groundAt = groundAt;
           for (let j = 0; j + 1 < line.length; j++) {
             const c = clipSegment(line[j].x, line[j].y, line[j + 1].x, line[j + 1].y, layer.extent);
             if (!c) continue;
@@ -330,6 +223,7 @@ function roadMesh(vt: VectorTile, span: number, metersScale: number, groundAt: (
             if (e.x >= 0 && e.y >= 0 && e.x <= layer.extent && e.y <= layer.extent) builder.disc(e.x * k, e.y * k, half, y, rgb, steps);
           }
         }
+        builder.groundAt = groundAt;
       }
     }
   }
@@ -349,9 +243,14 @@ export function buildWorldTile(buffer: ArrayBuffer, tile: TileId, options: World
   const metersScale = Math.cos(latFromMercator(corner[1] - span / 2) * Math.PI / 180);
   const vt = new VectorTile(new PbfReader(buffer));
   const dem = options.dem;
-  // everything placed on the ground follows the terrain mesh itself
-  const terrain = terrainMesh(span, options.grid, dem);
-  const groundAt = (x: number, z: number) => gridGround(terrain.ground, options.grid, x / span, z / span);
+  // vector ground; everything placed on it follows the (water-carved) terrain mesh
+  const ground = buildGround(vt, span, options.grid, dem, metersScale);
+  const groundAt = (x: number, z: number) => gridGround(ground.heights, options.grid, x / span, z / span);
+  const bridgeList: number[] = [];
+  const roads = roadMesh(vt, span, metersScale, groundAt, bridgeList);
+  const bridges = new Float32Array(bridgeList);
+  // on a bridge the surface is the deck
+  const surfaceAt = (x: number, z: number) => Math.max(groundAt(x, z), bridgeDeck(bridges, x, z) ?? -Infinity);
 
   const features: Record<string, GeoFeature[]> = {};
   for (const name of GAMEPLAY_LAYERS) {
@@ -365,10 +264,11 @@ export function buildWorldTile(buffer: ArrayBuffer, tile: TileId, options: World
     corner,
     metersScale,
     dem,
-    terrain,
-    roads: roadMesh(vt, span, metersScale, groundAt),
+    ground,
+    bridges,
+    roads,
     buildings: buildTile(vt, tile, { chunks: options.chunks, windows: false, dem, inset: options.inset, legacyColors: true, detailed: { region: options.region } }),
-    vegetation: buildVegetation(corner, span, metersScale, features as unknown as Record<string, MapFeature[]>, groundAt),
+    vegetation: buildVegetation(corner, span, metersScale, features as unknown as Record<string, MapFeature[]>, surfaceAt),
     features,
     layers: Object.keys(vt.layers),
     raw: buffer,
@@ -377,7 +277,8 @@ export function buildWorldTile(buffer: ArrayBuffer, tile: TileId, options: World
 
 export function worldTransferables(data: WorldTileData): ArrayBuffer[] {
   const out = [...buildingTransferables(data.buildings), ...vegetationTransferables(data.vegetation)];
-  for (const mesh of [data.terrain, data.roads]) {
+  out.push(...groundTransferables(data.ground), data.bridges.buffer as ArrayBuffer);
+  for (const mesh of [data.roads]) {
     out.push(mesh.positions.buffer as ArrayBuffer, mesh.ground.buffer as ArrayBuffer, mesh.index.buffer as ArrayBuffer);
     if (mesh.colors) out.push(mesh.colors.buffer as ArrayBuffer);
     if (mesh.uvs) out.push(mesh.uvs.buffer as ArrayBuffer);

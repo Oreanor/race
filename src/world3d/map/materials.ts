@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { portuguesePastel } from '@/game/buildings/BuildingStyles';
+import { worldTime } from './simpleLit';
 
 // Shaders of the base world (ground, roads, far buildings). The camera matrix is
 // a full scene→clip matrix (MapLibre style), so distances for fog are measured
@@ -61,16 +62,67 @@ function hex(value: string) {
 }
 
 /** Terrain tile with its ground raster. One material per tile (own texture). */
-export function groundMaterial(u: BaseUniforms, raster: THREE.Texture) {
+const GROUND_VERTEX = /* glsl */ `
+  uniform float uExag;
+  attribute float aGround;
+  attribute vec3 aColor;
+  varying vec3 vColor;
+  varying vec3 vWorld;
+  void main() {
+    vColor = aColor;
+    vec4 world = modelMatrix * vec4(position.x, position.y + aGround * uExag, position.z, 1.0);
+    vWorld = world.xyz;
+    gl_Position = projectionMatrix * viewMatrix * world;
+  }
+`;
+
+const GROUND_FRAGMENT = /* glsl */ `
+  ${COMMON}
+  varying vec3 vColor;
+  varying vec3 vWorld;
+  void main() {
+    vec3 n = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
+    if (n.y < 0.0) n = -n;
+    // sky light plus sunlight on the slope (hillshade comes from the real sun)
+    vec3 light = uAmbient * 0.9 + uSunColor * 0.55 * max(dot(n, uSun), 0.0);
+    gl_FragColor = linearToOutputTexel(vec4(fogged(toLinear(vColor) * light / 0.91, vWorld), 1.0));
+  }
+`;
+
+/** Terrain: vertex-coloured ground (bank colour next to water). */
+export function groundMaterial(u: BaseUniforms) {
+  return new THREE.ShaderMaterial({ uniforms: { ...u }, vertexShader: GROUND_VERTEX, fragmentShader: GROUND_FRAGMENT });
+}
+
+/**
+ * Land-use polygons lying exactly on the terrain triangles; layer 0..2 are
+ * stacked with growing polygon offsets (landuse < landcover < park).
+ */
+export function overlayMaterial(u: BaseUniforms, layer: number) {
   return new THREE.ShaderMaterial({
-    uniforms: { ...u, uMap: { value: raster } },
+    uniforms: { ...u }, vertexShader: GROUND_VERTEX, fragmentShader: GROUND_FRAGMENT,
+    polygonOffset: true, polygonOffsetFactor: -1 - layer, polygonOffsetUnits: -2 - 2 * layer,
+  });
+}
+
+/**
+ * Water: shallow turquoise at the shore to deep blue, animated ripples, sky
+ * reflection (fresnel), sun glint and a soft foam line along the banks.
+ */
+export function waterMaterial(u: BaseUniforms) {
+  return new THREE.ShaderMaterial({
+    uniforms: { ...u, uTime: worldTime },
     vertexShader: /* glsl */ `
       uniform float uExag;
       attribute float aGround;
-      varying vec2 vUv;
+      attribute float aShore;
+      attribute vec3 aColor;
+      varying float vShore;
+      varying float vPool;
       varying vec3 vWorld;
       void main() {
-        vUv = uv;
+        vShore = aShore;
+        vPool = aColor.r * 255.0;
         vec4 world = modelMatrix * vec4(position.x, position.y + aGround * uExag, position.z, 1.0);
         vWorld = world.xyz;
         gl_Position = projectionMatrix * viewMatrix * world;
@@ -78,18 +130,38 @@ export function groundMaterial(u: BaseUniforms, raster: THREE.Texture) {
     `,
     fragmentShader: /* glsl */ `
       ${COMMON}
-      uniform sampler2D uMap;
-      varying vec2 vUv;
+      uniform float uTime;
+      varying float vShore;
+      varying float vPool;
       varying vec3 vWorld;
       void main() {
-        vec3 n = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
-        if (n.y < 0.0) n = -n;
-        vec3 albedo = toLinear(texture2D(uMap, vUv).rgb);
-        // sky light plus sunlight on the slope (hillshade comes from the real sun)
-        vec3 light = uAmbient * 0.9 + uSunColor * 0.55 * max(dot(n, uSun), 0.0);
-        gl_FragColor = linearToOutputTexel(vec4(fogged(albedo * light / 0.91, vWorld), 1.0));
+        vec2 p = vWorld.xz;
+        float t = uTime;
+        // two crossing wave trains for the surface normal
+        // gentle, irregular ripples; they fade with distance so they never turn into stripes
+        float fade = 1.0 / (1.0 + distance(vWorld, uCameraPos) / 120.0);
+        float dx = 0.022 * cos(p.x * 0.37 + p.y * 0.11 + t * 1.1) + 0.016 * cos((p.x + p.y) * 0.83 - t * 1.7) + 0.009 * cos(p.x * 2.1 + p.y * 1.3 + t * 2.4);
+        float dz = 0.022 * cos(p.y * 0.41 - p.x * 0.13 - t * 0.9) + 0.016 * cos((p.y - p.x) * 0.77 + t * 1.5) + 0.009 * cos(p.y * 1.9 - p.x * 1.1 - t * 2.2);
+        vec3 n = normalize(vec3(-dx * fade, 1.0, -dz * fade));
+        vec3 toEye = normalize(uCameraPos - vWorld);
+        float depth = smoothstep(0.0, 22.0, vShore);
+        vec3 shallow = toLinear(vPool > 0.5 ? vec3(0.55, 0.86, 0.9) : vec3(0.36, 0.76, 0.8));
+        vec3 deep = toLinear(vPool > 0.5 ? vec3(0.3, 0.7, 0.82) : vec3(0.13, 0.42, 0.58));
+        vec3 base = mix(shallow, deep, depth) * (uAmbient * 0.95 + uSunColor * 0.35 * max(uSun.y, 0.0));
+        float fresnel = pow(1.0 - max(dot(n, toEye), 0.0), 4.0);
+        // reflected sky, a little bluer than the haze so water stays water at grazing angles
+        vec3 sky = toLinear(uFogColor) * vec3(0.78, 0.9, 1.0) * (0.6 + 0.4 * uAmbient.g / 0.73);
+        vec3 color = mix(base, sky, 0.06 + 0.38 * fresnel);
+        float glint = pow(max(dot(reflect(-uSun, n), toEye), 0.0), 120.0);
+        color += uSunColor * 2.4 * glint * step(0.0, uSun.y);
+        // foam: a broken, gently moving line right at the bank
+        float wobble = 0.5 + 0.5 * sin(p.x * 1.7 + t * 1.3) * sin(p.y * 1.9 - t * 1.1);
+        float foam = (1.0 - smoothstep(0.3, 1.6 + wobble, vShore)) * (vPool > 0.5 ? 0.25 : 0.7);
+        color = mix(color, toLinear(vec3(0.94, 0.97, 0.97)) * (uAmbient + uSunColor * 0.4), foam);
+        gl_FragColor = linearToOutputTexel(vec4(fogged(color, vWorld), 1.0));
       }
     `,
+    polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2,
   });
 }
 
@@ -119,8 +191,8 @@ export function roadMaterial(u: BaseUniforms) {
       }
     `,
     polygonOffset: true,
-    polygonOffsetFactor: -2,
-    polygonOffsetUnits: -4,
+    polygonOffsetFactor: -4,
+    polygonOffsetUnits: -10,
   });
 }
 

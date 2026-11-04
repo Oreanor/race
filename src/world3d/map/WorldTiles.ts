@@ -3,11 +3,11 @@ import { VectorTile } from '@mapbox/vector-tile';
 import { PbfReader } from 'pbf';
 import type { ChunkData } from '../tiles/buildTile';
 import type { GeoFeature, MeshData, WorldTileData } from '../tiles/worldTile';
-import { gridGround } from '../tiles/worldTile';
+import { bridgeDeck, gridGround } from '../tiles/worldTile';
 import { tileTemplate } from '../tiles/TileClient';
 import { tilesAround, distanceToTile } from '../tiles/tilePlan';
 import { latFromMercator, lngFromMercator, mercatorX, mercatorY, tileAt, tileCorner, tileSpan, WORLD_SIZE, type LngLat, type TileId } from '../mercator';
-import { farBuildingMaterial, groundMaterial, roadMaterial, type BaseUniforms } from './materials';
+import { farBuildingMaterial, groundMaterial, overlayMaterial, roadMaterial, waterMaterial, type BaseUniforms } from './materials';
 import { VegetationRenderer } from './vegetation';
 
 export type WorldTilesOptions = {
@@ -18,11 +18,9 @@ export type WorldTilesOptions = {
   unloadRadius: number;
   /** gameplay features come from tiles within this distance */
   featureRadius: number;
-  /** road ribbons are drawn for tiles this close; farther tiles show roads from the raster */
-  roadRadius: number;
+
   maxInFlight: number;
   uploadsPerFrame: number;
-  raster: number;
   grid: number;
   demTemplate: string | null;
   region: string;
@@ -36,11 +34,8 @@ export const defaultWorldOptions: WorldTilesOptions = {
   unloadRadius: 3600,
   // POIs (stations, hubs) are known before they come out of the fog
   featureRadius: 2400,
-  // ribbons ↔ raster roads switch where fog has begun and both look the same
-  roadRadius: 1200,
   maxInFlight: 4,
   uploadsPerFrame: 2,
-  raster: 1024,
   // ~20 m terrain cells: fine enough for real (unflattened) relief
   grid: 96,
   demTemplate: null,
@@ -83,6 +78,9 @@ export class WorldTiles {
   private disposed = false;
   private roadMat: THREE.ShaderMaterial;
   private farMat: THREE.ShaderMaterial;
+  private groundMat: THREE.ShaderMaterial;
+  private overlayMats: THREE.ShaderMaterial[];
+  private waterMat: THREE.ShaderMaterial;
   private vegetation: VegetationRenderer;
   /** scene placement: mercator 0..1 origin and scene meters per WGS84 mercator meter */
   private origin01 = new THREE.Vector2();
@@ -95,6 +93,9 @@ export class WorldTiles {
     this.root.matrixAutoUpdate = false;
     this.roadMat = roadMaterial(uniforms);
     this.farMat = farBuildingMaterial(uniforms, mask);
+    this.groundMat = groundMaterial(uniforms);
+    this.overlayMats = [0, 1, 2].map((layer) => overlayMaterial(uniforms, layer));
+    this.waterMat = waterMaterial(uniforms);
     this.vegetation = new VegetationRenderer(uniforms);
     tileTemplate().then((t) => { this.template = t; });
     const size = Math.min(3, Math.max(1, (navigator.hardwareConcurrency || 4) - 2));
@@ -109,8 +110,7 @@ export class WorldTiles {
   }
 
   setMaterialSide(side: THREE.Side) {
-    this.roadMat.side = side;
-    this.farMat.side = side;
+    for (const m of [this.roadMat, this.farMat, this.groundMat, this.waterMat, ...this.overlayMats]) m.side = side;
     this.vegetation.setSide(side);
     for (const live of this.tiles.values()) live.group.traverse((o) => {
       const m = (o as THREE.Mesh).material as THREE.ShaderMaterial | undefined;
@@ -158,12 +158,6 @@ export class WorldTiles {
       if (this.pending.size >= o.maxInFlight) break;
       this.request(plan.key, plan.tile);
     }
-    // Road LOD by tile: ribbons near the focus, raster roads beyond.
-    const mx = mercatorX(focus[0]), my = mercatorY(focus[1]);
-    const cos = Math.cos(focus[1] * Math.PI / 180);
-    for (const live of this.tiles.values()) {
-      if (live.roads) live.roads.visible = distanceToTile(mx, my, live.tile, cos) <= o.roadRadius;
-    }
     let budget = o.uploadsPerFrame;
     for (const plan of wanted) {
       const live = this.tiles.get(plan.key);
@@ -187,7 +181,6 @@ export class WorldTiles {
       type: 'world', id, tile,
       vectorUrl: this.url(this.template!, tile),
       demUrl: this.options.demTemplate ? this.url(this.options.demTemplate, tile) : null,
-      raster: this.options.raster,
       options: { chunks: 4, inset: 0, grid: this.options.grid, region: this.options.region },
     });
   }
@@ -200,16 +193,16 @@ export class WorldTiles {
     this.load[job.worker] = Math.max(0, this.load[job.worker] - 1);
   }
 
-  private receive(_worker: number, message: { id: number; ok: boolean; data?: WorldTileData; raster?: ImageBitmap; fetchMs?: number; buildMs?: number; error?: string; aborted?: boolean }) {
+  private receive(_worker: number, message: { id: number; ok: boolean; data?: WorldTileData; fetchMs?: number; buildMs?: number; error?: string; aborted?: boolean }) {
     const job = this.jobs.get(message.id);
-    if (!job) { message.raster?.close(); return; }
+    if (!job) return;
     this.jobs.delete(message.id);
     this.load[job.worker] = Math.max(0, this.load[job.worker] - 1);
     const pending = this.pending.get(job.key);
-    if (!pending || pending.id !== message.id) { message.raster?.close(); return; }
+    if (!pending || pending.id !== message.id) return;
     this.pending.delete(job.key);
-    if (this.disposed) { message.raster?.close(); return; }
-    if (!message.ok || !message.data || !message.raster) {
+    if (this.disposed) return;
+    if (!message.ok || !message.data) {
       if (message.aborted) return;
       const prior = this.failures.get(job.key)?.count ?? 0;
       this.failures.set(job.key, { count: prior + 1, at: performance.now() + 1500 * 2 ** prior });
@@ -220,10 +213,10 @@ export class WorldTiles {
     this.fetchTimes.push(message.fetchMs ?? 0);
     this.buildTimes.push(message.buildMs ?? 0);
     if (this.fetchTimes.length > 30) { this.fetchTimes.shift(); this.buildTimes.shift(); }
-    this.install(job.key, message.data, message.raster);
+    this.install(job.key, message.data);
   }
 
-  private install(key: string, data: WorldTileData, raster: ImageBitmap) {
+  private install(key: string, data: WorldTileData) {
     const group = new THREE.Group();
     group.matrixAutoUpdate = false;
     group.name = `world ${key}`;
@@ -234,18 +227,26 @@ export class WorldTiles {
 
     // Ground and roads first (cheap, and they define the street layout), buildings after.
     live.waiting.push(() => {
-      const texture = new THREE.Texture(raster);
-      texture.flipY = false;
-      texture.colorSpace = THREE.NoColorSpace;
-      texture.minFilter = THREE.LinearMipmapLinearFilter;
-      texture.anisotropy = 8;
-      texture.needsUpdate = true;
-      const material = groundMaterial(this.uniforms, texture);
-      material.side = this.farMat.side;
-      const mesh = this.mesh(data.terrain, material, true);
-      mesh.renderOrder = -2;
-      group.add(mesh);
-      live.disposables.push(texture, material, mesh.geometry, { dispose: () => raster.close() });
+      // vector ground: terrain, then land use (three layers), then water and roads
+      const g = data.ground;
+      const terrain = this.mesh(g.terrain, this.groundMat, false);
+      terrain.renderOrder = -4;
+      group.add(terrain);
+      live.disposables.push(terrain.geometry);
+      g.layers.forEach((layer, i) => {
+        if (!layer.index.length) return;
+        const mesh = this.mesh(layer, this.overlayMats[i], false);
+        mesh.renderOrder = -3;
+        group.add(mesh);
+        live.disposables.push(mesh.geometry);
+      });
+      if (g.water.index.length) {
+        const water = this.mesh(g.water, this.waterMat, false);
+        if (g.water.shore) water.geometry.setAttribute('aShore', new THREE.BufferAttribute(g.water.shore, 1));
+        water.renderOrder = -3;
+        group.add(water);
+        live.disposables.push(water.geometry);
+      }
       if (data.roads.index.length) {
         const roads = this.mesh(data.roads, this.roadMat, false);
         roads.renderOrder = -1;
@@ -330,8 +331,11 @@ export class WorldTiles {
     if (!live.data.dem) return 0;
     const span = tileSpan(live.tile.z);
     const [cx, cy] = live.data.corner;
-    // the visible ground surface (terrain grid), so the car sits exactly on it
-    return gridGround(live.data.terrain.ground, this.options.grid, (mercatorX(lng) - cx) / span, (cy - mercatorY(lat)) / span);
+    // the visible ground surface (terrain grid, water beds carved), or a bridge deck above it
+    const x = mercatorX(lng) - cx, z = cy - mercatorY(lat);
+    const ground = gridGround(live.data.ground.heights, this.options.grid, x / span, z / span);
+    const deck = bridgeDeck(live.data.bridges, x, z);
+    return deck == null ? ground : Math.max(ground, deck);
   }
 
   hasDemAt(lng: number, lat: number) {
@@ -399,7 +403,7 @@ export class WorldTiles {
           return list;
         };
         const gx = (f.bounds[i] + f.bounds[i + 2]) / 2, gz = (f.bounds[i + 1] + f.bounds[i + 3]) / 2;
-        const ground = live.data.dem ? gridGround(live.data.terrain.ground, this.options.grid, gx / span, gz / span) : 0;
+        const ground = live.data.dem ? gridGround(live.data.ground.heights, this.options.grid, gx / span, gz / span) : 0;
         visit(rings, f.heights[b], ground);
       }
     }
@@ -482,8 +486,8 @@ export class WorldTiles {
     for (const live of this.tiles.values()) {
       buildings += live.data.buildings.stats.buildings;
       bytes += live.data.buildings.stats.bytes + live.data.raw.byteLength
-        + live.data.terrain.positions.byteLength * 2 + live.data.roads.positions.byteLength * 2
-        + this.options.raster * this.options.raster * 4 * 1.33;
+        + [live.data.ground.terrain, ...live.data.ground.layers, live.data.ground.water].reduce((n, m) => n + m.positions.byteLength * 2, 0)
+        + live.data.roads.positions.byteLength * 2;
     }
     const avg = (l: number[]) => l.length ? l.reduce((a, b) => a + b, 0) / l.length : 0;
     return { loaded: this.tiles.size, inFlight: this.pending.size, buildings, residentMB: bytes / 1048576, avgFetchMs: avg(this.fetchTimes), avgBuildMs: avg(this.buildTimes) };
@@ -494,8 +498,7 @@ export class WorldTiles {
     for (const [key, live] of [...this.tiles]) this.unload(key, live);
     for (const w of this.workers) w.terminate();
     this.workers = [];
-    this.roadMat.dispose();
-    this.farMat.dispose();
+    for (const m of [this.roadMat, this.farMat, this.groundMat, this.waterMat, ...this.overlayMats]) m.dispose();
     this.vegetation.dispose();
   }
 }
