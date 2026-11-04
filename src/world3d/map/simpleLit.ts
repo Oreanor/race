@@ -30,10 +30,13 @@ export function standaloneUniforms(): SimpleLitUniforms {
   };
 }
 
-export function simpleLit(color: THREE.ColorRepresentation, uniforms: SimpleLitUniforms, options: { side?: THREE.Side; foliage?: boolean } = {}) {
+export function simpleLit(color: THREE.ColorRepresentation, uniforms: SimpleLitUniforms, options: { side?: THREE.Side; foliage?: boolean; shiny?: boolean } = {}) {
+  const defines: Record<string, string> = {};
+  if (options.foliage) defines.FOLIAGE = '';
+  if (options.shiny) defines.SHINY = '';
   return new THREE.ShaderMaterial({
     side: options.side ?? THREE.FrontSide,
-    defines: options.foliage ? { FOLIAGE: '' } : {},
+    defines,
     uniforms: {
       ...uniforms,
       uColor: { value: new THREE.Color(color) }, // linear working colour
@@ -113,6 +116,12 @@ export function simpleLit(color: THREE.ColorRepresentation, uniforms: SimpleLitU
         #else
           float light = 0.5 + 0.18 * n.y + 0.42 * max(dot(n, uSun), 0.0);
           vec3 color = uColor * vTint * light;
+        #endif
+        #ifdef SHINY
+          // a little metal: soft sun highlight plus a cool sky sheen on top
+          vec3 eye = normalize(uCameraPos - vWorld);
+          float spec = pow(max(dot(n, normalize(uSun + eye)), 0.0), 28.0);
+          color += vec3(0.55) * spec + vec3(0.05, 0.06, 0.07) * max(n.y, 0.0);
         #endif
         float fog = smoothstep(uFogNear, uFogFar, distance(vWorld, uCameraPos));
         color = mix(color, pow(uFogColor, vec3(2.2)), fog);

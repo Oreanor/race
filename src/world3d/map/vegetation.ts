@@ -53,7 +53,7 @@ export class VegetationRenderer {
       trunk: lambert(0x7a5a43), leaf0: leaf, leaf1: leaf, leaf2: leaf, leaf3: leaf,
       post: lambert('#4a4036'), rail: lambert('#5c5145'),
       chimney: lambert(0xffffff), vent: lambert(0xffffff),
-      lamp: lambert('#3d444b'),
+      lamp: simpleLit('#9aa1a8', uniforms, { shiny: true }),
     };
   }
 

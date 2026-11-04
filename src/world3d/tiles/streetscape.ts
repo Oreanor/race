@@ -24,10 +24,11 @@ export type Lamp = { x: number; z: number; yaw: number };
 type Style = { species: StreetPlant['species'] | null; spacing: number };
 
 // district × road-class choice; weights per class group
+// Most streets stay bare; planted ones are spaced generously (not a forest).
 const TABLE: Record<'major' | 'mid' | 'minor', [number, Style][]> = {
-  major: [[0.3, { species: 'plane', spacing: 16 }], [0.22, { species: 'pine', spacing: 22 }], [0.1, { species: 'jacaranda', spacing: 13 }], [0.18, { species: 'hedge', spacing: 3.4 }], [0.2, { species: null, spacing: 0 }]],
-  mid: [[0.26, { species: 'plane', spacing: 14 }], [0.1, { species: 'jacaranda', spacing: 12 }], [0.16, { species: 'cypress', spacing: 9 }], [0.18, { species: 'hedge', spacing: 3.4 }], [0.3, { species: null, spacing: 0 }]],
-  minor: [[0.14, { species: 'hedge', spacing: 3.4 }], [0.12, { species: 'plane', spacing: 18 }], [0.1, { species: 'cypress', spacing: 10 }], [0.64, { species: null, spacing: 0 }]],
+  major: [[0.18, { species: 'plane', spacing: 26 }], [0.12, { species: 'pine', spacing: 34 }], [0.06, { species: 'jacaranda', spacing: 22 }], [0.09, { species: 'hedge', spacing: 3.4 }], [0.55, { species: null, spacing: 0 }]],
+  mid: [[0.14, { species: 'plane', spacing: 24 }], [0.05, { species: 'jacaranda', spacing: 20 }], [0.08, { species: 'cypress', spacing: 15 }], [0.08, { species: 'hedge', spacing: 3.4 }], [0.65, { species: null, spacing: 0 }]],
+  minor: [[0.05, { species: 'hedge', spacing: 3.4 }], [0.05, { species: 'plane', spacing: 28 }], [0.04, { species: 'cypress', spacing: 16 }], [0.86, { species: null, spacing: 0 }]],
 };
 
 function hash(a: number, b: number, salt: number) {
@@ -140,8 +141,9 @@ export function planStreets(
     const gx = Math.floor((corner[0] + mid[0]) / district), gz = Math.floor((corner[1] - mid[1]) / district);
     const style = road.bridge ? { species: null, spacing: 0 } : pickStyle(group, hash(gx, gz, group.length * 7919));
     const size = 0.9 + hash(gx, gz, 31) * 0.25; // one size per district
-    const lampStep = (group === 'major' ? 26 : group === 'mid' ? 30 : 34) * toMerc;
-    const lampSides = group === 'minor' ? [hash(gx, gz, 5) < 0.5 ? 1 : -1] : [1, -1];
+    // one side per street, wide steps; only half of the small streets are lit
+    const lampStep = (group === 'major' ? 52 : group === 'mid' ? 60 : 68) * toMerc;
+    const lampSides = group === 'minor' && hash(gx, gz, 11) < 0.5 ? [] : [hash(gx, gz, 5) < 0.5 ? 1 : -1];
     const treeOffset = road.half + (style.species === 'hedge' ? 1.1 : 2.6) * toMerc;
     const lampOffset = road.half + (road.bridge ? 0.35 : 0.8) * toMerc;
     const treeStep = style.spacing * toMerc;
