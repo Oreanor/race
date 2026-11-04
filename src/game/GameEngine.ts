@@ -16,12 +16,15 @@ import { formatNumber, t } from '@/i18n';
 import { SOURCE_ID, ThreeMap, ThreeMarker } from '@/world3d/map/ThreeMap';
 import { atStation, EVACUATION_COST, EVACUATION_RESERVE, FuelTank, FUEL_PRICE, metersBetween, nearestStation, repairShopsFromFeatures, REPAIR_PRICE, stationsFromFeatures, type Station } from './Fuel';
 import { fuelStationsLayer } from '@/rendering/FuelStationsLayer';
-import { hubAt, hubsFromFeatures, nearestHub, ticketPrice, type Hub, type HubKind } from './Travel';
+import { hubAt, hubsFromFeatures, kilometres, nearestHub, ticketPrice, type Hub, type HubKind } from './Travel';
+import { bearingTo, loadBounty, makeBounty, saveBounty, type Bounty } from './Bounty';
 
 export type FuelHud = { level: number; tank: number; refuelling: boolean; station: number | null; money: number; hub: { kind: HubKind; distance: number } | null };
 /** What a player takes along to another city (ticket, later: server handoff). */
 export type PlayerCarry = { money: number; fuel: number };
-export type TravelOffer = { kind: HubKind; from: [number, number]; money: number };
+export type TravelOffer = { kind: HubKind; from: [number, number]; money: number; target?: { name: string; country: string; coords: [number, number] } };
+/** A wanted driver somewhere in the world, offered as a job. */
+export type BountyOffer = { name: string; car: string; place: string; country: string; km: number; reward: number };
 /** Arrived at a fuel station or a car service: what the dialog needs to show. */
 export type ServiceOffer =
   | { kind: 'fuel'; level: number; tank: number; money: number; price: number }
@@ -162,6 +165,15 @@ export class GameEngine {
   private lastCompletedAt: [number, number] | null = null;
   private raceGoal: [number, number] | null = null;
   private eventOffer: 'arena' | 'race' | null = null;
+  /** bounty hunt: the active job (kept across trips), the offer on screen, the fight */
+  private bounty: Bounty | null = loadBounty();
+  private bountyPending: Bounty | null = null;
+  private bountyOfferAt = performance.now() + 45000;
+  private bountyRetryAt = 0;
+  private bountyFight = false;
+  private bountyIndicator: { element: HTMLElement; arrow: HTMLElement; title: HTMLElement; distance: HTMLElement } | null = null;
+  private bountyMarker: MapMarker | null = null;
+  onBountyOffer: (offer: BountyOffer | null) => void = () => {};
   private eventCooldown = 0;
   private playerHp = 1000;
   private readonly playerMaxHp = 1000;
@@ -1073,6 +1085,12 @@ export class GameEngine {
 
   private updateEvents() {
     if (!this.driving) return;
+    this.updateBounty();
+    if (this.bountyFight) {
+      if (this.playerHp <= 0) this.endBounty(false);
+      else if (this.trafficBots.length && this.combatLayer && this.combatLayer.aliveTargetCount() === 0) this.endBounty(true);
+      return;
+    }
     if (this.mode === 'arena') {
       if (this.playerHp <= 0) {
         this.endArena(false);
@@ -1228,7 +1246,151 @@ export class GameEngine {
     marker.distance.textContent = t('unit.m', { n: formatNumber(Math.round(distanceMeters(this.vehicle.position, target))) });
   }
 
+  /** Offer a job now and then; with a job, find the spot, then the wanted car. */
+  private updateBounty() {
+    const now = performance.now();
+    const here = this.vehicle.position;
+    if (!this.bounty) {
+      const busy = this.mode !== 'roam' || this.bountyPending || this.eventOffer || this.travelOpen || this.serviceOpen || this.fuelOut;
+      if (busy || now < this.bountyOfferAt) return;
+      this.bountyPending = makeBounty(here);
+      this.onBountyOffer(this.bountyOfferOf(this.bountyPending));
+      return;
+    }
+    const bounty = this.bounty;
+    if (this.bountyFight || this.mode !== 'roam') return;
+    // in the target's city: pin the exact spot on a road near its centre
+    if (!bounty.spot && kilometres(here, bounty.place.coords) < 2.5) {
+      const node = this.trafficNetwork.nearest(bounty.place.coords, new Set(), 0, 1500);
+      if (node) {
+        bounty.spot = [...node.position] as [number, number];
+        saveBounty(bounty);
+      }
+    }
+    if (bounty.spot && now > this.bountyRetryAt && distanceMeters(here, bounty.spot) < 650) this.startBountyFight(bounty);
+  }
+
+  private bountyOfferOf(bounty: Bounty): BountyOffer {
+    return {
+      name: bounty.name,
+      car: carsConfig.find((car) => car.id === bounty.car)?.name ?? '',
+      place: bounty.place.name,
+      country: bounty.place.country,
+      km: Math.round(kilometres(this.vehicle.position, bounty.place.coords)),
+      reward: bounty.reward,
+    };
+  }
+
+  acceptBounty() {
+    if (!this.bountyPending) return;
+    this.bounty = this.bountyPending;
+    this.bountyPending = null;
+    saveBounty(this.bounty);
+    this.onBountyOffer(null);
+    const km = Math.round(kilometres(this.vehicle.position, this.bounty.place.coords));
+    this.say(t('bounty.accepted', { place: this.bounty.place.name, km: formatNumber(km) }), true);
+  }
+
+  declineBounty() {
+    this.bountyPending = null;
+    this.bountyOfferAt = performance.now() + 240000;
+    this.onBountyOffer(null);
+  }
+
+  /** The wanted car shows up at its spot and comes for the player. */
+  private startBountyFight(bounty: Bounty) {
+    const spot = bounty.spot!;
+    const car = carsConfig.find((entry) => entry.id === bounty.car) ?? carsConfig[carsConfig.length - 1];
+    const seed = Math.round(spot[0] * 1e5) ^ Math.round(spot[1] * 1e5);
+    this.trafficBots = [createTrafficBot('wanted', bounty.name, car, this.trafficNetwork, spot, 0, new Set(), 'hunt', seed, { min: 0, max: 160 })];
+    this.mode = 'arena';
+    this.bountyFight = true;
+    this.playerHp = this.playerMaxHp;
+    this.vehicleContactTimes.clear();
+    this.hideEventBeacons();
+    this.bountyMarker?.remove();
+    this.bountyMarker = null;
+    this.ensureTrafficMarkers();
+    this.ensureHealthMarkers();
+    this.combatLayer?.setTargets(this.targetVehicles());
+    this.say(t('bounty.found', { name: bounty.name }), true);
+  }
+
+  private endBounty(won: boolean) {
+    const bounty = this.bounty;
+    this.mode = 'roam';
+    this.bountyFight = false;
+    this.playerHp = this.playerMaxHp;
+    this.clearEventBots();
+    this.showEventBeacons();
+    if (won && bounty) {
+      this.playerMoney += bounty.reward;
+      this.addWin('player');
+      this.say(t('bounty.won', { name: bounty.name, reward: formatNumber(bounty.reward) }), true);
+      this.bounty = null;
+      saveBounty(null);
+      this.bountyOfferAt = performance.now() + 60000;
+    } else {
+      this.say(t('bounty.escaped', { name: bounty?.name ?? '' }), true);
+      this.bountyRetryAt = performance.now() + 20000;
+    }
+  }
+
+  /** Where the hunt points: the wanted car, its spot, or (far away) its city. */
+  private updateBountyMarkers() {
+    const bounty = this.bounty;
+    if (!bounty || !this.driving) {
+      if (this.bountyIndicator) this.bountyIndicator.element.style.display = 'none';
+      if (this.bountyMarker) { this.bountyMarker.remove(); this.bountyMarker = null; }
+      return;
+    }
+    if (!this.eventIndicatorLayer) {
+      this.eventIndicatorLayer = document.createElement('div');
+      this.eventIndicatorLayer.className = 'mission-indicators';
+      this.host.appendChild(this.eventIndicatorLayer);
+    }
+    if (!this.bountyIndicator) {
+      this.bountyIndicator = this.makeOffscreenIndicator('focus', '');
+      this.bountyIndicator.element.classList.replace('mission-focus-indicator', 'bounty-indicator');
+      this.eventIndicatorLayer.appendChild(this.bountyIndicator.element);
+    }
+    const title = t('bounty.marker', { name: bounty.name });
+    const bot = this.bountyFight ? this.trafficBots[0] : null;
+    if (bounty.spot && !this.bountyFight && !this.bountyMarker) {
+      this.bountyMarker = this.marker({ element: this.makeMapLabel('bounty-map-marker', title, title), anchor: 'bottom' }).setLngLat(bounty.spot).addTo(this.map);
+    }
+    const near = bot ? bot.position : bounty.spot && distanceMeters(this.vehicle.position, bounty.spot) < 2000 ? bounty.spot : null;
+    if (near) {
+      this.updateOffscreenMarker(this.bountyIndicator, near, true, title);
+      return;
+    }
+    // far away: point along the compass direction to its city, at the screen edge
+    const target = bounty.spot ?? bounty.place.coords;
+    const marker = this.bountyIndicator;
+    const canvas = this.map.getCanvas();
+    const width = canvas.clientWidth;
+    const height = canvas.clientHeight;
+    if (!width || !height) return;
+    const angle = (bearingTo(this.vehicle.position, target) - this.map.getBearing()) * Math.PI / 180;
+    const dx = Math.sin(angle);
+    const dy = -Math.cos(angle);
+    const sideMargin = Math.min(90, width * 0.14);
+    const topMargin = Math.min(132, height * 0.22);
+    const bottomMargin = Math.min(86, height * 0.14);
+    const xLimit = width / 2 - sideMargin;
+    const yLimit = height / 2 - (dy < 0 ? topMargin : bottomMargin);
+    const scale = Math.min(dx ? xLimit / Math.abs(dx) : Infinity, dy ? yLimit / Math.abs(dy) : Infinity);
+    marker.title.textContent = title;
+    marker.element.style.display = 'flex';
+    marker.element.style.left = `${width / 2 + dx * scale}px`;
+    marker.element.style.top = `${height / 2 + dy * scale}px`;
+    marker.arrow.style.transform = `rotate(${angle * 180 / Math.PI}deg)`;
+    const km = kilometres(this.vehicle.position, target);
+    marker.distance.textContent = km >= 2 ? t('unit.km', { n: formatNumber(Math.round(km)) }) : t('unit.m', { n: formatNumber(Math.round(km * 1000)) });
+  }
+
   private updateEventMarkers() {
+    this.updateBountyMarkers();
     const roaming = this.driving && this.mode === 'roam';
     if (this.missionFocus >= this.missions.length) this.missionFocus = Math.max(0, this.missions.length - 1);
     const focused = roaming ? this.missions[this.missionFocus] ?? null : null;
@@ -1356,7 +1518,8 @@ export class GameEngine {
     this.travelOpen = true;
     this.keys.clear();
     this.vehicle.speed = 0;
-    this.onTravelOffer({ kind: hub.kind, from: [...this.vehicle.position], money: Math.floor(this.playerMoney) });
+    const target = this.bounty ? { name: this.bounty.place.name, country: this.bounty.place.country, coords: [...this.bounty.place.coords] as [number, number] } : undefined;
+    this.onTravelOffer({ kind: hub.kind, from: [...this.vehicle.position], money: Math.floor(this.playerMoney), target });
   }
 
   declineTravel() {
@@ -2083,7 +2246,7 @@ export class GameEngine {
         bearingNow -= (((bearingNow + 540) % 360) - 180) * e;
       }
       this.map.jumpTo({ center, zoom: zoomNow, pitch: pitchNow, bearing: bearingNow, elevation: this.altitude });
-      this.threeMap?.setFocusCar(this.renderVehicle.position, this.altitude, this.renderVehicle.heading);
+      this.threeMap?.setFocusCar(this.renderVehicle.position, this.altitude, this.renderVehicle.heading, this.modelPitch);
       this.updateAim();
     } else if (!this.driving) {
       this.threeMap?.setFocusCar(null);
@@ -2136,6 +2299,7 @@ export class GameEngine {
     for (const marker of this.missionMarkers.values()) marker.remove();
     this.missionMarkers.clear();
     this.raceGoalMarker?.remove();
+    this.bountyMarker?.remove();
     this.eventIndicatorLayer?.remove();
     for (const marker of this.hubMarkers.values()) marker.remove();
     this.hubMarkers.clear();

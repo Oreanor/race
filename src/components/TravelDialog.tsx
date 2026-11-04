@@ -44,7 +44,11 @@ export default function TravelDialog({ offer, current, onBuy, onStay }: {
 
   const options = useMemo(() => {
     const list = query.trim().length >= 2 ? found : cities.filter((c) => key(c) !== key(current));
-    return list.map((city) => ({
+    // a bounty hunt: its city first
+    const target: City | null = offer.target ? { name: offer.target.name, country: offer.target.country, coords: offer.target.coords, heading: 0, road: '', note: '' } : null;
+    const all = target && query.trim().length < 2 ? [target, ...list.filter((c) => c.name !== target.name)] : list;
+    return all.map((city) => ({
+      target: city === target,
       city,
       km: Math.round(kilometres(offer.from, city.coords)),
       price: ticketPrice(offer.from, city.coords, offer.kind),
@@ -68,7 +72,7 @@ export default function TravelDialog({ offer, current, onBuy, onStay }: {
         onChange={(e) => setQuery(e.target.value)}
       />
       <div className="ui-list" role="list">
-        {options.map(({ city, km, price }) => {
+        {options.map(({ city, km, price, target }) => {
           const affordable = price <= offer.money;
           return (
             <button
@@ -80,7 +84,7 @@ export default function TravelDialog({ offer, current, onBuy, onStay }: {
               onClick={() => onBuy(city)}
               title={affordable ? t(copy.go, { city: city.name }) : t('travel.short')}
             >
-              <span className="ui-list-main"><b>{city.name}</b><small>{city.country} · {t('unit.km', { n: formatNumber(km) })}</small></span>
+              <span className="ui-list-main"><b>{target ? `${t('travel.nearTarget')} · ` : ''}{city.name}</b><small>{city.country} · {t('unit.km', { n: formatNumber(km) })}</small></span>
               <span className="ui-price">{formatNumber(price)}</span>
             </button>
           );

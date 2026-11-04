@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { cars, cities, type City } from '@/config/vehicle.config';
 import { findPlaces } from '@/game/findPlaces';
 import { healthColor } from '@/game/health';
-import { GameEngine, type FuelHud, type HudParticipant, type PlayerCarry, type ServiceOffer, type Settings, type TravelOffer } from '@/game/GameEngine';
+import { GameEngine, type BountyOffer, type FuelHud, type HudParticipant, type PlayerCarry, type ServiceOffer, type Settings, type TravelOffer } from '@/game/GameEngine';
 import { EVACUATION_COST } from '@/game/Fuel';
 import { formatNumber, LANGS, setLang, t, type Lang, type MessageKey } from '@/i18n';
 import { useLang } from '@/i18n/react';
@@ -141,6 +141,7 @@ export default function Game() {
   const [fuelOut, setFuelOut] = useState(false);
   const [travelOffer, setTravelOffer] = useState<TravelOffer | null>(null);
   const [serviceOffer, setServiceOffer] = useState<ServiceOffer | null>(null);
+  const [bountyOffer, setBountyOffer] = useState<BountyOffer | null>(null);
   // a bought ticket: what the player takes to the next city, and drive on arrival
   const carryRef = useRef<PlayerCarry | null>(null);
   const arriveRef = useRef(false);
@@ -207,6 +208,7 @@ export default function Game() {
       };
       game.onTravelOffer = (offer) => setTravelOffer(offer);
       game.onServiceOffer = (offer) => setServiceOffer(offer);
+      game.onBountyOffer = (offer) => setBountyOffer(offer);
       game.onSpawnSet = (pos) => setSpawnPin(pos);
       game.onEventOffer = (kind) => setEventOffer(kind);
       game.onFuel = (fuel) => fuelListener.current?.(fuel);
@@ -488,6 +490,7 @@ export default function Game() {
           current={place}
           onStay={() => engine.current?.declineTravel()}
           onBuy={(city) => {
+            const kind = travelOffer.kind;
             const carry = engine.current?.buyTicket(city.coords);
             if (!carry) return;
             carryRef.current = carry;
@@ -496,9 +499,26 @@ export default function Game() {
             setDriving(false);
             setApproaching(false);
             setSearch(city.name);
-            setPlace(city);
+            // land at the airport (or port) nearest to the chosen place
+            fetch(`/api/hub?kind=${kind}&lat=${city.coords[1]}&lng=${city.coords[0]}`, { signal: AbortSignal.timeout(12000) })
+              .then((response) => response.json() as Promise<[number, number] | null>)
+              .catch(() => null)
+              .then((hub) => setPlace(hub ? { ...city, coords: hub } : city));
           }}
         />
+      )}
+
+      {bountyOffer && driving && !settingsOpen && (
+        <Dialog
+          title={<>🎯 {t('bounty.title')}</>}
+          actions={<>
+            <button type="button" className="ui-btn" autoFocus onClick={() => engine.current?.acceptBounty()}>{t('bounty.take')}</button>
+            <button type="button" className="ui-btn is-ghost" onClick={() => engine.current?.declineBounty()}>{t('bounty.later')}</button>
+          </>}
+        >
+          <p className="ui-text">{t('bounty.text', { name: bountyOffer.name, car: bountyOffer.car, place: bountyOffer.place, country: bountyOffer.country, km: formatNumber(bountyOffer.km) })}</p>
+          <div className="ui-row ui-wallet"><span>{t('bounty.reward')}</span><strong>{t('travel.coins', { n: formatNumber(bountyOffer.reward) })}</strong></div>
+        </Dialog>
       )}
 
       {eventOffer && !settingsOpen && (

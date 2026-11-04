@@ -9,6 +9,17 @@ export const LANGS: { id: Lang; name: string; locale: string }[] = [
 ];
 
 const en = {
+  'bounty.title': 'Wanted',
+  'bounty.text': '{name} drives a {car} and is very dangerous. Last seen in {place}, {country} — {km} km from here.',
+  'bounty.reward': 'Reward',
+  'bounty.take': 'Take the job',
+  'bounty.later': 'Not now',
+  'bounty.accepted': 'The hunt is on: {place}, {km} km',
+  'bounty.found': '{name} is here — and coming for you',
+  'bounty.won': '{name} is done. +{reward} coins',
+  'bounty.escaped': '{name} got away. Try again',
+  'bounty.marker': '🎯 {name}',
+  'travel.nearTarget': '🎯 the target',
   'car.accel': '0–100 km/h',
   'car.accelValue': '{s} s',
   'car.top': 'Top speed',
@@ -173,6 +184,16 @@ const en = {
 export type MessageKey = keyof typeof en;
 
 const pt: Partial<Record<MessageKey, string>> = {
+  'bounty.title': 'Procura-se',
+  'bounty.text': '{name} conduz um {car} e é muito perigoso. Visto pela última vez em {place}, {country} — a {km} km daqui.',
+  'bounty.reward': 'Recompensa',
+  'bounty.take': 'Aceitar o trabalho',
+  'bounty.later': 'Agora não',
+  'bounty.accepted': 'A caça começou: {place}, {km} km',
+  'bounty.found': '{name} está aqui — e vem atrás de ti',
+  'bounty.won': '{name} foi apanhado. +{reward} moedas',
+  'bounty.escaped': '{name} fugiu. Tenta outra vez',
+  'travel.nearTarget': '🎯 o alvo',
   'car.accel': '0–100 km/h',
   'car.accelValue': '{s} s',
   'car.top': 'Velocidade máx.',
@@ -323,6 +344,16 @@ const pt: Partial<Record<MessageKey, string>> = {
 };
 
 const ru: Partial<Record<MessageKey, string>> = {
+  'bounty.title': 'Разыскивается',
+  'bounty.text': '{name} ездит на {car} и очень опасен. Последний раз видели: {place}, {country} — {km} км отсюда.',
+  'bounty.reward': 'Награда',
+  'bounty.take': 'Взяться',
+  'bounty.later': 'Не сейчас',
+  'bounty.accepted': 'Охота началась: {place}, {km} км',
+  'bounty.found': '{name} здесь — и едет за тобой',
+  'bounty.won': '{name} готов. +{reward} монет',
+  'bounty.escaped': '{name} ушёл. Попробуй ещё раз',
+  'travel.nearTarget': '🎯 цель',
   'car.accel': 'Разгон 0–100',
   'car.accelValue': '{s} с',
   'car.top': 'Макс. скорость',

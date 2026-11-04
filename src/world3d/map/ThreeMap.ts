@@ -131,7 +131,7 @@ export class ThreeMap {
   private holesDirty = false;
   private holesOrigin = '';
   /** player car (lng/lat, altitude m) for the see-through buildings in front of it */
-  private focusCar: { at: [number, number]; altitude: number; heading: number } | null = null;
+  private focusCar: { at: [number, number]; altitude: number; heading: number; pitch: number } | null = null;
   loaded = false;
 
   constructor(options: ThreeMapOptions) {
@@ -330,8 +330,8 @@ export class ThreeMap {
   }
 
   /** Where the player car is; buildings between it and the camera become see-through. Null turns it off. */
-  setFocusCar(at: [number, number] | null, altitude = 0, heading = 0) {
-    this.focusCar = at ? { at: [...at], altitude, heading } : null;
+  setFocusCar(at: [number, number] | null, altitude = 0, heading = 0, pitch = 0) {
+    this.focusCar = at ? { at: [...at], altitude, heading, pitch } : null;
   }
 
   /** First building hit along a shot (like CityBuildings.shoot); `mark` leaves a bullet hole. */
@@ -470,9 +470,14 @@ export class ThreeMap {
       this.uniforms.uCar.value.set((mercatorX01(c[0]) - this.origin.x01) / perMeter, this.focusCar.altitude, (mercatorY01(c[1]) - this.origin.y01) / perMeter);
       // headlights: from the car's nose, aimed a little down the road
       const h = this.focusCar.heading;
-      const forward = new THREE.Vector3(Math.sin(h), 0, -Math.cos(h));
-      this.uniforms.uHeadPos.value.copy(this.uniforms.uCar.value).addScaledVector(forward, 2.1).add(new THREE.Vector3(0, 0.75, 0));
-      this.uniforms.uHeadDir.value.copy(forward).add(new THREE.Vector3(0, -0.07, 0)).normalize();
+      // the nose tilts with the car (ramps, hills, jumps), the beams with it
+      const p = this.focusCar.pitch;
+      const flat = new THREE.Vector3(Math.sin(h), 0, -Math.cos(h));
+      const forward = flat.clone().multiplyScalar(Math.cos(p)).add(new THREE.Vector3(0, Math.sin(p), 0));
+      const up = flat.clone().multiplyScalar(-Math.sin(p)).add(new THREE.Vector3(0, Math.cos(p), 0));
+      this.uniforms.uHeadPos.value.copy(this.uniforms.uCar.value).addScaledVector(forward, 2.0).addScaledVector(up, 0.72);
+      this.uniforms.uHeadDir.value.copy(forward).addScaledVector(up, -0.1).normalize();
+      this.uniforms.uHeadSide.value.set(Math.cos(h), 0, Math.sin(h)).multiplyScalar(0.62);
     }
 
     const gl = this.renderer.getContext() as WebGL2RenderingContext;

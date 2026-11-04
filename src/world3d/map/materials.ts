@@ -19,6 +19,8 @@ export type BaseUniforms = {
   /** player headlights: position and direction in scene space, on (0..1) at night */
   uHeadPos: { value: THREE.Vector3 };
   uHeadDir: { value: THREE.Vector3 };
+  /** half the distance between the two lamps, to the right */
+  uHeadSide: { value: THREE.Vector3 };
   uHeadOn: { value: number };
   uFogColor: { value: THREE.Color };
   uFogNear: { value: number };
@@ -38,6 +40,7 @@ export function baseUniforms(fogColor: string): BaseUniforms {
     uNight: { value: 0 },
     uHeadPos: { value: new THREE.Vector3() },
     uHeadDir: { value: new THREE.Vector3(0, 0, -1) },
+    uHeadSide: { value: new THREE.Vector3(0.6, 0, 0) },
     uHeadOn: { value: 0 },
     uFogColor: { value: new THREE.Color().setStyle(fogColor, THREE.NoColorSpace) },
     // Fog is fully opaque before the load radius: tiles always arrive unseen.
@@ -55,18 +58,26 @@ uniform vec3 uAmbient;
 uniform float uNight;
 uniform vec3 uHeadPos;
 uniform vec3 uHeadDir;
+uniform vec3 uHeadSide;
 uniform float uHeadOn;
-// the car's headlights: a warm cone in front of it, fading with distance
+vec3 headBeam(vec3 world, vec3 n, vec3 lamp) {
+  vec3 d = world - lamp;
+  float dist = length(d);
+  if (dist > 55.0) return vec3(0.0);
+  vec3 l = d / max(dist, 0.001);
+  // a soft-edged cone, a bit wider across than up and down
+  vec3 side = normalize(cross(uHeadDir, vec3(0.0, 1.0, 0.0)));
+  float across = dot(l, side);
+  float along = dot(l, uHeadDir);
+  float cone = smoothstep(0.86, 0.97, along - across * across * 0.35);
+  float fall = 1.0 / (1.0 + dist * dist * 0.008) * smoothstep(55.0, 18.0, dist);
+  float facing = clamp(dot(n, -l) * 0.85 + 0.3, 0.0, 1.0);
+  return vec3(1.0, 0.92, 0.78) * cone * fall * facing;
+}
+// the car's two headlights, warm, fading with distance
 vec3 headlight(vec3 world, vec3 n) {
   if (uHeadOn < 0.01) return vec3(0.0);
-  vec3 d = world - uHeadPos;
-  float dist = length(d);
-  if (dist > 60.0) return vec3(0.0);
-  vec3 l = d / max(dist, 0.001);
-  float cone = smoothstep(0.80, 0.94, dot(l, uHeadDir));
-  float fall = 1.0 / (1.0 + dist * dist * 0.006) * smoothstep(60.0, 20.0, dist);
-  float facing = clamp(dot(n, -l) * 0.8 + 0.35, 0.0, 1.0);
-  return vec3(1.0, 0.9, 0.72) * 2.4 * cone * fall * facing * uHeadOn;
+  return (headBeam(world, n, uHeadPos + uHeadSide) + headBeam(world, n, uHeadPos - uHeadSide)) * 1.35 * uHeadOn;
 }
 
 uniform vec3 uFogColor;
