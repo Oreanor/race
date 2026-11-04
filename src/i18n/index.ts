@@ -1,4 +1,3 @@
-import { useSyncExternalStore } from 'react';
 import { ENGLISH, LANGS, MESSAGES, type Lang, type MessageKey } from './messages';
 
 // Tiny i18n: language from the saved choice, else from the browser
@@ -34,13 +33,10 @@ export function setLang(lang: Lang) {
   for (const fn of listeners) fn();
 }
 
-/** Re-render a component when the language changes. */
-export function useLang(): Lang {
-  return useSyncExternalStore(
-    (fn) => { listeners.add(fn); return () => listeners.delete(fn); },
-    () => current,
-    () => 'en',
-  );
+/** Subscribe to language changes (the React hook lives in ./react). */
+export function onLangChange(fn: () => void) {
+  listeners.add(fn);
+  return () => { listeners.delete(fn); };
 }
 
 export function t(key: MessageKey, params?: Record<string, string | number>): string {

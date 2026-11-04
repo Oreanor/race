@@ -3,7 +3,7 @@ import { VectorTile } from '@mapbox/vector-tile';
 import { PbfReader } from 'pbf';
 import type { ChunkData } from '../tiles/buildTile';
 import type { GeoFeature, MeshData, WorldTileData } from '../tiles/worldTile';
-import { DEM_SIZE, sampleDem } from '../tiles/dem';
+import { gridGround } from '../tiles/worldTile';
 import { tileTemplate } from '../tiles/TileClient';
 import { tilesAround, distanceToTile } from '../tiles/tilePlan';
 import { latFromMercator, lngFromMercator, mercatorX, mercatorY, tileAt, tileCorner, tileSpan, WORLD_SIZE, type LngLat, type TileId } from '../mercator';
@@ -41,7 +41,8 @@ export const defaultWorldOptions: WorldTilesOptions = {
   maxInFlight: 4,
   uploadsPerFrame: 2,
   raster: 1024,
-  grid: 48,
+  // ~20 m terrain cells: fine enough for real (unflattened) relief
+  grid: 96,
   demTemplate: null,
   region: '',
 };
@@ -329,9 +330,8 @@ export class WorldTiles {
     if (!live.data.dem) return 0;
     const span = tileSpan(live.tile.z);
     const [cx, cy] = live.data.corner;
-    const px = (mercatorX(lng) - cx) / span * DEM_SIZE;
-    const py = (cy - mercatorY(lat)) / span * DEM_SIZE;
-    return sampleDem(live.data.dem, px, py);
+    // the visible ground surface (terrain grid), so the car sits exactly on it
+    return gridGround(live.data.terrain.ground, this.options.grid, (mercatorX(lng) - cx) / span, (cy - mercatorY(lat)) / span);
   }
 
   hasDemAt(lng: number, lat: number) {
@@ -399,7 +399,7 @@ export class WorldTiles {
           return list;
         };
         const gx = (f.bounds[i] + f.bounds[i + 2]) / 2, gz = (f.bounds[i + 1] + f.bounds[i + 3]) / 2;
-        const ground = live.data.dem ? sampleDem(live.data.dem, gx / span * DEM_SIZE, gz / span * DEM_SIZE) : 0;
+        const ground = live.data.dem ? gridGround(live.data.terrain.ground, this.options.grid, gx / span, gz / span) : 0;
         visit(rings, f.heights[b], ground);
       }
     }

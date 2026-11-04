@@ -5,7 +5,8 @@ import { findPlaces } from '@/game/findPlaces';
 import { kilometres, ticketPrice, type HubKind } from '@/game/Travel';
 import type { TravelOffer } from '@/game/GameEngine';
 import Dialog from './ui/Dialog';
-import { formatNumber, t, useLang } from '@/i18n';
+import { formatNumber, t } from '@/i18n';
+import { useLang } from '@/i18n/react';
 
 const COPY: Record<HubKind, { title: 'travel.airport' | 'travel.port'; go: 'travel.fly' | 'travel.sail'; icon: string }> = {
   airport: { title: 'travel.airport', go: 'travel.fly', icon: '✈' },

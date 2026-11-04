@@ -159,6 +159,21 @@ export function paintGround(ctx: Ctx, size: number, vt: VectorTile, metersScale:
 
 // ---- terrain mesh ----------------------------------------------------------
 
+/**
+ * Height of the terrain grid at tile fraction (u, v) ∈ [0,1]², bilinear over the
+ * grid samples. Roads, plants and the car use this, so they sit exactly on the
+ * ground mesh instead of on the finer raw DEM.
+ */
+export function gridGround(ground: Float32Array, grid: number, u: number, v: number) {
+  const n = grid + 1;
+  const x = Math.min(grid, Math.max(0, u * grid)), y = Math.min(grid, Math.max(0, v * grid));
+  const x0 = Math.min(grid - 1, Math.floor(x)), y0 = Math.min(grid - 1, Math.floor(y));
+  const fx = x - x0, fy = y - y0;
+  const a = ground[y0 * n + x0], b = ground[y0 * n + x0 + 1];
+  const c = ground[(y0 + 1) * n + x0], d = ground[(y0 + 1) * n + x0 + 1];
+  return (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy;
+}
+
 function terrainMesh(span: number, grid: number, dem: Float32Array | null): MeshData {
   const n = grid + 1;
   const skirt = 4 * n; // one extra vertex per edge vertex, hanging down
@@ -300,7 +315,7 @@ function roadMesh(vt: VectorTile, span: number, metersScale: number, groundAt: (
             const c = clipSegment(line[j].x, line[j].y, line[j + 1].x, line[j + 1].y, layer.extent);
             if (!c) continue;
             const [ax, az, bx, bz] = [c[0] * k, c[1] * k, c[2] * k, c[3] * k];
-            builder.segment(ax, az, bx, bz, half, y, rgb, 24 * toMerc);
+            builder.segment(ax, az, bx, bz, half, y, rgb, 10 * toMerc);
             const startsHere = c[0] === line[j].x && c[1] === line[j].y;
             if (!startsHere) continue;
             if (j === 0) { builder.disc(ax, az, half, y, rgb, steps); continue; }
@@ -334,7 +349,9 @@ export function buildWorldTile(buffer: ArrayBuffer, tile: TileId, options: World
   const metersScale = Math.cos(latFromMercator(corner[1] - span / 2) * Math.PI / 180);
   const vt = new VectorTile(new PbfReader(buffer));
   const dem = options.dem;
-  const groundAt = (x: number, z: number) => dem ? sampleDem(dem, x / span * DEM_SIZE, z / span * DEM_SIZE) : 0;
+  // everything placed on the ground follows the terrain mesh itself
+  const terrain = terrainMesh(span, options.grid, dem);
+  const groundAt = (x: number, z: number) => gridGround(terrain.ground, options.grid, x / span, z / span);
 
   const features: Record<string, GeoFeature[]> = {};
   for (const name of GAMEPLAY_LAYERS) {
@@ -348,7 +365,7 @@ export function buildWorldTile(buffer: ArrayBuffer, tile: TileId, options: World
     corner,
     metersScale,
     dem,
-    terrain: terrainMesh(span, options.grid, dem),
+    terrain,
     roads: roadMesh(vt, span, metersScale, groundAt),
     buildings: buildTile(vt, tile, { chunks: options.chunks, windows: false, dem, inset: options.inset, legacyColors: true, detailed: { region: options.region } }),
     vegetation: buildVegetation(corner, span, metersScale, features as unknown as Record<string, MapFeature[]>, groundAt),

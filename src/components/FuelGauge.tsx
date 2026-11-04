@@ -1,7 +1,8 @@
 'use client';
 import { useEffect, useState } from 'react';
 import type { FuelHud } from '@/game/GameEngine';
-import { formatDistance, t, useLang } from '@/i18n';
+import { formatDistance, t } from '@/i18n';
+import { useLang } from '@/i18n/react';
 
 /**
  * Needle fuel gauge (E … F). The engine pushes ~10 updates a second through

@@ -529,7 +529,8 @@ export class GameEngine {
     this.settings = settings;
     if (!this.map.getSource('elevation')) return;
     if (settings.terrain) {
-      this.map.setTerrain({ source: 'elevation', exaggeration: TERRAIN_EXAGGERATION });
+      // our world shows real relief; MapLibre keeps its flattened look for comparison
+      this.map.setTerrain({ source: 'elevation', exaggeration: this.rendererKind === 'three' ? 1 : TERRAIN_EXAGGERATION });
       this.ensureHillshade();
     } else {
       this.map.setTerrain(null);
