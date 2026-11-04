@@ -177,3 +177,8 @@
 .intro .car-pick-name{display:flex;justify-content:space-between;align-items:baseline;padding:0 12px 10px;font:13px var(--ui-font);color:var(--ui-ink)}
 .intro .car-pick-name span{font-size:11px;color:var(--ui-muted)}
 @media (max-height:850px){.intro .car-pick .car-preview{height:180px}}
+.intro .car-specs{margin:0;padding:2px 12px 10px}
+.intro .car-specs div{display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:5px 0;border-top:1px solid var(--ui-line)}
+.intro .car-specs dt{font:12px var(--ui-font);color:var(--ui-muted)}
+.intro .car-specs dd{margin:0;font:600 12px var(--ui-font);color:var(--ui-ink)}
+

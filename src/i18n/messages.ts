@@ -9,6 +9,14 @@ export const LANGS: { id: Lang; name: string; locale: string }[] = [
 ];
 
 const en = {
+  'car.accel': '0–100 km/h',
+  'car.accelValue': '{s} s',
+  'car.top': 'Top speed',
+  'car.topValue': '{n} km/h',
+  'car.engine': 'Engine',
+  'car.engineValue': '{l} L',
+  'car.mass': 'Weight',
+  'car.massValue': '{n} kg',
   'season.real': 'Season here now · {name}',
   'season.set': 'Season · {name}',
   'seasonName.spring': 'spring, in blossom',
@@ -165,6 +173,14 @@ const en = {
 export type MessageKey = keyof typeof en;
 
 const pt: Partial<Record<MessageKey, string>> = {
+  'car.accel': '0–100 km/h',
+  'car.accelValue': '{s} s',
+  'car.top': 'Velocidade máx.',
+  'car.topValue': '{n} km/h',
+  'car.engine': 'Motor',
+  'car.engineValue': '{l} L',
+  'car.mass': 'Peso',
+  'car.massValue': '{n} kg',
   'season.real': 'Estação local agora · {name}',
   'season.set': 'Estação · {name}',
   'seasonName.spring': 'primavera, em flor',
@@ -307,6 +323,14 @@ const pt: Partial<Record<MessageKey, string>> = {
 };
 
 const ru: Partial<Record<MessageKey, string>> = {
+  'car.accel': 'Разгон 0–100',
+  'car.accelValue': '{s} с',
+  'car.top': 'Макс. скорость',
+  'car.topValue': '{n} км/ч',
+  'car.engine': 'Двигатель',
+  'car.engineValue': '{l} л',
+  'car.mass': 'Вес',
+  'car.massValue': '{n} кг',
   'season.real': 'Сезон здесь сейчас · {name}',
   'season.set': 'Сезон · {name}',
   'seasonName.spring': 'весна, цветение',

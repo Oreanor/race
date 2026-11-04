@@ -5,7 +5,7 @@ import { findPlaces } from '@/game/findPlaces';
 import { healthColor } from '@/game/health';
 import { GameEngine, type FuelHud, type HudParticipant, type PlayerCarry, type ServiceOffer, type Settings, type TravelOffer } from '@/game/GameEngine';
 import { EVACUATION_COST } from '@/game/Fuel';
-import { LANGS, setLang, t, type Lang, type MessageKey } from '@/i18n';
+import { formatNumber, LANGS, setLang, t, type Lang, type MessageKey } from '@/i18n';
 import { useLang } from '@/i18n/react';
 
 /** Localised note of a city: built-in cities have translations, search results keep their own. */
@@ -392,6 +392,12 @@ export default function Game() {
                   <strong>{cars[car].name}</strong>
                   <span>{car + 1} / {cars.length}</span>
                 </div>
+                <dl className="car-specs">
+                  <div><dt>{t('car.accel')}</dt><dd>{t('car.accelValue', { s: formatNumber(Math.round(100 / 3.6 / cars[car].acceleration * 10) / 10) })}</dd></div>
+                  <div><dt>{t('car.top')}</dt><dd>{t('car.topValue', { n: formatNumber(Math.round(cars[car].maxSpeed * 3.6)) })}</dd></div>
+                  <div><dt>{t('car.engine')}</dt><dd>{t('car.engineValue', { l: formatNumber(cars[car].engine) })}</dd></div>
+                  <div><dt>{t('car.mass')}</dt><dd>{t('car.massValue', { n: formatNumber(cars[car].mass) })}</dd></div>
+                </dl>
               </div>
               <button
                 className="ui-btn drive"
