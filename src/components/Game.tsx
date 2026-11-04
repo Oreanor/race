@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { cars, cities, type City } from '@/config/vehicle.config';
 import { findPlaces } from '@/game/findPlaces';
 import { healthColor } from '@/game/health';
-import { GameEngine, type FuelHud, type HudParticipant, type PlayerCarry, type Settings, type TravelOffer } from '@/game/GameEngine';
+import { GameEngine, type FuelHud, type HudParticipant, type PlayerCarry, type ServiceOffer, type Settings, type TravelOffer } from '@/game/GameEngine';
 import { EVACUATION_COST } from '@/game/Fuel';
 import { LANGS, setLang, t, type Lang, type MessageKey } from '@/i18n';
 import { useLang } from '@/i18n/react';
@@ -17,6 +17,7 @@ function cityNote(city: City) {
 import CarPreview from './CarPreview';
 import FuelGauge from './FuelGauge';
 import TravelDialog from './TravelDialog';
+import ServiceDialog from './ServiceDialog';
 import Dialog from './ui/Dialog';
 import ModeSwitch, { currentMode, DEV_TOOLS } from './ModeSwitch';
 import PerfOverlay from './PerfOverlay';
@@ -135,6 +136,7 @@ export default function Game() {
   const subscribeFuel = useCallback((fn: ((fuel: FuelHud) => void) | null) => { fuelListener.current = fn; }, []);
   const [fuelOut, setFuelOut] = useState(false);
   const [travelOffer, setTravelOffer] = useState<TravelOffer | null>(null);
+  const [serviceOffer, setServiceOffer] = useState<ServiceOffer | null>(null);
   // a bought ticket: what the player takes to the next city, and drive on arrival
   const carryRef = useRef<PlayerCarry | null>(null);
   const arriveRef = useRef(false);
@@ -202,6 +204,7 @@ export default function Game() {
         }
       };
       game.onTravelOffer = (offer) => setTravelOffer(offer);
+      game.onServiceOffer = (offer) => setServiceOffer(offer);
       game.onSpawnSet = (pos) => setSpawnPin(pos);
       game.onEventOffer = (kind) => setEventOffer(kind);
       game.onFuel = (fuel) => fuelListener.current?.(fuel);
@@ -250,8 +253,8 @@ export default function Game() {
   useEffect(() => engine.current?.applySettings(settings), [settings]);
   useEffect(() => engine.current?.setDriving(driving), [driving]);
   useEffect(() => {
-    engine.current?.setPaused((settingsOpen || Boolean(eventOffer) || fuelOut || Boolean(travelOffer)) && driving);
-  }, [settingsOpen, eventOffer, fuelOut, travelOffer, driving]);
+    engine.current?.setPaused((settingsOpen || Boolean(eventOffer) || fuelOut || Boolean(travelOffer) || Boolean(serviceOffer)) && driving);
+  }, [settingsOpen, eventOffer, fuelOut, travelOffer, serviceOffer, driving]);
   useEffect(() => {
     drivingRef.current = driving;
     if (!driving) {
@@ -472,6 +475,14 @@ export default function Game() {
         >
           <p className="ui-text">{t('fuel.out.text', { cost: EVACUATION_COST })}</p>
         </Dialog>
+      )}
+
+      {serviceOffer && driving && !fuelOut && (
+        <ServiceDialog
+          offer={serviceOffer}
+          onBuy={() => (serviceOffer.kind === 'fuel' ? engine.current?.buyFuel() : engine.current?.repairCar())}
+          onLeave={() => engine.current?.leaveService()}
+        />
       )}
 
       {travelOffer && driving && !fuelOut && (

@@ -143,3 +143,11 @@
 .travel-hub-marker{display:flex;align-items:center;padding:5px 9px;border-radius:999px;background:var(--ui-bg);color:var(--ui-ink);font:700 12px var(--ui-font);box-shadow:0 3px 10px #14232d33;white-space:nowrap;pointer-events:none}
 .travel-hub-marker.is-airport{color:var(--ui-accent)}
 .travel-hub-marker.is-port{color:#2a7f9e}
+
+/* service dialogs: tank / health bar, and map labels for fuel and car services */
+.ui-meter{height:10px;border-radius:999px;background:var(--ui-soft);overflow:hidden}
+.ui-meter i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#f0a43a,#f5c650)}
+.ui-meter.is-health i{background:linear-gradient(90deg,#e0564a,#2f9e6e)}
+.ui-btn:disabled{opacity:.5;cursor:default}
+.travel-hub-marker.is-fuel{color:#2f9e6e}
+.travel-hub-marker.is-repair{color:#c2622f}

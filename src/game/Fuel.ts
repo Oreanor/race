@@ -87,6 +87,18 @@ export function stationsFromFeatures(features: { id?: string | number; geometry:
   return out;
 }
 
+/** coins per point of health at a car service */
+export const REPAIR_PRICE = 0.5;
+
+/** Car repair shops from POI features (OpenMapTiles poi: class car, subclass car_repair). */
+export function repairShopsFromFeatures(features: Parameters<typeof stationsFromFeatures>[0]): Station[] {
+  const shops = features.filter((f) => {
+    const p = f.properties ?? {};
+    return p.subclass === 'car_repair' || (p.class === 'car' && /repair|tyres?/.test(String(p.subclass ?? '')));
+  }).map((f) => ({ ...f, properties: { ...(f.properties ?? {}), class: 'fuel', subclass: 'repair' } }));
+  return stationsFromFeatures(shops).map((s) => ({ ...s, id: `repair:${s.id}` }));
+}
+
 export function nearestStation(position: Position, stations: readonly Station[]) {
   let best: Station | null = null;
   let distance = Infinity;

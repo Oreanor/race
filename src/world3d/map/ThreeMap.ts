@@ -435,6 +435,10 @@ export class ThreeMap {
     this.world.update(cam.state.center);
     worldTime.value = performance.now() / 1000;
     // tiles past the opaque fog are pure fog colour (= sky): skip them entirely
+    // high above the city the haze moves out with the camera, so the whole area shows
+    const above = Math.max(0, cam.cameraAltitude() - cam.state.elevation);
+    this.uniforms.uFogNear.value = 1100 + above * 0.9;
+    this.uniforms.uFogFar.value = 2000 + above * 1.1;
     this.world.cullBeyond(cam.state.center, this.uniforms.uFogFar.value + 150);
 
     const clip = new THREE.Matrix4().copy(cam.mainMatrix).multiply(this.sceneToMercator);

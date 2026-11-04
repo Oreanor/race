@@ -19,7 +19,7 @@ import { advanceTrafficBot, createTrafficBot, TrafficRoadNetwork, type TrafficBo
 import { healthColor } from './health';
 import { formatNumber, t } from '@/i18n';
 import { ThreeMap, ThreeMarker } from '@/world3d/map/ThreeMap';
-import { atStation, EVACUATION_COST, EVACUATION_RESERVE, FuelTank, metersBetween, nearestStation, stationsFromFeatures, type Station } from './Fuel';
+import { atStation, EVACUATION_COST, EVACUATION_RESERVE, FuelTank, FUEL_PRICE, metersBetween, nearestStation, repairShopsFromFeatures, REPAIR_PRICE, stationsFromFeatures, type Station } from './Fuel';
 import { fuelStationsLayer } from '@/rendering/FuelStationsLayer';
 import { hubAt, hubsFromFeatures, nearestHub, ticketPrice, type Hub, type HubKind } from './Travel';
 
@@ -27,6 +27,10 @@ export type FuelHud = { level: number; tank: number; refuelling: boolean; statio
 /** What a player takes along to another city (ticket, later: server handoff). */
 export type PlayerCarry = { money: number; fuel: number };
 export type TravelOffer = { kind: HubKind; from: [number, number]; money: number };
+/** Arrived at a fuel station or a car service: what the dialog needs to show. */
+export type ServiceOffer =
+  | { kind: 'fuel'; level: number; tank: number; money: number; price: number }
+  | { kind: 'repair'; hp: number; maxHp: number; money: number; price: number };
 const NO_FUEL_KEYS = new Set(['KeyW', 'Space']);
 
 /** Which map/renderer runs under the game. 'three' is our own world; 'maplibre' is the legacy one kept for comparison. */
@@ -262,6 +266,24 @@ export class GameEngine {
   /** ports and airports: reaching one offers a ticket to any city */
   onTravelOffer: (offer: TravelOffer | null) => void = () => {};
   private hubs = new Map<string, Hub>();
+  /** fuel station or car service dialogs (shown on arrival, re-armed after leaving) */
+  onServiceOffer: (offer: ServiceOffer | null) => void = () => {};
+  private repairShops = new Map<string, Station>();
+  private serviceMarkers = new Map<string, MapMarker>();
+  private offeredService: string | null = null;
+  private serviceOpen: ServiceOffer['kind'] | null = null;
+  /** key M: camera rises straight up for a ~2 × 2 km view from above (0 chase … 1 overview) */
+  private overview = 0;
+  private overviewTarget = 0;
+  /** the menu camera to return to after the view from above */
+  private menuView: { center: [number, number]; zoom: number; pitch: number; bearing: number } | null = null;
+
+  /** ~2 km across the screen height, straight down */
+  private overviewZoom(lat: number) {
+    const height = this.map.getCanvas().clientHeight || 800;
+    const mercPerMeter = 1 / (2 * Math.PI * 6371008.8 * Math.cos(lat * Math.PI / 180));
+    return Math.log2((height / 2000) / mercPerMeter / 512);
+  }
   private hubMarkers = new Map<string, MapMarker>();
   private offeredHub: string | null = null;
   private travelOpen = false;
@@ -383,14 +405,26 @@ export class GameEngine {
       this.cleanups.push(() => target.removeEventListener(event, fn, options));
     };
     listen(window, 'keydown', ((e: KeyboardEvent) => {
+      // M in the menu: rise above the map too (and come back)
+      if (e.code === 'KeyM' && !e.repeat && !this.driving && this.threeMap && this.mapShown
+        && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement)) {
+        if (!this.overviewTarget) {
+          const c = this.map.getCenter();
+          this.menuView = { center: [c.lng, c.lat], zoom: this.map.getZoom(), pitch: this.map.getPitch(), bearing: this.map.getBearing() };
+        }
+        this.overviewTarget = this.overviewTarget ? 0 : 1;
+        e.preventDefault();
+        return;
+      }
       if (!this.driving || this.paused || e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
-      if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'ShiftLeft', 'ShiftRight', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyR', 'KeyQ', 'KeyE', 'KeyL', 'Tab'].includes(e.code)) e.preventDefault();
+      if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'ShiftLeft', 'ShiftRight', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyR', 'KeyQ', 'KeyE', 'KeyL', 'Tab', 'KeyM'].includes(e.code)) e.preventDefault();
       if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'ShiftLeft', 'ShiftRight', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) this.keys.add(e.code);
       if (e.code === 'KeyR') this.resetCamera();
       if (e.code === 'KeyL' && !e.repeat) this.toggleLabels();
       if (e.code === 'KeyQ' && !e.repeat) this.resizeCar(1 / 1.4);
       if (e.code === 'KeyE' && !e.repeat) this.resizeCar(1.4);
       if (e.code === 'Tab' && !e.repeat) this.cycleMissionFocus();
+      if (e.code === 'KeyM' && !e.repeat && this.threeMap) this.overviewTarget = this.overviewTarget ? 0 : 1;
     }) as EventListener);
     listen(window, 'keyup', ((e: KeyboardEvent) => { this.keys.delete(e.code); }) as EventListener);
     const clear = () => {
@@ -1425,8 +1459,36 @@ export class GameEngine {
       const keep = [...this.stations.values()].sort((a, b) => metersBetween(a.position, this.vehicle.position) - metersBetween(b.position, this.vehicle.position)).slice(0, 300);
       this.stations = new Map(keep.map(station => [station.id, station]));
     }
+    for (const shop of repairShopsFromFeatures(pois)) {
+      if (![...this.repairShops.values()].some(known => metersBetween(known.position, shop.position) < 25)) this.repairShops.set(shop.id, shop);
+    }
     const visible = [...this.stations.values()].filter(station => metersBetween(station.position, this.vehicle.position) < 2500);
     this.fuelLayer?.setStations(visible, this.settings.terrain);
+    this.labelServices();
+  }
+
+  /** Map labels for the nearest fuel stations and car services, like ports. */
+  private labelServices() {
+    const here = this.vehicle.position;
+    const nearest = (list: Station[]) => list
+      .map(station => ({ station, d: metersBetween(station.position, here) }))
+      .filter(item => item.d < 3000)
+      .sort((a, b) => a.d - b.d)
+      .slice(0, 10)
+      .map(item => item.station);
+    const wanted = new Map<string, { station: Station; kind: 'fuel' | 'repair' }>();
+    for (const station of nearest([...this.stations.values()])) wanted.set(station.id, { station, kind: 'fuel' });
+    for (const shop of nearest([...this.repairShops.values()])) wanted.set(shop.id, { station: shop, kind: 'repair' });
+    for (const [id, marker] of this.serviceMarkers) {
+      if (wanted.has(id)) continue;
+      marker.remove();
+      this.serviceMarkers.delete(id);
+    }
+    for (const [id, { station, kind }] of wanted) {
+      if (this.serviceMarkers.has(id)) continue;
+      const text = kind === 'fuel' ? t('poi.fuel') : t('poi.service');
+      this.serviceMarkers.set(id, this.marker({ element: this.makeMapLabel(`travel-hub-marker is-${kind}`, text, text), anchor: 'bottom' }).setLngLat(station.position).addTo(this.map));
+    }
   }
 
   /** Ports and airports from real data, with a map label each. */
@@ -1478,23 +1540,60 @@ export class GameEngine {
     return { money: this.playerMoney, fuel: this.fuel.ratio };
   }
 
-  private updateFuel(dt: number) {
-    const slow = Math.abs(this.vehicle.speed) < 1.5;
-    const station = slow ? atStation(this.vehicle.position, [...this.stations.values()]) : null;
-    const wasRefuelling = this.refuelling;
+  private updateFuel(_dt: number) {
+    const station = atStation(this.vehicle.position, [...this.stations.values()]);
+    const shop = atStation(this.vehicle.position, [...this.repairShops.values()]);
     this.refuelling = false;
-    if (station && !this.fuelOut && this.fuel.level < this.fuel.spec.tank - 0.01) {
-      const paid = this.fuel.refuel(dt, this.playerMoney);
-      this.playerMoney -= paid.cost;
-      this.refuelling = paid.litres > 0;
-      if (this.refuelling) this.say(t('fuel.pumping'));
-      else if (this.playerMoney < 1) this.say(t('fuel.broke'));
-    } else if (wasRefuelling || this.message === t('fuel.pumping') || this.message === t('fuel.broke')) this.say('');
+    // arriving (slowly) at a station or a service opens its dialog once per visit
+    const here = station ?? shop;
+    if (!here) this.offeredService = null;
+    else if (here.id !== this.offeredService && Math.abs(this.vehicle.speed) < 4 && !this.serviceOpen && !this.travelOpen && !this.fuelOut && this.mode === 'roam') {
+      this.offeredService = here.id;
+      this.openService(station ? 'fuel' : 'repair');
+    }
     if (this.fuel.empty && Math.abs(this.vehicle.speed) < 0.3 && !this.fuelOut && !station) {
       this.fuelOut = true;
       this.keys.clear();
       this.onFuelOut(true);
     }
+  }
+
+  private serviceState(kind: ServiceOffer['kind']): ServiceOffer {
+    return kind === 'fuel'
+      ? { kind, level: this.fuel.level, tank: this.fuel.spec.tank, money: Math.floor(this.playerMoney), price: FUEL_PRICE }
+      : { kind, hp: this.playerHp, maxHp: this.playerMaxHp, money: Math.floor(this.playerMoney), price: REPAIR_PRICE };
+  }
+
+  private openService(kind: ServiceOffer['kind']) {
+    this.serviceOpen = kind;
+    this.keys.clear();
+    this.vehicle.speed = 0;
+    this.onServiceOffer(this.serviceState(kind));
+  }
+
+  /** Fill the tank (or as much as the coins allow) at the station. */
+  buyFuel() {
+    if (this.serviceOpen !== 'fuel') return;
+    const room = this.fuel.spec.tank - this.fuel.level;
+    const litres = Math.max(0, Math.min(room, Math.floor(this.playerMoney / FUEL_PRICE)));
+    this.fuel.level += litres;
+    this.playerMoney -= litres * FUEL_PRICE;
+    this.onServiceOffer(this.serviceState('fuel'));
+  }
+
+  /** Repair the car (as far as the coins allow) at the service. */
+  repairCar() {
+    if (this.serviceOpen !== 'repair') return;
+    const missing = this.playerMaxHp - this.playerHp;
+    const points = Math.max(0, Math.min(missing, Math.floor(this.playerMoney / REPAIR_PRICE)));
+    this.playerHp += points;
+    this.playerMoney -= Math.ceil(points * REPAIR_PRICE);
+    this.onServiceOffer(this.serviceState('repair'));
+  }
+
+  leaveService() {
+    this.serviceOpen = null;
+    this.onServiceOffer(null);
   }
 
   /** Tow truck: to the nearest known station, for EVACUATION_COST coins. */
@@ -1662,6 +1761,10 @@ export class GameEngine {
   }
 
   setDriving(value: boolean, approach = true) {
+    // the view from above belongs to one mode; switching modes lands back on the ground
+    this.overview = 0;
+    this.overviewTarget = 0;
+    this.menuView = null;
     const fromMenu = value && !this.driving && approach;
     this.driving = value;
     this.paused = false;
@@ -2183,11 +2286,37 @@ export class GameEngine {
           this.onApproach(false);
         }
       }
+      // map view from above: blend toward a north-up, straight-down view of ~2 km
+      const step = dt / 1.2;
+      this.overview = this.overviewTarget > this.overview ? Math.min(this.overviewTarget, this.overview + step) : Math.max(this.overviewTarget, this.overview - step);
+      if (this.overview > 0) {
+        const e = this.overview * this.overview * (3 - 2 * this.overview);
+        const topZoom = this.overviewZoom(this.renderVehicle.position[1]);
+        const here = this.renderVehicle.position;
+        center = [center[0] + (here[0] - center[0]) * e, center[1] + (here[1] - center[1]) * e];
+        zoomNow += (topZoom - zoomNow) * e;
+        pitchNow += (0 - pitchNow) * e;
+        bearingNow -= (((bearingNow + 540) % 360) - 180) * e;
+      }
       this.map.jumpTo({ center, zoom: zoomNow, pitch: pitchNow, bearing: bearingNow, elevation: this.altitude });
       this.threeMap?.setFocusCar(this.renderVehicle.position, this.altitude);
       this.updateAim();
     } else if (!this.driving) {
       this.threeMap?.setFocusCar(null);
+      // menu: view from above toggled with M
+      if (this.menuView && (this.overview > 0 || this.overviewTarget > 0)) {
+        const step = dt / 1.2;
+        this.overview = this.overviewTarget > this.overview ? Math.min(1, this.overview + step) : Math.max(0, this.overview - step);
+        const e = this.overview * this.overview * (3 - 2 * this.overview);
+        const v = this.menuView;
+        this.map.jumpTo({
+          center: v.center,
+          zoom: v.zoom + (this.overviewZoom(v.center[1]) - v.zoom) * e,
+          pitch: v.pitch * (1 - e),
+          bearing: v.bearing - (((v.bearing + 540) % 360) - 180) * e,
+        });
+        if (this.overview === 0) this.menuView = null;
+      }
       this.renderVehicle.reset(this.vehicle);
       if (!this.mapShown) {
         if (this.settings.terrain) {
@@ -2233,6 +2362,8 @@ export class GameEngine {
     this.eventIndicatorLayer?.remove();
     for (const marker of this.hubMarkers.values()) marker.remove();
     this.hubMarkers.clear();
+    for (const marker of this.serviceMarkers.values()) marker.remove();
+    this.serviceMarkers.clear();
     this.pickups.clear();
     this.combatLayer?.setPickups([]);
     this.trafficMarkerLayer?.remove();
