@@ -19,8 +19,14 @@ const MODELS = {
   passenger: '/models/trains/wagon.glb',
   cargo: '/models/trains/wagon_cargo.glb',
   tank: '/models/trains/wagon_tank.glb',
+  // the vintage set
+  leadOld: '/models/trains/train_old.glb',
+  passengerOld: '/models/trains/wagon_old.glb',
+  cargoOld: '/models/trains/wagon_cargo_old.glb',
 };
 type ModelName = keyof typeof MODELS;
+/** models drawn facing the other way: turned so their front leads */
+const BACKWARDS = new Set<ModelName>(['leadOld']);
 
 type Part = { size: [number, number, number]; at: number; color: string; tint?: boolean };
 // box stand-ins: width (m), height (m), length (fraction of the car); `at` = height of the centre
@@ -42,10 +48,16 @@ function hash(text: string) {
   return ((h >>> 0) % 10000) / 10000;
 }
 
-/** Which model a rail car shows: the locomotive first, then a passenger or a freight train. */
+/**
+ * Which model a rail car shows. A train is either modern or vintage (about one
+ * in three), and either passenger or freight; the locomotive leads.
+ */
 function modelFor(car: CarPose): ModelName {
-  if (car.index === 0) return 'lead';
-  if (hash(car.trainId) < 0.5) return 'passenger';
+  const vintage = hash(`${car.trainId}:age`) < 0.33;
+  const passenger = hash(car.trainId) < 0.5;
+  if (car.index === 0) return vintage ? 'leadOld' : 'lead';
+  if (vintage) return passenger ? 'passengerOld' : 'cargoOld';
+  if (passenger) return 'passenger';
   return hash(`${car.trainId}:${car.index}`) < 0.5 ? 'cargo' : 'tank';
 }
 
@@ -110,7 +122,7 @@ export function trainsLayer(): MapLayer & {
         const scale = RAIL_CAR_LENGTH / Math.max(size.x, size.z);
         // long side → +z (the car's forward), centred, standing on y = 0
         const normalise = new THREE.Matrix4()
-          .makeRotationY(size.x >= size.z ? -Math.PI / 2 : 0)
+          .makeRotationY((size.x >= size.z ? -Math.PI / 2 : 0) + (BACKWARDS.has(name) ? Math.PI : 0))
           .multiply(new THREE.Matrix4().makeScale(scale, scale, scale))
           .multiply(new THREE.Matrix4().makeTranslation(-center.x, -bounds.min.y, -center.z));
         const parts: ModelParts = { meshes: [], base: [] };
