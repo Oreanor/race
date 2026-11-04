@@ -193,9 +193,54 @@ function streamMesh(vt: VectorTile, span: number, metersScale: number, groundAt:
   return meshOf(builder);
 }
 
+/** Railway track: a gravel bed with two steel rails; trams get the rails only (in the street). */
+function railTracks(builder: RoadBuilder, layer: VectorTile['layers'][string], k: number, toMerc: number, groundAt: (x: number, z: number) => number, bridges: number[]) {
+  const bed = hex('#9c958c');
+  const steel = hex('#5f656b');
+  for (let i = 0; i < layer.length; i++) {
+    const feature = layer.feature(i);
+    if (feature.type !== 2) continue;
+    const p = feature.properties;
+    if (p.brunnel === 'tunnel') continue;
+    const sub = String(p.subclass ?? '');
+    const tram = p.class === 'transit' && sub === 'tram';
+    const rail = (p.class === 'rail' || p.class === 'transit') && /^(rail|narrow_gauge|light_rail|preserved|subway|funicular)$/.test(sub);
+    if (!tram && !rail) continue;
+    const gauge = (sub === 'narrow_gauge' || sub === 'funicular' ? 0.5 : 0.72) * toMerc;
+    const isBridge = p.brunnel === 'bridge';
+    for (const line of feature.loadGeometry()) {
+      if (isBridge && line.length > 1) {
+        const a = line[0], z = line[line.length - 1];
+        const deck = Math.max(groundAt(a.x * k, a.y * k), groundAt(z.x * k, z.y * k)) + 0.5;
+        builder.groundAt = () => deck;
+        for (let j = 0; j + 1 < line.length; j++) bridges.push(line[j].x * k, line[j].y * k, line[j + 1].x * k, line[j + 1].y * k, 1.8 * toMerc, deck);
+      } else builder.groundAt = groundAt;
+      for (let j = 0; j + 1 < line.length; j++) {
+        const cut = clipSegment(line[j].x, line[j].y, line[j + 1].x, line[j + 1].y, layer.extent);
+        if (!cut) continue;
+        const [ax, az, bx, bz] = [cut[0] * k, cut[1] * k, cut[2] * k, cut[3] * k];
+        const len = Math.hypot(bx - ax, bz - az);
+        if (len < 1e-9) continue;
+        const nx = -(bz - az) / len, nz = (bx - ax) / len;
+        if (!tram) {
+          builder.segment(ax, az, bx, bz, 1.5 * toMerc, 0.06, bed, 10 * toMerc);
+          if (j > 0) builder.disc(ax, az, 1.5 * toMerc, 0.06, bed, 8);
+        }
+        const y = tram ? 0.19 : 0.11;
+        for (const side of [-1, 1]) {
+          const ox = nx * gauge * side, oz = nz * gauge * side;
+          builder.segment(ax + ox, az + oz, bx + ox, bz + oz, 0.05 * toMerc, y, steel, 10 * toMerc);
+        }
+      }
+    }
+    builder.groundAt = groundAt;
+  }
+}
+
 function roadMesh(vt: VectorTile, span: number, metersScale: number, groundAt: (x: number, z: number) => number, bridges: number[]): MeshData {
   const builder = new RoadBuilder(groundAt);
   const layer = vt.layers.transportation;
+  if (layer) railTracks(builder, layer, span / layer.extent, 1 / metersScale, groundAt, bridges);
   if (layer) {
     const k = span / layer.extent;
     const toMerc = 1 / metersScale;

@@ -16,6 +16,8 @@ import { formatNumber, t } from '@/i18n';
 import { SOURCE_ID, ThreeMap, ThreeMarker } from '@/world3d/map/ThreeMap';
 import { atStation, EVACUATION_COST, EVACUATION_RESERVE, FuelTank, FUEL_PRICE, metersBetween, nearestStation, repairShopsFromFeatures, REPAIR_PRICE, stationsFromFeatures, type Station } from './Fuel';
 import { fuelStationsLayer } from '@/rendering/FuelStationsLayer';
+import { trainsLayer } from '@/rendering/TrainsLayer';
+import { RailNetwork, TrainTraffic } from './Trains';
 import { hubAt, hubsFromFeatures, kilometres, nearestHub, ticketPrice, type Hub, type HubKind } from './Travel';
 import { bearingTo, loadBounty, makeBounty, saveBounty, type Bounty } from './Bounty';
 
@@ -174,6 +176,10 @@ export class GameEngine {
   private bountyIndicator: { element: HTMLElement; arrow: HTMLElement; title: HTMLElement; distance: HTMLElement } | null = null;
   private bountyMarker: MapMarker | null = null;
   onBountyOffer: (offer: BountyOffer | null) => void = () => {};
+  /** trains and trams on the real tracks */
+  private rails = new RailNetwork();
+  private trainTraffic = new TrainTraffic(this.rails);
+  private trainLayer: ReturnType<typeof trainsLayer> | null = null;
   private eventCooldown = 0;
   private playerHp = 1000;
   private readonly playerMaxHp = 1000;
@@ -274,6 +280,8 @@ export class GameEngine {
       this.map.addSource('elevation', { type: 'raster-dem', ...mapConfig.dem });
       this.fuelLayer = fuelStationsLayer();
       this.map.addLayer(this.fuelLayer);
+      this.trainLayer = trainsLayer();
+      this.map.addLayer(this.trainLayer);
       this.combatLayer = vehicleLayer(
         car,
         this.renderVehicle,
@@ -1389,6 +1397,21 @@ export class GameEngine {
     marker.distance.textContent = km >= 2 ? t('unit.km', { n: formatNumber(Math.round(km)) }) : t('unit.m', { n: formatNumber(Math.round(km * 1000)) });
   }
 
+  /** Trains run in the menu and while driving; born and retired out of sight. */
+  private updateTrains(dt: number) {
+    if (!this.trainLayer || !this.mapShown) return;
+    const center = this.map.getCenter();
+    const here: [number, number] = this.driving ? this.vehicle.position : [center.lng, center.lat];
+    const bearing = this.map.getBearing();
+    // behind the camera = more than ~110° off where it looks
+    const hidden = (p: [number, number]) => {
+      const off = Math.abs(((bearingTo(here, p) - bearing + 540) % 360) - 180);
+      return off > 110;
+    };
+    this.trainTraffic.update(dt, here, hidden);
+    this.trainLayer.setCars(this.trainTraffic.poses(), here, this.settings.terrain);
+  }
+
   private updateEventMarkers() {
     this.updateBountyMarkers();
     const roaming = this.driving && this.mode === 'roam';
@@ -2032,6 +2055,8 @@ export class GameEngine {
       this.cachedWater = this.readSourceLayer('water');
       yield null;
       this.cachedRoads = this.readSourceLayer('transportation');
+      this.rails.addFeatures(this.cachedRoads);
+      this.rails.prune(focus, 6000);
       this.trafficNetwork.addFeatures(this.cachedRoads);
       yield null;
       this.trafficNetwork.flushRebuild();
@@ -2275,6 +2300,7 @@ export class GameEngine {
         if (Math.abs(center.lng - view.center[0]) > 1e-8 || Math.abs(center.lat - view.center[1]) > 1e-8 || Math.abs(this.map.getCenterElevation() - view.elevation) > 0.25 || Math.abs(this.map.getZoom() - view.zoom) > 0.001) this.map.jumpTo(view);
       }
     }
+    this.updateTrains(dt);
     this.updateHealthMarkers(now - this.overlayTime > 100);
     this.updateTrafficMarkers();
     this.updateEventMarkers();
