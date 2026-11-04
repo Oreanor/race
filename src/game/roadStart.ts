@@ -1,4 +1,4 @@
-import type { Map as LibreMap } from 'maplibre-gl';
+import type { ThreeMap } from '@/world3d/map/ThreeMap';
 import type { Position } from './VehicleController';
 
 const METERS_PER_DEGREE = 111319.49;
@@ -6,7 +6,7 @@ const DRIVABLE_ROADS = new Set(['motorway', 'trunk', 'primary', 'secondary', 'te
 
 // Project the configured start onto a nearby drivable road once, never while driving.
 export function roadStart(
-  map: LibreMap,
+  map: ThreeMap,
   source: string,
   origin: Position,
   blocked: (position: Position, heading: number) => boolean,
@@ -19,11 +19,11 @@ export function roadStart(
   for (const feature of map.querySourceFeatures(source, { sourceLayer: 'transportation' })) {
     const roadClass = String(feature.properties?.class ?? '');
     if (!DRIVABLE_ROADS.has(roadClass)) continue;
-    const lines = feature.geometry.type === 'LineString'
+    const lines = (feature.geometry.type === 'LineString'
       ? [feature.geometry.coordinates]
       : feature.geometry.type === 'MultiLineString'
         ? feature.geometry.coordinates
-        : [];
+        : []) as Position[][];
 
     for (const line of lines) {
       for (let index = 1; index < line.length; index++) {

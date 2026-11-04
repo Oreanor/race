@@ -17,7 +17,6 @@ export const cities = [
 export type City = typeof cities[number];
 export type Car = typeof cars[number];
 export const mapConfig = {
-  style: 'https://tiles.openfreemap.org/styles/liberty',
   dem: {
     tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'],
     tileSize: 256,

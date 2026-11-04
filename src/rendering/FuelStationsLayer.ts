@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { CustomLayerInterface, Map as LibreMap } from 'maplibre-gl';
+import type { MapLayer, ThreeMap } from '@/world3d/map/ThreeMap';
 import type { Station } from '@/game/Fuel';
 import { mercatorPerMeter, mercatorX01, mercatorY01 } from '@/world3d/map/camera';
 import { simpleLit, standaloneUniforms, type SimpleLitUniforms } from '@/world3d/map/simpleLit';
@@ -23,13 +23,13 @@ const PARTS: Part[] = [
 
 const MAX = 128;
 
-export function fuelStationsLayer(map0: () => LibreMap | null = () => null): CustomLayerInterface & {
+export function fuelStationsLayer(map0: () => ThreeMap | null = () => null): MapLayer & {
   setStations: (stations: Station[], terrain: boolean) => void;
   scene: THREE.Scene;
   placement: THREE.Matrix4;
   fuse: (world?: SimpleLitUniforms) => void;
 } {
-  let map: LibreMap | null = null;
+  let map: ThreeMap | null = null;
   let renderer: THREE.WebGLRenderer | null = null;
   const scene = new THREE.Scene();
   const camera = new THREE.Camera();
@@ -83,7 +83,6 @@ export function fuelStationsLayer(map0: () => LibreMap | null = () => null): Cus
   return {
     id: 'fuel-stations',
     type: 'custom',
-    renderingMode: '3d',
     scene,
     placement: place,
     fuse(world) {

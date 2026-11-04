@@ -1,24 +1,19 @@
 import { roadStart } from './roadStart';
 import { VehiclePose } from './VehiclePose';
 import { supportAltitude, type GroundSample } from './groundSupport';
-import { vegetationLayer } from '@/rendering/VegetationLayer';
 import { BuildingCollisions, type Polygon } from './BuildingCollisions';
 import { ThicketCollision } from './Vegetation';
 import { WaterCollisionController, type MapFeature } from './WaterCollisionController';
-import * as maplibregl from 'maplibre-gl';
-import type { Map as LibreMap } from 'maplibre-gl';
 import { mapConfig, cars as carsConfig, type City, type Car, vehicleConfig } from '@/config/vehicle.config';
 import { cameraConfig, zoomForDistance } from '@/config/camera.config';
 import { HOUSE_PALETTE } from './buildings/BuildingStyles';
 import { VehicleController, offsetPosition, resolveVehicleCollision } from './VehicleController';
 import { vehicleLayer, type VehicleSceneLayer } from '@/rendering/VehicleLayer';
-import { cityLayer, type BuildingPart } from '@/rendering/CityBuildings';
 import type { ArchitectureSetting, BuildingDetail } from './buildings/BuildingStyles';
-import { collapseCopies, footprintKey, keepVisibleParts, retainNearParts } from './buildings/wallOverlap';
 import { advanceTrafficBot, createTrafficBot, TrafficRoadNetwork, type TrafficBot } from './TrafficBots';
 import { healthColor } from './health';
 import { formatNumber, t } from '@/i18n';
-import { ThreeMap, ThreeMarker } from '@/world3d/map/ThreeMap';
+import { SOURCE_ID, ThreeMap, ThreeMarker } from '@/world3d/map/ThreeMap';
 import { atStation, EVACUATION_COST, EVACUATION_RESERVE, FuelTank, FUEL_PRICE, metersBetween, nearestStation, repairShopsFromFeatures, REPAIR_PRICE, stationsFromFeatures, type Station } from './Fuel';
 import { fuelStationsLayer } from '@/rendering/FuelStationsLayer';
 import { hubAt, hubsFromFeatures, nearestHub, ticketPrice, type Hub, type HubKind } from './Travel';
@@ -33,11 +28,9 @@ export type ServiceOffer =
   | { kind: 'repair'; hp: number; maxHp: number; money: number; price: number };
 const NO_FUEL_KEYS = new Set(['KeyW', 'Space']);
 
-/** Which map/renderer runs under the game. 'three' is our own world; 'maplibre' is the legacy one kept for comparison. */
-export type RendererKind = 'three' | 'maplibre';
 type MapMarker = {
   setLngLat(position: [number, number]): MapMarker;
-  addTo(map: LibreMap): MapMarker;
+  addTo(map: ThreeMap): MapMarker;
   remove(): unknown;
   getElement(): HTMLElement;
 };
@@ -52,20 +45,9 @@ export type Settings = {
   architecture: ArchitectureSetting;
 };
 
-function roadColor(id: string) {
-  const pedestrian = /path|pedestrian|foot|cycle/.test(id);
-  const casing = /casing/.test(id);
-  if (pedestrian) return casing ? '#d5d0c6' : '#c4c1ba';
-  if (/motorway|trunk|primary/.test(id)) return casing ? '#d2cec5' : '#9d9e99';
-  if (/secondary|tertiary/.test(id)) return casing ? '#d6d2c9' : '#aaaba5';
-  return casing ? '#dbd7ce' : '#b5b5af';
-}
-
-const LABEL_LAYER = /^(highway-name-|water_name_|waterway_line_label)/;
 const DRIVER_NAMES = ['Ines', 'Tiago', 'Marta', 'Rui', 'Leonor', 'Duarte', 'Beatriz', 'Nuno', 'Sofia', 'Miguel', 'Rafael', 'Ana'];
 const PICKUP_COLORS = ['#ff4f79', '#ffc837', '#45d8ef', '#a96aff', '#69e286', '#ff8745'];
 const TRAFFIC_MARKER_COLORS = ['#ff3b30', '#00e5ff', '#ffe600'];
-const TERRAIN_EXAGGERATION = 0.12;
 const METERS_PER_DEGREE = 111319.49;
 
 export type HudParticipant = { id: string; name: string; color: string; hp: number; maxHp: number; money: number; wins: number };
@@ -85,71 +67,6 @@ function randomDriverNames(count: number) {
   return names.slice(0, count);
 }
 
-function hideBasemapBuildings(map: LibreMap) {
-  const layers = map.getStyle()?.layers;
-  if (!layers) return;
-  for (const layer of layers) {
-    // Keep the flat `building` fill alive (opacity 0). If it is layout-hidden,
-    // MapLibre drops that source-layer from tiles and the city never builds.
-    if (layer.type !== 'fill-extrusion' && layer.id !== 'building-3d') continue;
-    if (!map.getLayer(layer.id)) continue;
-    if (map.getLayoutProperty(layer.id, 'visibility') !== 'none') map.setLayoutProperty(layer.id, 'visibility', 'none');
-  }
-  if (map.getLayer('building')) {
-    if (map.getLayoutProperty('building', 'visibility') === 'none') map.setLayoutProperty('building', 'visibility', 'visible');
-    if (map.getPaintProperty('building', 'fill-opacity') !== 0) map.setPaintProperty('building', 'fill-opacity', 0);
-  }
-}
-
-function paintCity(map: LibreMap, layer: { id: string; type: string }) {
-  const labeled = LABEL_LAYER.test(layer.id);
-  if (layer.type === 'fill-extrusion') map.removeLayer(layer.id);
-  else if (layer.type === 'symbol' && labeled) {
-    map.setLayoutProperty(layer.id, 'visibility', 'visible');
-    map.setLayoutProperty(layer.id, 'text-size', ['interpolate', ['linear'], ['zoom'], 15, 13, 18, 16, 20.4, 20]);
-    map.setLayoutProperty(layer.id, 'text-pitch-alignment', 'viewport');
-    if (/^highway-name-/.test(layer.id)) map.setLayoutProperty(layer.id, 'symbol-spacing', 640);
-    map.setPaintProperty(layer.id, 'text-color', '#24312e');
-    map.setPaintProperty(layer.id, 'text-halo-color', '#f7f4ea');
-    map.setPaintProperty(layer.id, 'text-halo-width', 1.8);
-  }
-  else if (layer.type === 'symbol') map.setLayoutProperty(layer.id, 'visibility', 'none');
-  else if (layer.id === 'building') { map.setLayoutProperty(layer.id, 'visibility', 'visible'); map.setPaintProperty(layer.id, 'fill-opacity', 0); }
-  else if (layer.type === 'background') map.setPaintProperty(layer.id, 'background-color', '#dcdad3');
-  else if (layer.type === 'fill' && /park|grass|wood|farmland|pitch|cemetery/.test(layer.id)) map.setPaintProperty(layer.id, 'fill-color', /wood/.test(layer.id) ? '#69a577' : '#b1d59b');
-  else if (layer.type === 'fill' && /residential/.test(layer.id)) map.setPaintProperty(layer.id, 'fill-color', '#e5e2da');
-  else if (layer.type === 'fill' && /school|hospital/.test(layer.id)) map.setPaintProperty(layer.id, 'fill-color', '#f8dfda');
-  else if (layer.type === 'fill' && /water/.test(layer.id)) map.setPaintProperty(layer.id, 'fill-color', '#52b8ca');
-  else if (layer.type === 'line' && /waterway/.test(layer.id)) map.setPaintProperty(layer.id, 'line-color', '#369fb7');
-  else if (layer.type === 'line' && /^(road|bridge|tunnel)_/.test(layer.id) && !/rail|hatch|one_way/.test(layer.id)) {
-    map.setPaintProperty(layer.id, 'line-color', roadColor(layer.id));
-    map.setLayoutProperty(layer.id, 'line-join', 'round');
-    map.setLayoutProperty(layer.id, 'line-cap', 'round');
-    const pedestrian = /path|pedestrian|foot|cycle/.test(layer.id);
-    const major = /motorway|trunk|primary/.test(layer.id);
-    const link = /link|service|track/.test(layer.id);
-    const isCasing = /casing/.test(layer.id);
-    // Same body width for minor/secondary/street so a continuous road doesn't
-    // step/zigzag where the class changes between tiles or segments.
-    const rank = pedestrian ? 0.5 : major ? 1.45 : link ? 0.82 : 1;
-    const pavement = pedestrian ? 2.1 : 5;
-    const width = (factor: number) => {
-      const fill = rank * pavement * factor;
-      if (!isCasing) return fill;
-      // Fixed curb in screen px — growing with zoom made chunky "teeth" on edges.
-      return fill + (pedestrian ? 2.2 : 3.2);
-    };
-    map.setPaintProperty(layer.id, 'line-width', [
-      'interpolate', ['linear'], ['zoom'],
-      13, width(0.7),
-      16, width(2.1),
-      18, width(5.4),
-      20, width(17),
-      20.85, width(24),
-    ]);
-  }
-}
-
 export class GameEngine {
   collisions = new BuildingCollisions();
   thicket = new ThicketCollision();
@@ -159,7 +76,7 @@ export class GameEngine {
   spawnResolved = false;
   private spawnWaits = 0;
   sourceId = '';
-  map: LibreMap;
+  map: ThreeMap;
   vehicle: VehicleController;
   renderVehicle = new VehiclePose();
   keys = new Set<string>();
@@ -198,22 +115,14 @@ export class GameEngine {
   message = '';
   cleanups: (() => void)[] = [];
 
-  carScale = 1;
   car: Car;
-  city: ReturnType<typeof cityLayer> | null = null;
   combatLayer: VehicleSceneLayer | null = null;
-  vegetation: ReturnType<typeof vegetationLayer> | null = null;
-  shownBuildings = new Set<string>();
   syncedAt: [number, number] | null = null;
   fps = 0;
   private fpsFrames = 0;
   private fpsStamp = 0;
   private worldFresh = false;
   private worldWork: Generator<null, void> | null = null;
-  private greenedAt: [number, number] | null = null;
-  private greenedTerrain: boolean | null = null;
-  private remembered = new Map<string, { part: BuildingPart; measured: boolean }>();
-  private retained = new Map<string, BuildingPart>();
   private featureReadFailures = new Set<string>();
   private cachedWater: MapFeature[] = [];
   private cachedRoads: MapFeature[] = [];
@@ -296,9 +205,7 @@ export class GameEngine {
   private playerMoney = 0;
   get booted() { return this.mapShown; }
   private aimingFire = false;
-  readonly rendererKind: RendererKind;
-  constructor(el: HTMLElement, city: City, car: Car, settings: Settings, private hud: (speed: number, distance: number, scale: number, fps: number, participants: HudParticipant[]) => void, private status: (s: string, toast?: boolean) => void, private aimHud: (x: number, y: number, visible: boolean, firing?: boolean) => void, renderer: RendererKind = 'three', carry: PlayerCarry | null = null) {
-    this.rendererKind = renderer;
+  constructor(el: HTMLElement, city: City, car: Car, settings: Settings, private hud: (speed: number, distance: number, fps: number, participants: HudParticipant[]) => void, private status: (s: string, toast?: boolean) => void, private aimHud: (x: number, y: number, visible: boolean, firing?: boolean) => void, carry: PlayerCarry | null = null) {
     this.fuel = new FuelTank(car.fuel);
     this.carry = carry;
     (window as unknown as { __cityRider?: GameEngine }).__cityRider = this; // console debugging
@@ -312,35 +219,17 @@ export class GameEngine {
     this.vehicle = new VehicleController(city.coords, city.heading);
     this.renderVehicle.reset(this.vehicle);
     this.bearing = city.heading;
-    if (renderer === 'three') {
-      // Our own world under the same API surface: no basemap restyling, no hidden
-      // layers, one fixed DEM level, so buildings never need re-settling.
-      this.map = new ThreeMap({
-        container: el,
-        center: city.coords,
-        zoom: 16.8,
-        pitch: 57,
-        bearing: city.heading - 25,
-        maxPitch: 80,
-        dem: mapConfig.dem.tiles[0],
-        region: city.country,
-      }) as unknown as LibreMap;
-    } else {
-    maplibregl.setWorkerUrl('/vendor/maplibre-gl-worker.mjs');
-    this.map = new maplibregl.Map({
+    // our own Three.js world: one fixed DEM level, buildings never need re-settling
+    this.map = new ThreeMap({
       container: el,
-      style: mapConfig.style,
       center: city.coords,
       zoom: 16.8,
       pitch: 57,
       bearing: city.heading - 25,
-      interactive: false,
       maxPitch: 80,
-      canvasContextAttributes: { antialias: true },
-      attributionControl: { compact: true },
+      dem: mapConfig.dem.tiles[0],
+      region: city.country,
     });
-    }
-    this.map.on('styledata', () => hideBasemapBuildings(this.map));
     this.map.on('sourcedata', event => {
       if ((event.sourceId === this.sourceId || event.sourceId === 'elevation') && event.sourceDataType === 'content') {
         this.collisionDirty = true;
@@ -356,20 +245,6 @@ export class GameEngine {
       if (this.disposed) return;
       this.decorate();
       this.map.addSource('elevation', { type: 'raster-dem', ...mapConfig.dem });
-      // Keep map labels below custom 3D geometry so buildings can occlude them.
-      // Our own world draws every building itself (one batched system, nothing
-      // swaps in view). The detailed CityBuildings layer stays for MapLibre only.
-      if (renderer === 'maplibre') {
-        this.city = cityLayer(city.coords, parts => {
-          this.collisions.update(this.vehicle.position, parts.map(part => part.rings));
-        });
-        this.map.addLayer(this.city);
-      }
-      // our world plants vegetation per tile in the worker (complete, never re-planted)
-      if (renderer === 'maplibre') {
-        this.vegetation = vegetationLayer(city.coords);
-        this.map.addLayer(this.vegetation);
-      }
       this.fuelLayer = fuelStationsLayer();
       this.map.addLayer(this.fuelLayer);
       this.combatLayer = vehicleLayer(
@@ -378,23 +253,18 @@ export class GameEngine {
         () => this.altitude,
         () => this.modelPitch,
         () => this.modelRoll,
-        () => this.carScale,
         (text) => this.say(text),
-        (cam, camAlt, ground, groundAlt, mark) => this.city
-          ? this.city.shoot(cam, camAlt, ground, groundAlt, mark)
-          : this.threeMap?.raycastBuildings(cam, camAlt, ground, groundAlt, mark) ?? null,
-        (point, altitude) => this.city ? this.city.markGround(point, altitude) : this.threeMap?.markGround(point, altitude),
+        (cam, camAlt, ground, groundAlt, mark) => this.map.raycastBuildings(cam, camAlt, ground, groundAlt, mark),
+        (point, altitude) => this.map.markGround(point, altitude),
       );
       this.map.addLayer(this.combatLayer);
-      this.applyLabelVisibility();
       this.applySettings(this.settings);
       this.ready = true;
-      this.map.setCenterClampedToGround(false);
       this.collisionDirty = true;
       this.say(t('status.placing'));
       // Map click → set custom spawn
       this.map.on('click', (e) => {
-        if (!this.driving && this.mapShown) this.setSpawnFromClick(e.lngLat);
+        if (!this.driving && this.mapShown) this.setSpawnFromClick(e.lngLat as { lng: number; lat: number });
       });
       this.map.on('move', () => {
         if (!this.driving && this.mapShown) this.collisionDirty = true;
@@ -417,12 +287,9 @@ export class GameEngine {
         return;
       }
       if (!this.driving || this.paused || e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
-      if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'ShiftLeft', 'ShiftRight', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyR', 'KeyQ', 'KeyE', 'KeyL', 'Tab', 'KeyM'].includes(e.code)) e.preventDefault();
+      if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'ShiftLeft', 'ShiftRight', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyR', 'Tab', 'KeyM'].includes(e.code)) e.preventDefault();
       if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'ShiftLeft', 'ShiftRight', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) this.keys.add(e.code);
       if (e.code === 'KeyR') this.resetCamera();
-      if (e.code === 'KeyL' && !e.repeat) this.toggleLabels();
-      if (e.code === 'KeyQ' && !e.repeat) this.resizeCar(1 / 1.4);
-      if (e.code === 'KeyE' && !e.repeat) this.resizeCar(1.4);
       if (e.code === 'Tab' && !e.repeat) this.cycleMissionFocus();
       if (e.code === 'KeyM' && !e.repeat && this.threeMap) this.overviewTarget = this.overviewTarget ? 0 : 1;
     }) as EventListener);
@@ -507,53 +374,7 @@ export class GameEngine {
   }
 
   decorate() {
-    const style = this.map.getStyle();
-    for (const layer of style.layers) paintCity(this.map, layer);
-    hideBasemapBuildings(this.map);
-    const source = Object.entries(style.sources).find(([, item]) => item.type === 'vector')?.[0];
-    if (!source) return;
-    this.sourceId = source;
-  }
-
-  labelsOn = true;
-
-  applyLabelVisibility() {
-    const visibility = this.labelsOn ? 'visible' : 'none';
-    for (const layer of this.map.getStyle().layers) {
-      if (LABEL_LAYER.test(layer.id) && this.map.getLayer(layer.id)) this.map.setLayoutProperty(layer.id, 'visibility', visibility);
-    }
-  }
-
-  toggleLabels() {
-    this.labelsOn = !this.labelsOn;
-    this.applyLabelVisibility();
-  }
-
-  ensureHillshade() {
-    if (this.map.getLayer('hillshade')) return;
-    const before = this.map.getStyle().layers.find((layer) => layer.type === 'line' && /road|bridge/.test(layer.id))?.id;
-    const layer = {
-      id: 'hillshade',
-      type: 'hillshade' as const,
-      source: 'elevation',
-      paint: {
-        'hillshade-exaggeration': 0.22,
-        'hillshade-shadow-color': '#66849b',
-        'hillshade-highlight-color': '#fff7ec',
-        'hillshade-accent-color': '#a8bfca',
-        'hillshade-illumination-direction': 315,
-      },
-    };
-    if (before) this.map.addLayer(layer, before);
-    else this.map.addLayer(layer);
-  }
-
-  resizeCar(factor: number) {
-    const previous = this.carScale;
-    const next = previous * factor;
-    this.carScale = Math.min(10, Math.max(1, next >= 9.5 ? 10 : next <= 1.08 ? 1 : next));
-    this.vehicle.speed *= this.carScale / previous;
-    this.hud(this.vehicle.speed * 3.6, this.vehicle.distance, this.carScale, this.fps, this.hudParticipants());
+    this.sourceId = SOURCE_ID;
   }
 
   setCar(car: Car) {
@@ -567,18 +388,9 @@ export class GameEngine {
     const terrainChanged = settings.terrain !== this.settings.terrain;
     this.settings = settings;
     if (!this.map.getSource('elevation')) return;
-    if (settings.terrain) {
-      // our world shows real relief; MapLibre keeps its flattened look for comparison
-      this.map.setTerrain({ source: 'elevation', exaggeration: this.rendererKind === 'three' ? 1 : TERRAIN_EXAGGERATION });
-      this.ensureHillshade();
-    } else {
-      this.map.setTerrain(null);
-      if (this.map.getLayer('hillshade')) this.map.removeLayer('hillshade');
-    }
-    hideBasemapBuildings(this.map);
+    this.map.setTerrain(settings.terrain ? { source: 'elevation', exaggeration: 1 } : null);
     const ratio = settings.quality === 'low' ? 1 : settings.quality === 'medium' ? 1.25 : Math.min(window.devicePixelRatio || 1, 1.5);
     this.map.setPixelRatio(ratio);
-    this.city?.configure({ detail: settings.buildingDetail, architecture: settings.architecture, region: this.region });
     if (terrainChanged) { this.collisionDirty = true; this.syncedAt = null; }
   }
 
@@ -600,7 +412,7 @@ export class GameEngine {
   setSpawnFromClick(lngLat: { lng: number; lat: number }) {
     if (!this.sourceId) return;
     const origin: [number, number] = [lngLat.lng, lngLat.lat];
-    const start = roadStart(this.map, this.sourceId, origin, (position, heading) => this.collisions.blocked(position, position, heading, this.carScale));
+    const start = roadStart(this.map, this.sourceId, origin, (position, heading) => this.collisions.blocked(position, position, heading));
     const position: [number, number] = start ? start.position : origin;
     const heading = start ? start.heading : this.vehicle.heading;
     this.customSpawn = { position, heading };
@@ -790,9 +602,9 @@ export class GameEngine {
     const applyPosition = (participant: typeof participants[number], next: [number, number]) => {
       const { controller } = participant;
       if (next === controller.position
-        || this.collisions.blocked(controller.position, next, controller.heading, this.carScale)
+        || this.collisions.blocked(controller.position, next, controller.heading)
         || this.thicket.blocked(controller.position, next)) return;
-      const water = this.water.resolve(controller.position, next, controller.heading, this.carScale);
+      const water = this.water.resolve(controller.position, next, controller.heading);
       if (!water.stopped) controller.position = water.position;
     };
 
@@ -810,7 +622,7 @@ export class GameEngine {
           heading: b.controller.heading,
           speed: b.controller.speed,
           length: b.car.length,
-        }, this.carScale);
+        });
         if (!collision) continue;
 
         applyPosition(a, collision.a);
@@ -1601,7 +1413,7 @@ export class GameEngine {
     if (!this.fuelOut) return;
     const near = nearestStation(this.vehicle.position, [...this.stations.values()]);
     if (near && this.sourceId) {
-      const start = roadStart(this.map, this.sourceId, near.station.position, (position, heading) => this.collisions.blocked(position, position, heading, this.carScale));
+      const start = roadStart(this.map, this.sourceId, near.station.position, (position, heading) => this.collisions.blocked(position, position, heading));
       // the nearest road next to the pumps (the POI point itself may sit inside the shop)
       this.vehicle.position = start ? [...start.position] : [...near.station.position];
       if (start) this.vehicle.heading = start.heading;
@@ -1622,41 +1434,12 @@ export class GameEngine {
   }
 
   private marker(options: { element: HTMLElement; anchor: 'bottom' }): MapMarker {
-    return (this.rendererKind === 'three' ? new ThreeMarker(options) : new maplibregl.Marker(options)) as unknown as MapMarker;
+    return new ThreeMarker(options) as unknown as MapMarker;
   }
 
-  /** Our own world under the game, or null on MapLibre. */
+  /** Our own world under the game. */
   private get threeMap() {
-    return this.rendererKind === 'three' ? this.map as unknown as ThreeMap : null;
-  }
-
-  buildingsNear(parts: BuildingPart[], focus: [number, number] = this.vehicle.position) {
-    const show = (this.driving ? 900 : 1600) ** 2;
-    const keep = (this.driving ? 1100 : 2000) ** 2;
-    const maxBuildings = this.driving ? 650 : 2500;
-    const cos = Math.cos(focus[1] * Math.PI / 180);
-    const nearest = (part: BuildingPart) => {
-      let best = Infinity;
-      for (const point of part.rings[0] ?? []) {
-        const east = (point[0] - focus[0]) * 111319.49 * cos;
-        const north = (point[1] - focus[1]) * 111319.49;
-        const distance = east * east + north * north;
-        if (distance < best) best = distance;
-      }
-      return best;
-    };
-    const ranked = parts.map((part) => ({ part, distance: nearest(part) })).sort((a, b) => a.distance - b.distance);
-    const next = new Set<string>();
-    const visible: BuildingPart[] = [];
-    for (const item of ranked) {
-      if (visible.length >= maxBuildings) break;
-      const retain = this.shownBuildings.has(item.part.key) ? item.distance < keep : item.distance < show;
-      if (!retain) continue;
-      next.add(item.part.key);
-      visible.push(item.part);
-    }
-    this.shownBuildings = next;
-    return visible;
+    return this.map;
   }
 
   introView() {
@@ -1729,18 +1512,8 @@ export class GameEngine {
       this.say(t('status.block'));
       if (waited < 14000) return;
     }
-    const cells = this.city?.cellCount() ?? 0;
-    if ((this.city?.pendingCount() ?? 0) > 0 || this.collisionDirty || this.worldWork) {
+    if (this.collisionDirty || this.worldWork) {
       this.say(t('status.blocks'));
-      return;
-    }
-    if (this.city && cells < 1 && waited < 16000) {
-      this.settleFrames++;
-      this.say(t('status.block'));
-      return;
-    }
-    if (this.city && !this.city.isSettled()) {
-      this.settleFrames = 0;
       return;
     }
     if (this.settleFrames < 24) {
@@ -1869,8 +1642,8 @@ export class GameEngine {
       const forwardNorth = Math.cos(heading);
       const rightEast = Math.cos(heading);
       const rightNorth = -Math.sin(heading);
-      const reach = this.car.length * 0.38 * this.carScale;
-      const track = 0.85 * this.carScale;
+      const reach = this.car.length * 0.38;
+      const track = 0.85;
       const sample = (along: number, side: number) => this.map.queryTerrainElevation(offsetPosition(this.renderVehicle.position, forwardEast * along + rightEast * side, forwardNorth * along + rightNorth * side));
       const frontLeft = sample(reach, -track);
       const frontRight = sample(reach, track);
@@ -1896,7 +1669,7 @@ export class GameEngine {
         add(-reach, track, rearRight);
         // Include the belly and bumpers when crossing a crest or a sharp bank.
         add(0, 0, sample(0, 0));
-        const bumper = this.car.length * 0.5 * this.carScale;
+        const bumper = this.car.length * 0.5;
         add(bumper, 0, sample(bumper, 0));
         add(-bumper, 0, sample(-bumper, 0));
         this.wheelTargets = {
@@ -1911,19 +1684,6 @@ export class GameEngine {
     this.modelPitch = settle(this.modelPitch, this.wheelTargets.pitch);
     this.modelRoll = settle(this.modelRoll, this.wheelTargets.roll);
     this.altitude = Math.max(this.wheelTargets.altitude, settle(this.altitude, this.wheelTargets.altitude));
-  }
-
-  rememberPart(shape: [number, number][][], measuredHeight: number | null, base: number, id: number, levels: number | undefined, kind: string, roofShape: string) {
-    const foot = footprintKey(shape);
-    const prior = this.remembered.get(foot);
-    if (prior && (prior.measured || measuredHeight == null)) return prior.part;
-    const height = Math.max(3, Math.min(320, measuredHeight ?? 10));
-    const part: BuildingPart = {
-      id, rings: shape, height, base, levels, kind, roofShape,
-      key: `${Math.round(height)}:${base.toFixed(1)}:${foot}`,
-    };
-    this.remembered.set(foot, { part, measured: measuredHeight != null });
-    return part;
   }
 
   private readSourceLayer(layer: string) {
@@ -1956,7 +1716,7 @@ export class GameEngine {
       this.placeSpawnMarker(this.customSpawn.position);
       return;
     }
-    const start = roadStart(this.map, this.sourceId, this.vehicle.position, (position, heading) => this.collisions.blocked(position, position, heading, this.carScale));
+    const start = roadStart(this.map, this.sourceId, this.vehicle.position, (position, heading) => this.collisions.blocked(position, position, heading));
     if (start) {
       this.defaultSpawn = { position: [...start.position], heading: start.heading };
       this.vehicle.position = start.position;
@@ -1995,66 +1755,10 @@ export class GameEngine {
   }
 
   *collectWorldSteps(refreshTiles: boolean): Generator<null, void> {
-    if (this.threeMap) {
-      yield* this.collectWorldThree(refreshTiles);
-      return;
-    }
-    let parts: BuildingPart[] = [...this.retained.values()];
-    if (refreshTiles) {
-      parts = [];
-      let scanned = 0;
-      for (const feature of this.map.querySourceFeatures(this.sourceId, { sourceLayer: 'building' })) {
-        const geometry = feature.geometry;
-        const shapes = geometry.type === 'Polygon' ? [geometry.coordinates as Polygon] : geometry.type === 'MultiPolygon' ? geometry.coordinates as Polygon[] : [];
-        const props = feature.properties ?? {};
-        const reported = Number(props.render_height ?? props.height);
-        const measuredHeight = Number.isFinite(reported) && reported > 0 ? reported : null;
-        const base = Math.max(0, Number(props.render_min_height ?? props.min_height ?? 0) || 0);
-        const rawId = Number(feature.id ?? props.osm_id ?? 0) || 0;
-        const levelsValue = Number(props.levels ?? props['building:levels'] ?? props.render_levels ?? 0);
-        const levels = levelsValue >= 1 && levelsValue <= 80 ? Math.round(levelsValue) : undefined;
-        const kind = String(props.class ?? props.building ?? props.type ?? '');
-        const roofShape = String(props.roof_shape ?? props['roof:shape'] ?? '');
-        for (const shape of shapes) {
-          const anchor = shape[0]?.[0];
-          if (!anchor) continue;
-          parts.push(this.rememberPart(shape, measuredHeight, base, rawId || Math.round(anchor[0] * 1e5) ^ Math.round(anchor[1] * 1e5), levels, kind, roofShape));
-        }
-        if (++scanned % 80 === 0) yield null;
-      }
-      this.tilesIngested = true;
-      yield null;
-    }
-
-    this.resolveSpawn();
-    const center = this.map.getCenter();
-    const focus: [number, number] = this.driving ? this.vehicle.position : [center.lng, center.lat];
-    const cos = Math.cos(focus[1] * Math.PI / 180);
-    const retainRadius = this.driving ? 1050 : 2200;
-    const unique = collapseCopies(retainNearParts(keepVisibleParts(parts), this.retained.values(), (part) => {
-      let best = Infinity;
-      for (const point of part.rings[0] ?? []) {
-        const east = (point[0] - focus[0]) * 111319.49 * cos;
-        const north = (point[1] - focus[1]) * 111319.49;
-        const distance = east * east + north * north;
-        if (distance < best) best = distance;
-      }
-      return best;
-    }, retainRadius ** 2));
-    yield null;
-
-    const visible = this.buildingsNear(unique, focus);
-    if (visible.length) {
-      this.retained = new Map(visible.map((part) => [part.key, part]));
-      this.city?.sync(visible, this.settings.terrain, focus);
-      this.syncedAt = [focus[0], focus[1]];
-    }
-    this.worldFresh = true;
-    yield null;
-    yield* this.collectGround(refreshTiles, focus, () => unique.map(part => part.rings));
+    yield* this.collectWorldThree(refreshTiles);
   }
 
-  /** Roads, water, green areas, stations and vegetation: shared by both renderers. */
+  /** Roads, water, green areas and stations for collisions and gameplay. */
   private *collectGround(refreshTiles: boolean, focus: [number, number], buildingRings: () => [number, number][][][]): Generator<null, void> {
     const cos = Math.cos(focus[1] * Math.PI / 180);
     if (refreshTiles) {
@@ -2080,29 +1784,6 @@ export class GameEngine {
     this.thicket.update(this.vehicle.position, this.cachedGreen, this.cachedRoads);
     yield null;
 
-    const greened = this.greenedAt;
-    const movedGreen = greened ? Math.hypot((focus[0] - greened[0]) * 111319.49 * cos, (focus[1] - greened[1]) * 111319.49) : Infinity;
-    const greenLimit = this.driving ? 140 : 55;
-    if (movedGreen > greenLimit || this.greenedTerrain !== this.settings.terrain) {
-      this.greenedAt = [focus[0], focus[1]];
-      this.greenedTerrain = this.settings.terrain;
-      const aheadMeters = this.driving ? 80 : 0;
-      const headingRad = this.renderVehicle.heading;
-      const greenFocus: [number, number] = aheadMeters > 0 ? offsetPosition(focus, Math.sin(headingRad) * aheadMeters, Math.cos(headingRad) * aheadMeters) : [...focus];
-      const landObstacles = this.cachedLanduse.filter(feature => /^(pitch|playground|track|stadium|parking)$/.test(String(feature.properties?.class ?? '')));
-      // While driving, skip per-building vegetation blockers — retained plants + water/roads are enough and much cheaper.
-      const buildingObstacles = this.driving
-        ? []
-        : buildingRings().map(rings => ({ geometry: { type: 'Polygon' as const, coordinates: rings } }));
-      this.vegetation?.sync({
-        green: this.cachedGreen,
-        obstacles: [...this.cachedWater, ...landObstacles, ...buildingObstacles],
-        roads: this.cachedRoads,
-        focus: greenFocus,
-        plantCap: this.driving ? 900 : undefined,
-        reachScale: this.driving ? 0.82 : 1,
-      }, this.settings.terrain);
-    }
   }
 
   private pumpWorld(now: number) {
@@ -2130,8 +1811,7 @@ export class GameEngine {
     }
 
     if (!this.worldWork) return;
-    const cityBusy = (this.city?.pendingCount() ?? 0) > 0;
-    const deadline = performance.now() + (this.driving ? (cityBusy ? 1.5 : 2.2) : 8);
+    const deadline = performance.now() + (this.driving ? 2.2 : 8);
     while (this.worldWork && performance.now() < deadline) {
       if (this.worldWork.next().done) this.worldWork = null;
     }
@@ -2157,11 +1837,11 @@ export class GameEngine {
         // An empty tank: no throttle, no boost; the car rolls out.
         const driveKeys = this.fuel.empty ? new Set([...this.keys].filter(key => !NO_FUEL_KEYS.has(key))) : this.keys;
         const travelled = this.vehicle.distance;
-        this.vehicle.step(1 / 60, driveKeys, { ...vehicleConfig, acceleration: this.car.acceleration, maxSpeed: this.car.maxSpeed, scale: this.carScale });
+        this.vehicle.step(1 / 60, driveKeys, { ...vehicleConfig, acceleration: this.car.acceleration, maxSpeed: this.car.maxSpeed });
         // consumption follows the car's own distance (scale-independent)
-        this.fuel.burn((this.vehicle.distance - travelled) / this.carScale, 1 / 60, driveKeys.has('Space'));
+        this.fuel.burn((this.vehicle.distance - travelled), 1 / 60, driveKeys.has('Space'));
         {
-          const building = this.collisions.resolve(previous, this.vehicle.position, this.vehicle.heading, this.carScale);
+          const building = this.collisions.resolve(previous, this.vehicle.position, this.vehicle.heading);
           if (building.stopped) {
             this.vehicle.position = building.position;
             this.vehicle.heading = oldHeading;
@@ -2176,7 +1856,7 @@ export class GameEngine {
             this.vehicle.speed = 0;
             thicket = true;
           } else {
-            const hit = this.water.resolve(previous, this.vehicle.position, this.vehicle.heading, this.carScale);
+            const hit = this.water.resolve(previous, this.vehicle.position, this.vehicle.heading);
             this.vehicle.position = hit.position;
             if (hit.stopped) {
               this.vehicle.speed = 0;
@@ -2200,9 +1880,8 @@ export class GameEngine {
             ...vehicleConfig,
             acceleration: bot.car.acceleration,
             maxSpeed: bot.car.maxSpeed,
-            scale: this.carScale,
           }, peers);
-          const building = this.collisions.resolve(previous, bot.position, bot.heading, this.carScale);
+          const building = this.collisions.resolve(previous, bot.position, bot.heading);
           if (building.stopped || building.slid) {
             bot.controller.position = building.position;
             bot.retryFrames += building.stopped ? 6 : 2;
@@ -2234,7 +1913,7 @@ export class GameEngine {
             bot.controller.speed = -2.2;
             bot.retryFrames += 4;
           } else if (this.water.covers(previous)) {
-            const hit = this.water.resolve(previous, bot.position, bot.heading, this.carScale);
+            const hit = this.water.resolve(previous, bot.position, bot.heading);
             bot.controller.position = hit.position;
             if (hit.stopped) bot.controller.speed = 0;
             bot.retryFrames = Math.max(0, bot.retryFrames - 2);
@@ -2334,18 +2013,11 @@ export class GameEngine {
     if (now - this.overlayTime > 100) this.overlayTime = now;
     if (now - this.hudTime > 100) {
       this.hudTime = now;
-      this.hud(this.vehicle.speed * 3.6, this.vehicle.distance, this.carScale, this.fps, this.hudParticipants());
+      this.hud(this.vehicle.speed * 3.6, this.vehicle.distance, this.fps, this.hudParticipants());
       const near = nearestStation(this.vehicle.position, [...this.stations.values()]);
       const hub = nearestHub(this.vehicle.position, [...this.hubs.values()]);
       this.onFuel({ level: this.fuel.level, tank: this.fuel.spec.tank, refuelling: this.refuelling, station: near ? near.distance : null, money: Math.floor(this.playerMoney), hub: hub ? { kind: hub.hub.kind, distance: hub.distance } : null });
     }
-    const bootBudget = !this.mapShown && this.spawnResolved ? 24 : 20;
-    // Keep a tiny city budget even while world work runs so geometry doesn't burst after a quiet stretch.
-    // Intro after reveal: only trickle new cells — never a 10/frame storm that recolors pitched roofs.
-    const budget = !this.spawnResolved ? 0 : this.driving ? 1 : (this.mapShown ? 2 : bootBudget);
-    const mapCenter = this.map.getCenter();
-    const cityFocus: [number, number] = this.driving ? this.renderVehicle.position : [mapCenter.lng, mapCenter.lat];
-    this.city?.follow(cityFocus, this.driving ? this.altitude + 1.2 : null, budget, this.driving);
     this.worldFresh = false;
     if (!this.mapShown) this.settleBoot();
     this.map.triggerRepaint();

@@ -2,7 +2,8 @@ import { TireTracks } from './TireTracks';
 import { WorldParticles, type Enu } from './effects/WorldParticles';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { MercatorCoordinate, type CustomLayerInterface, type Map as LibreMap } from 'maplibre-gl';
+import type { MapLayer, ThreeMap } from '@/world3d/map/ThreeMap';
+import { mercatorPerMeter, mercatorX01, mercatorY01 } from '@/world3d/map/camera';
 import type { Car } from '@/config/vehicle.config';
 import { offsetPosition, type Position } from '@/game/VehicleController';
 import type { Pose } from '@/game/VehiclePose';
@@ -38,7 +39,7 @@ type TargetState = TargetVehicle & {
   wreckRestY: number;
 };
 export type AimPoint = { ground: Position; screen: [number, number] };
-export type VehicleSceneLayer = CustomLayerInterface & {
+export type VehicleSceneLayer = MapLayer & {
   /** host-drawn mode: the host renders `scene` placed by `placement` (local → mercator) */
   scene: THREE.Scene;
   placement: THREE.Matrix4;
@@ -179,7 +180,6 @@ export function vehicleLayer(
   height: () => number,
   pitch: () => number,
   roll: () => number,
-  scale: () => number,
   status: (text: string) => void,
   resolveShot: (cam: Position, camAlt: number, ground: Position, groundAlt: number, mark?: boolean) => { point: Position; altitude: number } | null = () => null,
   markGround: (point: Position, altitude: number) => void = () => {},
@@ -190,7 +190,7 @@ export function vehicleLayer(
   let fused = false;
   const placement = new THREE.Matrix4();
   let disposed = false;
-  let map: LibreMap;
+  let map: ThreeMap;
   const root = new THREE.Group();
   root.add(fallbackCar(car.color));
   scene.add(root);
@@ -587,7 +587,7 @@ export function vehicleLayer(
     let bestT = Math.min(rayLen * 1.02, 160);
     let hit: TargetState | null = null;
     let hitUp = cam.up + uy * bestT;
-    const radius = 2.15 * Math.max(1, scale());
+    const radius = 2.15;
     for (const target of targets.values()) {
       if (target.destroyed) continue;
       const delta = eastNorth(here, target.position);
@@ -602,7 +602,7 @@ export function vehicleLayer(
       const t = (-b - Math.sqrt(disc)) / (2 * a);
       if (t < 1.2 || t > bestT) continue;
       const up = cam.up + uy * t;
-      if (up < -0.4 || up > 2.6 * Math.max(1, scale())) continue;
+      if (up < -0.4 || up > 2.6) continue;
       bestT = t;
       hit = target;
       hitUp = Math.max(0.35, Math.min(1.6, up));
@@ -750,7 +750,6 @@ export function vehicleLayer(
   return {
     id: 'vehicle',
     type: 'custom',
-    renderingMode: '3d',
     setAim(next) { aim = next; },
     setFiring(value) { firing = value; },
     flashPlayer(duration) { playerFlashUntil = Math.max(playerFlashUntil, performance.now() + duration); },
@@ -795,12 +794,7 @@ export function vehicleLayer(
     placement,
     fuse() { fused = true; },
     setHeadlights(on: number) {
-      const k = Math.max(1, scale());
-      for (const lens of lenses) {
-        lens.visible = on > 0.02;
-        lens.position.set(Math.sign(lens.position.x) * 0.62 * k, 0.72 * k, 2.08 * k);
-        lens.scale.set(1.3 * k, 0.7 * k, 0.5 * k);
-      }
+      for (const lens of lenses) lens.visible = on > 0.02;
       lensMaterial.opacity = Math.min(1, on);
       lensMaterial.color.setRGB(1.6, 1.5, 1.2);
     },
@@ -914,7 +908,7 @@ export function vehicleLayer(
         raceFinish.rotation.set(0, heading - now * 0.0008, 0);
         finishFlag.rotation.y = Math.sin(now * 0.003) * 0.15;
       }
-      tireTracks.update(here, heading, scale(), car.length, height(), p => map.getTerrain() ? map.queryTerrainElevation(p) : 0);
+      tireTracks.update(here, heading, 1, car.length, height(), p => map.getTerrain() ? map.queryTerrainElevation(p) : 0);
       for (const puff of puffs) {
         if (!puff.active) continue;
         const age = now - puff.born;
@@ -932,20 +926,21 @@ export function vehicleLayer(
         const material = (puff.mesh.children[0] as THREE.Mesh).material as THREE.MeshBasicMaterial;
         material.opacity = 0.82 * fade;
       }
-      const place = MercatorCoordinate.fromLngLat(vehicle.position, height());
-      const meters = place.meterInMercatorCoordinateUnits() * Math.min(10, Math.max(1, scale()));
+      const perMeter = mercatorPerMeter(vehicle.position[1]);
+      const place = { x: mercatorX01(vehicle.position[0]), y: mercatorY01(vehicle.position[1]), z: height() * perMeter };
+      const meters = perMeter;
       root.rotation.order = 'XYZ';
       root.rotation.x = pitch();
       root.rotation.z = roll();
       const matrix = new THREE.Matrix4().makeTranslation(place.x, place.y, place.z).scale(new THREE.Vector3(meters, -meters, meters)).multiply(new THREE.Matrix4().makeRotationX(Math.PI / 2)).multiply(new THREE.Matrix4().makeRotationY(-vehicle.heading + Math.PI));
       placement.copy(matrix);
       // camera position in this layer's local frame, for camera-facing particles
-      const clipToLocal = new THREE.Matrix4().fromArray(args.defaultProjectionData.mainMatrix as unknown as number[]).multiply(matrix).invert();
+      const clipToLocal = new THREE.Matrix4().fromArray(Array.from(args.defaultProjectionData.mainMatrix)).multiply(matrix).invert();
       const eye = new THREE.Vector4(0, 0, -1, 1).applyMatrix4(clipToLocal);
       fx.altitude = height();
       fx.update(now, dt, here, heading, new THREE.Vector3(eye.x / eye.w, eye.y / eye.w, eye.z / eye.w));
       if (fused || !renderer) return;
-      camera.projectionMatrix.fromArray(args.defaultProjectionData.mainMatrix).multiply(matrix);
+      camera.projectionMatrix.fromArray(Array.from(args.defaultProjectionData.mainMatrix)).multiply(matrix);
       renderer.resetState();
       renderer.render(scene, camera);
       renderer.resetState();

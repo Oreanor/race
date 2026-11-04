@@ -7,14 +7,12 @@
     "build": "next build --webpack",
     "start": "next start --hostname 0.0.0.0",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test tests/physics.test.ts tests/buildings.test.ts tests/water.test.ts tests/vegetation.test.ts tests/world3d.test.ts tests/fuel.test.ts tests/travel.test.ts tests/astro.test.ts",
-    "postinstall": "node scripts/copy-worker.mjs"
+    "test": "node --experimental-strip-types --test tests/physics.test.ts tests/buildings.test.ts tests/water.test.ts tests/vegetation.test.ts tests/world3d.test.ts tests/fuel.test.ts tests/travel.test.ts tests/astro.test.ts"
   },
   "dependencies": {
     "@mapbox/vector-tile": "^3.0.0",
     "@photostructure/tz-lookup": "^11.7.0",
     "earcut": "^3.2.4",
-    "maplibre-gl": "^6.0.0",
     "next": "^16.0.0",
     "pbf": "^5.1.2",
     "react": "^19.0.0",

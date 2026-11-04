@@ -16,6 +16,10 @@ import { SkyBodies } from './sky';
 
 type LngLatLike = [number, number] | { lng: number; lat: number };
 type Listener = (event: Record<string, unknown>) => void;
+/** What a layer's render() gets: the camera's mercator → clip matrix. */
+export type RenderArgs = { defaultProjectionData: { mainMatrix: ArrayLike<number> } };
+/** A layer drawn in our world (vehicles, stations …). */
+export type MapLayer = CustomLayer;
 type CustomLayer = {
   id: string;
   type: string;
@@ -25,8 +29,8 @@ type CustomLayer = {
   fuse?: (world?: SimpleLitUniforms) => void;
   onAdd?: (map: ThreeMap, gl: WebGL2RenderingContext) => void;
   onRemove?: (map: ThreeMap, gl: WebGL2RenderingContext) => void;
-  prerender?: (gl: WebGL2RenderingContext, args: unknown) => void;
-  render?: (gl: WebGL2RenderingContext, args: unknown) => void;
+  prerender?: (gl: WebGL2RenderingContext, args: RenderArgs) => void;
+  render?: (gl: WebGL2RenderingContext, args: RenderArgs) => void;
 };
 
 export type ThreeMapOptions = {
@@ -43,7 +47,7 @@ export type ThreeMapOptions = {
 };
 
 const SKY = '#dfe6e6';
-const SOURCE_ID = 'openmaptiles';
+export const SOURCE_ID = 'openmaptiles';
 const REBASE_METERS = 1500;
 
 function toLngLat(p: LngLatLike): [number, number] {

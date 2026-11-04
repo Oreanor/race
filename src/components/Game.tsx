@@ -19,7 +19,6 @@ import FuelGauge from './FuelGauge';
 import TravelDialog from './TravelDialog';
 import ServiceDialog from './ServiceDialog';
 import Dialog from './ui/Dialog';
-import ModeSwitch, { currentMode, DEV_TOOLS } from './ModeSwitch';
 import PerfOverlay from './PerfOverlay';
 import { PerfMonitor, benchmark, type BenchResult, type PerfSnapshot } from '@/world3d/perf/PerfMonitor';
 
@@ -126,9 +125,14 @@ export default function Game() {
   const [status, setStatus] = useState(() => t('loading.city'));
   const [statusToast, setStatusToast] = useState('');
   const [spawnPin, setSpawnPin] = useState<[number, number] | null>(null);
-  // ?perf=1 shows the same profiler as three-world, for side-by-side numbers
-  const [perfOn] = useState(() => DEV_TOOLS && new URLSearchParams(window.location.search).has('perf'));
-  const [renderMode] = useState(() => currentMode());
+  // performance stats: off by default, switched on in the settings (remembered)
+  const [perfOn, setPerfOn] = useState(() => {
+    try { return localStorage.getItem('cityRider.stats') === '1' || new URLSearchParams(window.location.search).has('perf'); } catch { return false; }
+  });
+  const toggleStats = (on: boolean) => {
+    setPerfOn(on);
+    try { localStorage.setItem('cityRider.stats', on ? '1' : '0'); } catch { /* private mode */ }
+  };
   const [perf, setPerf] = useState<PerfSnapshot | null>(null);
   const [bench, setBench] = useState<BenchResult | null>(null);
   const perfGl = useRef<WebGL2RenderingContext | null>(null);
@@ -156,14 +160,13 @@ export default function Game() {
     setBooted(false);
     setSpawnPin(null);
     let game: GameEngine;
-    let monitor: PerfMonitor | null = null;
     try {
       game = new GameEngine(
         host.current!,
         place,
         cars[car],
         settings,
-        (s, _d, _k, frames, drivers) => {
+        (s, _d, frames, drivers) => {
           const shown = Math.round(Math.abs(s));
           if (speedRef.current) {
             speedRef.current.textContent = String(shown).padStart(2, '0');
@@ -190,7 +193,6 @@ export default function Game() {
           aim.style.display = visible ? 'block' : 'none';
           aim.classList.toggle('is-firing', Boolean(firing));
         },
-        renderMode === 'maplibre' ? 'maplibre' : 'three',
         carryRef.current,
       );
       carryRef.current = null;
@@ -210,20 +212,11 @@ export default function Game() {
       game.onFuel = (fuel) => fuelListener.current?.(fuel);
       game.onFuelOut = (out) => setFuelOut(out);
       engine.current = game;
-      if (perfOn) {
-        // getContext returns MapLibre's existing context; the monitor wraps its draw calls
-        const canvas = host.current!.querySelector('canvas');
-        const gl = canvas?.getContext('webgl2') ?? null;
-        if (gl) {
-          perfGl.current = gl;
-          monitor = new PerfMonitor(gl, setPerf);
-        }
-      }
     } catch (error) {
       console.error('Failed to initialize the game engine', error);
       setStatus(t('webgl.failed'));
     }
-    return () => { monitor?.dispose(); game?.dispose(); engine.current = null; };
+    return () => { game?.dispose(); engine.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [place]);
 
@@ -291,6 +284,16 @@ export default function Game() {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
   }, []);
 
+  // stats panel: wraps the world's GL context only while it is shown
+  useEffect(() => {
+    if (!perfOn || !booted) return;
+    const gl = host.current?.querySelector('canvas')?.getContext('webgl2') ?? null;
+    if (!gl) return;
+    perfGl.current = gl;
+    const monitor = new PerfMonitor(gl, setPerf);
+    return () => { monitor.dispose(); perfGl.current = null; setPerf(null); setBench(null); };
+  }, [perfOn, booted, place]);
+
   const runBench = () => {
     const gl = perfGl.current;
     const map = engine.current?.map;
@@ -335,7 +338,7 @@ export default function Game() {
     <main className={driving ? 'game-shell is-driving' : 'game-shell'}>
       <div ref={host} className="map" />
       <div ref={aimRef} className="aim-reticle" aria-hidden="true"><span /></div>
-      {perfOn && <PerfOverlay mode={renderMode === 'maplibre' ? 'MapLibre' : 'Three.js'} perf={perf} bench={bench} onBench={runBench} />}
+      {perfOn && <PerfOverlay mode={t('settings.stats')} perf={perf} bench={bench} onBench={runBench} />}
       {!booted && (
         <div className="map-loader" aria-live="polite">
           <span className="live-dot" />
@@ -347,8 +350,7 @@ export default function Game() {
           <span className="brand-icon">↗</span> city rider
         </a>
         <div className="header-right">
-          <ModeSwitch current={renderMode} />
-          <span className="fps" ref={fpsRef}>— FPS</span>
+          <span className="fps" ref={fpsRef} hidden={!perfOn}>— FPS</span>
         </div>
       </header>
 
@@ -382,17 +384,14 @@ export default function Game() {
                 )}
               </div>
               <h3 className="ui-section">{t('intro.car')}</h3>
-              <div className="cars">
-                {cars.map((c, i) => (
-                  <button key={c.id} className={'car-card ' + (car === i ? 'selected' : '')} onClick={() => setCar(i)} aria-pressed={car === i}>
-                    <span className="car-number">{c.id}</span>
-                    <CarPreview car={c} />
-                    <span className="car-name">
-                      <span className="car-title">{c.name}</span>
-                      <span>{car === i ? '●' : '○'}</span>
-                    </span>
-                  </button>
-                ))}
+              <div className="car-pick">
+                <CarPreview car={cars[car]} />
+                <button type="button" className="car-arrow is-prev" aria-label="←" onClick={() => setCar((car + cars.length - 1) % cars.length)}>‹</button>
+                <button type="button" className="car-arrow is-next" aria-label="→" onClick={() => setCar((car + 1) % cars.length)}>›</button>
+                <div className="car-pick-name">
+                  <strong>{cars[car].name}</strong>
+                  <span>{car + 1} / {cars.length}</span>
+                </div>
               </div>
               <button
                 className="ui-btn drive"
@@ -453,6 +452,7 @@ export default function Game() {
             <label className="toggle">{t('settings.follow')}<input type="checkbox" checked={settings.follow} onChange={e => update({ follow: e.target.checked })} /></label>
             <label className="toggle">{t('settings.terrain')}<input type="checkbox" checked={settings.terrain} onChange={e => update({ terrain: e.target.checked })} /></label>
             <label>{t('settings.sensitivity')}<input type="range" min="0.3" max="2" step="0.1" value={settings.sensitivity} onChange={e => update({ sensitivity: Number(e.target.value) })} /></label>
+            <label className="toggle">{t('settings.stats')}<input type="checkbox" checked={perfOn} onChange={e => toggleStats(e.target.checked)} /></label>
             <label>{t('settings.quality')}<select value={settings.quality} onChange={e => update({ quality: e.target.value as Settings['quality'] })}><option value="low">{t('quality.low')}</option><option value="medium">{t('quality.medium')}</option><option value="high">{t('quality.high')}</option></select></label>
           </div>
         </Dialog>

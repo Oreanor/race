@@ -9,6 +9,7 @@ export const LANGS: { id: Lang; name: string; locale: string }[] = [
 ];
 
 const en = {
+  'settings.stats': 'Performance stats',
   'poi.fuel': '⛽ Fuel',
   'poi.service': '🔧 Car service',
   'fuelDlg.title': 'Fuel station',
@@ -157,6 +158,7 @@ const en = {
 export type MessageKey = keyof typeof en;
 
 const pt: Partial<Record<MessageKey, string>> = {
+  'settings.stats': 'Estatísticas de desempenho',
   'poi.fuel': '⛽ Posto',
   'poi.service': '🔧 Oficina',
   'fuelDlg.title': 'Posto de combustível',
@@ -291,6 +293,7 @@ const pt: Partial<Record<MessageKey, string>> = {
 };
 
 const ru: Partial<Record<MessageKey, string>> = {
+  'settings.stats': 'Статистика производительности',
   'poi.fuel': '⛽ АЗС',
   'poi.service': '🔧 Автосервис',
   'fuelDlg.title': 'АЗС',
