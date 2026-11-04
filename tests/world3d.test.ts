@@ -127,3 +127,16 @@ test('world tile: terrain, roads facing up, gameplay features and raw data kept'
   assert.ok(r.ground.every((g) => g === 50));
   assert.ok(data.buildings.chunks.every((c) => c.ground.every((g) => g === 50)));
 });
+
+test('coplanar walls: the taller keeps the shared stretch, the rest of the lower one survives', async () => {
+  const { cutCoveredWalls } = await import('../src/world3d/tiles/wallCut.ts');
+  const tall = { ax: 0, az: 0, bx: 10, bz: 0, y0: 0, y1: 20, order: 0 };
+  const low = { ax: 6, az: 0.01, bx: 16, bz: 0.01, y0: 0, y1: 9, order: 1 };   // overlaps 6..10
+  const twin = { ax: 10, az: 0, bx: 0, bz: 0, y0: 0, y1: 20, order: 2 };       // exact duplicate, reversed
+  const pieces = cutCoveredWalls([tall, low, twin]);
+  const of = (w: object) => pieces.filter((p) => p.wall === w);
+  assert.equal(of(tall).length, 1);
+  assert.equal(of(twin).length, 0, 'duplicate removed');
+  assert.equal(of(low).length, 1);
+  assert.ok(Math.abs(of(low)[0].t0 - 0.4) < 1e-6 && of(low)[0].t1 === 1, 'only 10..16 of the low wall remains');
+});

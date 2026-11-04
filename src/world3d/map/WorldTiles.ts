@@ -308,6 +308,13 @@ export class WorldTiles {
     this.revision++;
   }
 
+  /** Hide whole tiles that are entirely inside opaque fog (invisible anyway). */
+  cullBeyond(focus: LngLat, distance: number) {
+    const mx = mercatorX(focus[0]), my = mercatorY(focus[1]);
+    const cos = Math.cos(focus[1] * Math.PI / 180);
+    for (const live of this.tiles.values()) live.group.visible = distanceToTile(mx, my, live.tile, cos) <= distance;
+  }
+
   // ---- queries -------------------------------------------------------------
 
   private liveAt(lng: number, lat: number) {

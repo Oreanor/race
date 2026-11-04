@@ -19,13 +19,18 @@ export type InstanceSet = {
 
 export type VegetationData = {
   trunks: InstanceSet;
-  /** 0: round (icosahedron), 1: soft (sphere), 2: conifer (cone) */
+  /** crowns: 0 broadleaf, 1 stone pine, 2 conifer, 3 shrub (see map/treeShapes) */
   leaves: InstanceSet[];
   posts: InstanceSet;
   rails: InstanceSet;
 };
 
-const GREENS = ['#619447', '#7da653', '#53875a', '#8eaf64', '#689f76', '#3d6b3a', '#4e7d42', '#2f5c34'];
+const GREENS = ['#619447', '#7da653', '#53875a', '#8eaf64', '#689f76', '#4e7d42', '#6f9a4a', '#5b8a3c'];
+const PINES = ['#4d6b3a', '#5a7a40', '#466636', '#617f45'];
+const FIRS = ['#2f5c34', '#3d6b3a', '#355e3b', '#2b5232'];
+const SHRUBS = ['#6b9a4f', '#7da653', '#5f8f4a', '#86ab5c'];
+// a few flowering broadleaves: jacaranda, pink blossom, golden crown
+const BLOSSOMS: [number, string][] = [[0.05, '#9b7fd1'], [0.085, '#e59bb8'], [0.11, '#d4b84c']];
 const FENCE_POST_H = 1.28;
 const POST_STEP = 2.15;
 
@@ -34,7 +39,7 @@ function linear(hex: string): [number, number, number] {
   const f = (c: number) => { const x = c / 255; return x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; };
   return [f((v >> 16) & 255), f((v >> 8) & 255), f(v & 255)];
 }
-const GREEN_LINEAR = GREENS.map(linear);
+const pick = (list: string[], t: number) => linear(list[Math.min(list.length - 1, Math.floor(t * list.length))]);
 
 class Instances {
   matrices: number[] = [];
@@ -90,7 +95,7 @@ export function buildVegetation(
   };
   const plants = drain(planVegetation(input));
   const trunks = new Instances();
-  const leaves = [new Instances(), new Instances(), new Instances()];
+  const leaves = [new Instances(), new Instances(), new Instances(), new Instances()];
   const inside = (x: number, z: number) => x >= 0 && z >= 0 && x < span && z < span;
 
   for (const plant of plants) {
@@ -99,29 +104,31 @@ export function buildVegetation(
     if (!inside(x, z)) continue; // the neighbour tile owns it
     const ground = groundAt(x, z);
     const s = 0.8 + plant.seed * 0.45;
-    const tall = plant.seed > 0.7;
-    const height = plant.bush ? 1.5 * s : (tall ? 7.2 : 5.6) * s;
-    const radius = plant.bush ? 1.6 * s : (plant.variant === 1 ? 2.7 : 2.2) * s;
     const yaw = plant.seed * Math.PI * 2;
-    if (!plant.bush) trunks.push(x, height * 0.3, z, yaw, s * toMerc, height * 0.6, s * toMerc, ground);
-    const lobes = plant.bush ? 1 : plant.variant === 1 ? 2 : plant.variant === 2 ? 3 : 1;
-    const species = plant.bush ? 0 : plant.variant;
-    const base = GREEN_LINEAR[Math.floor(plant.seed * GREENS.length)];
-    for (let lobe = 0; lobe < lobes; lobe++) {
-      const angle = plant.seed * 6.28 + lobe * 2.5;
-      const spread = lobe === 0 ? 0 : radius * 0.38;
-      const shade = lobe === 0 ? 1.06 : 0.96;
-      leaves[species].push(
-        x + Math.cos(angle) * spread * toMerc,
-        height * (plant.bush ? 0.75 : 0.7) + (lobe === 0 ? radius * 0.25 : 0),
-        z + Math.sin(angle) * spread * toMerc,
-        yaw,
-        radius * (lobe === 0 ? 1 : 0.82) * toMerc,
-        plant.variant === 2 && !plant.bush ? height * 0.34 : radius * (tall && !plant.bush ? 1.4 : 0.92),
-        radius * (lobe === 0 ? 0.95 : 0.82) * toMerc,
-        ground,
-        [base[0] * shade, base[1] * shade, base[2] * shade],
-      );
+    const t2 = (plant.seed * 97.31) % 1; // second independent-looking roll
+    const lean = (t2 - 0.5) * 0.18;     // crowns are not all perfectly centred
+    if (plant.bush) {
+      leaves[3].push(x, 0, z, yaw, 1.7 * s * toMerc, 1.35 * s, 1.5 * s * toMerc, ground, pick(SHRUBS, t2));
+      continue;
+    }
+    if (plant.variant === 1) {
+      // stone pine: tall bare trunk, wide flat crown
+      const trunk = (5.2 + t2 * 2.6) * s;
+      trunks.push(x, trunk / 2, z, yaw, 1.15 * s * toMerc, trunk, 1.15 * s * toMerc, ground);
+      leaves[1].push(x + lean * toMerc, trunk - 0.6 * s, z, yaw, 3.6 * s * toMerc, 2.1 * s, 3.4 * s * toMerc, ground, pick(PINES, t2));
+    } else if (plant.variant === 2) {
+      // conifer: short trunk, tall tiers
+      const crown = (plant.seed > 0.7 ? 7.4 : 5.8) * s;
+      trunks.push(x, 0.8 * s, z, yaw, 1.1 * s * toMerc, 1.6 * s, 1.1 * s * toMerc, ground);
+      leaves[2].push(x, 0.9 * s, z, yaw, 2.1 * s * toMerc, crown, 2.1 * s * toMerc, ground, pick(FIRS, t2));
+    } else {
+      // broadleaf: visible trunk, clustered round crown; some in blossom
+      const tall = plant.seed > 0.7;
+      const trunk = (tall ? 3.1 : 2.4) * s;
+      trunks.push(x, trunk / 2, z, yaw, s * toMerc, trunk, s * toMerc, ground);
+      const blossom = BLOSSOMS.find(([chance]) => t2 < chance);
+      const color = blossom ? linear(blossom[1]) : pick(GREENS, (plant.seed * 13.7) % 1);
+      leaves[0].push(x + lean * toMerc, trunk * 0.72, z - lean * toMerc, yaw, 2.5 * s * toMerc, (tall ? 4.6 : 3.8) * s, 2.4 * s * toMerc, ground, color);
     }
   }
 

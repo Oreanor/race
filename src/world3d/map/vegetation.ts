@@ -3,13 +3,15 @@ import type { InstanceSet, VegetationData } from '../tiles/vegetationTile';
 import type { BaseUniforms } from './materials';
 import { simpleLit } from './simpleLit';
 import { createPieceGeometries } from '@/game/buildings/BuildingGeometry';
+import { createCrowns } from './treeShapes';
 
 const pieces = createPieceGeometries();
+const crowns = createCrowns();
 
 // Draws the per-tile vegetation planned in the worker. Shared low-poly shapes,
 // one InstancedMesh per shape per tile; ground height and fog in the shader.
 
-type Kind = 'trunk' | 'leaf0' | 'leaf1' | 'leaf2' | 'post' | 'rail' | 'chimney' | 'vent';
+type Kind = 'trunk' | 'leaf0' | 'leaf1' | 'leaf2' | 'leaf3' | 'post' | 'rail' | 'chimney' | 'vent';
 
 export class VegetationRenderer {
   private geometries: Record<Kind, THREE.BufferGeometry>;
@@ -18,9 +20,10 @@ export class VegetationRenderer {
   constructor(uniforms: BaseUniforms) {
     this.geometries = {
       trunk: new THREE.CylinderGeometry(0.13, 0.23, 1, 5),
-      leaf0: new THREE.IcosahedronGeometry(1, 0),
-      leaf1: new THREE.SphereGeometry(1, 7, 5),
-      leaf2: new THREE.ConeGeometry(1, 2, 7),
+      leaf0: crowns.round,
+      leaf1: crowns.umbrella,
+      leaf2: crowns.conifer,
+      leaf3: crowns.bush,
       post: new THREE.BoxGeometry(0.09, 1, 0.09),
       rail: new THREE.BoxGeometry(1, 0.06, 0.05),
       // same shapes as the old detailed layer's roof props
@@ -28,9 +31,9 @@ export class VegetationRenderer {
       vent: pieces.vent,
     };
     const lambert = (color: string | number) => simpleLit(color, uniforms);
-    const leaf = lambert(0xffffff);
+    const leaf = simpleLit(0xffffff, uniforms, { foliage: true });
     this.materials = {
-      trunk: lambert(0x88654b), leaf0: leaf, leaf1: leaf, leaf2: leaf,
+      trunk: lambert(0x7a5a43), leaf0: leaf, leaf1: leaf, leaf2: leaf, leaf3: leaf,
       post: lambert('#4a4036'), rail: lambert('#5c5145'),
       chimney: lambert(0xffffff), vent: lambert(0xffffff),
     };
@@ -44,7 +47,7 @@ export class VegetationRenderer {
   /** Meshes for one tile, ready to add to the tile group. */
   build(data: VegetationData): THREE.InstancedMesh[] {
     return this.instanced([
-      ['trunk', data.trunks], ['leaf0', data.leaves[0]], ['leaf1', data.leaves[1]], ['leaf2', data.leaves[2]],
+      ['trunk', data.trunks], ['leaf0', data.leaves[0]], ['leaf1', data.leaves[1]], ['leaf2', data.leaves[2]], ['leaf3', data.leaves[3]],
       ['post', data.posts], ['rail', data.rails],
     ]);
   }

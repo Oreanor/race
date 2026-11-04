@@ -16,6 +16,9 @@ export type SimpleLitUniforms = {
 
 const SUN = new THREE.Vector3(0.45, 0.8, 0.3).normalize();
 
+/** Seconds, shared by every foliage material; the host advances it each frame. */
+export const worldTime = { value: 0 };
+
 /** Uniforms with fog effectively off, for hosts without a world (MapLibre mode). */
 export function standaloneUniforms(): SimpleLitUniforms {
   return {
@@ -27,26 +30,43 @@ export function standaloneUniforms(): SimpleLitUniforms {
   };
 }
 
-export function simpleLit(color: THREE.ColorRepresentation, uniforms: SimpleLitUniforms, options: { side?: THREE.Side } = {}) {
+export function simpleLit(color: THREE.ColorRepresentation, uniforms: SimpleLitUniforms, options: { side?: THREE.Side; foliage?: boolean } = {}) {
   return new THREE.ShaderMaterial({
     side: options.side ?? THREE.FrontSide,
+    defines: options.foliage ? { FOLIAGE: '' } : {},
     uniforms: {
       ...uniforms,
       uColor: { value: new THREE.Color(color) }, // linear working colour
       uSun: { value: SUN },
+      uTime: worldTime,
     },
     vertexShader: /* glsl */ `
       uniform float uExag;
+      uniform float uTime;
       attribute float iGround;
       varying vec3 vNormal;
       varying vec3 vWorld;
       varying vec3 vTint;
+      #ifdef FOLIAGE
+        attribute float aShade;
+        varying float vShade;
+      #endif
       void main() {
         vec4 p = vec4(position, 1.0);
         vec3 n = normal;
         #ifdef USE_INSTANCING
           p = instanceMatrix * p;
           n = mat3(instanceMatrix) * n;
+        #endif
+        #ifdef FOLIAGE
+          vShade = aShade;
+          #ifdef USE_INSTANCING
+            // gentle wind: the crown top sways, the base stays put; phase from position
+            vec2 phase = instanceMatrix[3].xz * 0.37;
+            float amp = aShade * aShade * 0.05 * length(instanceMatrix[1].xyz);
+            p.x += sin(uTime * 1.25 + phase.x) * amp;
+            p.z += cos(uTime * 0.95 + phase.y) * amp * 0.7;
+          #endif
         #endif
         #ifdef USE_INSTANCING_COLOR
           vTint = instanceColor;
@@ -70,11 +90,18 @@ export function simpleLit(color: THREE.ColorRepresentation, uniforms: SimpleLitU
       varying vec3 vNormal;
       varying vec3 vWorld;
       varying vec3 vTint;
+      #ifdef FOLIAGE
+        varying float vShade;
+      #endif
       void main() {
         vec3 n = normalize(vNormal);
         if (!gl_FrontFacing) n = -n;
         float light = 0.5 + 0.18 * n.y + 0.42 * max(dot(n, uSun), 0.0);
         vec3 color = uColor * vTint * light;
+        #ifdef FOLIAGE
+          // darker under the crown, sunlit on top
+          color *= mix(0.62, 1.15, vShade);
+        #endif
         float fog = smoothstep(uFogNear, uFogFar, distance(vWorld, uCameraPos));
         color = mix(color, pow(uFogColor, vec3(2.2)), fog);
         gl_FragColor = linearToOutputTexel(vec4(color, 1.0));

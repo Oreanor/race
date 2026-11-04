@@ -15,6 +15,7 @@ import { buildRoof, canPitch, simplifyRing, type RoofPoint } from '../../game/bu
 import { PIECES, ROOF_LIP } from '../../game/buildings/pieces.ts';
 import type { InstanceSet } from './vegetationTile.ts';
 import { footprintKey } from '../../game/buildings/wallOverlap.ts';
+import { cutCoveredWalls } from './wallCut.ts';
 import { tileCorner, tileSpan, latFromMercator, type TileId } from '../mercator.ts';
 import { DEM_SIZE, sampleDem } from './dem.ts';
 
@@ -349,6 +350,14 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
   const fpBounds: number[] = [];
   const fpHeights: number[] = [];
 
+  // walls are collected and resolved per tile, then emitted (see pass 2)
+  type Face = {
+    owner: string; ax: number; az: number; bx: number; bz: number; y0: number; y1: number; order: number;
+    chunk: ChunkBuilder; cx: number; cz: number; nx: number; nz: number; length: number; ground: [number, number];
+    crest: number; base: number; top: number; wall: Pt3; roof: Pt3; glass: number; recipe: BuildingRecipe;
+  };
+  const faces: Face[] = [];
+
   const vt = buffer instanceof VectorTile ? buffer : new VectorTile(new PbfReader(buffer));
   const layer = vt.layers.building;
   const dem = options.dem ?? null;
@@ -358,6 +367,69 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
     const demScale = DEM_SIZE / extent;
     const groundAt = (p: Pt) => dem ? sampleDem(dem, p[0] * demScale, p[1] * demScale) : 0;
     const inset = (options.inset ?? 0) * toMerc / k; // meters → tile pixels
+
+    // Pass 1. OSM often has a building outline plus its parts (building:part) with
+    // the same or overlapping footprints. Identical footprints keep only the
+    // tallest copy (as keepVisibleParts did); buildings that contain or sit
+    // inside another one get no pitched roof, so roofs never cut through walls.
+    type Candidate = { id: string; fp: string; height: number; ring: { x: number; y: number }[]; cx: number; cy: number; box: number[] };
+    const parsed: (ReturnType<typeof classifyRings> | null)[] = [];
+    const best = new Map<string, Candidate>();
+    for (let f = 0; f < layer.length; f++) {
+      const feature = layer.feature(f);
+      const props = feature.properties;
+      if (feature.type !== 3 || props.hide_3d === true || props.hide_3d === 'true') { parsed.push(null); continue; }
+      const reported = Number(props.render_height ?? props.height);
+      const base0 = Math.max(0, Number(props.render_min_height ?? props.min_height ?? 0) || 0);
+      const height0 = Math.max(base0 + 3, Math.max(3, Math.min(320, Number.isFinite(reported) && reported > 0 ? reported : 10)));
+      const polygons = classifyRings(feature.loadGeometry());
+      parsed.push(polygons);
+      polygons.forEach((polygon, pi) => {
+        const ring = polygon[0];
+        if (!ring || ring.length < 3) return;
+        const fp = [...new Set(ring.map((p) => `${p.x},${p.y}`))].sort().join(';');
+        let sx = 0, sy = 0, x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+        for (const p of ring) { sx += p.x; sy += p.y; x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
+        const candidate: Candidate = { id: `${f}:${pi}`, fp, height: height0, ring, cx: sx / ring.length, cy: sy / ring.length, box: [x0, y0, x1, y1] };
+        const prior = best.get(fp);
+        if (!prior || height0 > prior.height + 0.05) best.set(fp, candidate);
+      });
+    }
+    const keep = new Set([...best.values()].map((c) => c.id));
+    const crowded = new Set<string>();
+    const buried = new Set<string>();
+    {
+      const cell = 64;
+      const grid = new Map<string, Candidate[]>();
+      for (const c of best.values()) {
+        const key = `${Math.floor(c.cx / cell)},${Math.floor(c.cy / cell)}`;
+        const list = grid.get(key);
+        if (list) list.push(c); else grid.set(key, [c]);
+      }
+      const insideRing = (x: number, y: number, ring: { x: number; y: number }[]) => {
+        let hit = false;
+        for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+          const a = ring[i], b = ring[j];
+          if ((a.y > y) !== (b.y > y) && x < (b.x - a.x) * (y - a.y) / (b.y - a.y) + a.x) hit = !hit;
+        }
+        return hit;
+      };
+      for (const a of best.values()) {
+        for (let gx = Math.floor(a.box[0] / cell); gx <= Math.floor(a.box[2] / cell); gx++) {
+          for (let gy = Math.floor(a.box[1] / cell); gy <= Math.floor(a.box[3] / cell); gy++) {
+            for (const b of grid.get(`${gx},${gy}`) ?? []) {
+              if (b === a || b.cx < a.box[0] || b.cx > a.box[2] || b.cy < a.box[1] || b.cy > a.box[3]) continue;
+              if (!insideRing(b.cx, b.cy, a.ring)) continue;
+              crowded.add(a.id);
+              crowded.add(b.id);
+              // a part inside another building and not taller is buried in it
+              if (b.height <= a.height + 0.05) buried.add(b.id);
+            }
+          }
+        }
+      }
+    }
+
     for (let f = 0; f < layer.length; f++) {
       const feature = layer.feature(f);
       stats.features++;
@@ -369,8 +441,12 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
       // same clamps as GameEngine.rememberPart, so keys and heights match the detailed layer
       const measured = Math.max(3, Math.min(320, Number.isFinite(reported) && reported > 0 ? reported : 10));
       const height = Math.max(base + 3, measured);
-      const polygons = classifyRings(feature.loadGeometry());
-      for (const polygon of polygons) {
+      const polygons = parsed[f];
+      if (!polygons) continue;
+      for (let pi = 0; pi < polygons.length; pi++) {
+        const polygon = polygons[pi];
+        if (!keep.has(`${f}:${pi}`) || buried.has(`${f}:${pi}`)) continue;
+        const buildingId = `${f}:${pi}`;
         const outer = prepareRing(polygon[0], extent);
         if (outer.length < 3) continue;
         const rings = [outer, ...polygon.slice(1).map((ring) => prepareRing(ring, extent)).filter((ring) => ring.length >= 3)];
@@ -457,18 +533,11 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
             const nz = sign * -dx / lengthMerc;
             const length = lengthMerc * metersScale;
             if (recipe) {
-              // one quad per wall; windows are drawn by the shader from the grid
-              const grid = windowGrid(length, base, top, recipe);
-              chunk.grid = grid ? [grid.n, grid.m, grid.step, grid.rowStep, grid.w, grid.h] : [0, 0, 0, 0, 0, 0];
-              const u0 = grid ? (0 - grid.u0) / grid.step : 0;
-              const u1 = grid ? (length - grid.u0) / grid.step : 0;
-              const v0 = grid ? (base - 1 - grid.v0) / grid.rowStep : 0;
-              const v1 = grid ? (top - grid.v0) / grid.rowStep : 0;
-              chunk.quad(ax, az, bx, bz, base - 1, top, nx, nz, wall, u1, v0, v1, glassIndex, true, g, u0);
-              chunk.grid = [0, 0, 0, 0, 0, 0];
-              // roof lip (parapet) in roof colour, a hair outside the wall
-              const lip = 0.08 * toMerc;
-              chunk.quad(ax + nx * lip, az + nz * lip, bx + nx * lip, bz + nz * lip, top, top + ROOF_LIP, nx, nz, roof, 0, 0, 0, glassIndex, false, [crest, crest, crest, crest]);
+              faces.push({
+                owner: key, ax, az, bx, bz, y0: base, y1: top, order: faces.length,
+                chunk, cx: chunk.cx, cz: chunk.cz, nx, nz, length, ground: [g[0], g[1]],
+                crest, base, top, wall, roof, glass: glassIndex, recipe,
+              });
               continue;
             }
             const textured = hasWindows && length >= 1.55;
@@ -508,14 +577,19 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
           }
         }
 
-        // Flat roof.
+        // Pitched roof (as the detailed layer chose it), only for free-standing footprints.
+        const points: RoofPoint[] = recipe ? outer.map((p) => ({ x: (p[0] * k - chunk.cx) * metersScale, z: (p[1] * k - chunk.cz) * metersScale })) : [];
+        const pitched = Boolean(recipe) && recipe!.roofKind !== 'flat' && !crowded.has(buildingId) && canPitch(simplifyRing(points));
+        const ridge = pitched ? buildRoof(points, top + ROOF_LIP - 0.04, recipe!.roofKind as 'gable' | 'hip' | 'tile') : null;
+
+        // Flat roof (not under a pitched one: the two would fight for the same pixels).
         const flat: number[] = [];
         const holes: number[] = [];
         for (let r = 0; r < shrunk.length; r++) {
           if (r > 0) holes.push(flat.length / 2);
           for (const p of shrunk[r]) flat.push(p[0] * k, p[1] * k);
         }
-        const triangles = earcut(flat, holes, 2);
+        const triangles = ridge ? [] : earcut(flat, holes, 2);
         const capY = recipe ? top + ROOF_LIP : top;
         if (triangles.length) {
           const start = chunk.positions.length / 3;
@@ -532,10 +606,6 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
           }
         }
         if (recipe) {
-          // footprint in meters around the building centre (x east, z south), like CityBuildings
-          const points: RoofPoint[] = outer.map((p) => ({ x: (p[0] * k - chunk.cx) * metersScale, z: (p[1] * k - chunk.cz) * metersScale }));
-          const pitched = recipe.roofKind !== 'flat' && canPitch(simplifyRing(points));
-          const ridge = pitched ? buildRoof(points, top + ROOF_LIP - 0.04, recipe.roofKind as 'gable' | 'hip' | 'tile') : null;
           if (ridge) {
             const start = chunk.positions.length / 3;
             for (let i = 0; i < ridge.positions.length; i += 9) {
@@ -571,6 +641,34 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
           }
         }
       }
+    }
+  }
+
+  // Pass 2. Coincident walls (shared by neighbours, or by an outline and its
+  // parts) keep one owner per height range — no double walls flickering, and a
+  // roof lip only where the wall really reaches its own top.
+  if (faces.length) {
+    const lip = 0.08 * toMerc;
+    // tolerance ~6 cm in tile units (mercator meters)
+    for (const { wall: face, t0, t1 } of cutCoveredWalls(faces, 0.06 * toMerc)) {
+      const chunk = face.chunk;
+      chunk.cx = face.cx;
+      chunk.cz = face.cz;
+      const ax = face.ax + (face.bx - face.ax) * t0, az = face.az + (face.bz - face.az) * t0;
+      const bx = face.ax + (face.bx - face.ax) * t1, bz = face.az + (face.bz - face.az) * t1;
+      const ga = face.ground[0] + (face.ground[1] - face.ground[0]) * t0;
+      const gb = face.ground[0] + (face.ground[1] - face.ground[0]) * t1;
+      const y0 = face.base - 1;
+      const grid = windowGrid(face.length, face.base, face.top, face.recipe);
+      chunk.grid = grid ? [grid.n, grid.m, grid.step, grid.rowStep, grid.w, grid.h] : [0, 0, 0, 0, 0, 0];
+      const u0 = grid ? (face.length * t0 - grid.u0) / grid.step : 0;
+      const u1 = grid ? (face.length * t1 - grid.u0) / grid.step : 0;
+      const v0 = grid ? (y0 - grid.v0) / grid.rowStep : 0;
+      const v1 = grid ? (face.top - grid.v0) / grid.rowStep : 0;
+      chunk.quad(ax, az, bx, bz, y0, face.top, face.nx, face.nz, face.wall, u1, v0, v1, face.glass, true, [ga, gb, face.crest, face.crest], u0);
+      chunk.grid = [0, 0, 0, 0, 0, 0];
+      chunk.quad(ax + face.nx * lip, az + face.nz * lip, bx + face.nx * lip, bz + face.nz * lip,
+        face.top, face.top + ROOF_LIP, face.nx, face.nz, face.roof, 0, 0, 0, face.glass, false, [face.crest, face.crest, face.crest, face.crest]);
     }
   }
 

@@ -3,7 +3,7 @@ import { MapCamera, mercatorPerMeter, mercatorX01, mercatorY01 } from './camera'
 import { WorldTiles, defaultWorldOptions } from './WorldTiles';
 import { baseUniforms, facadeMask, type BaseUniforms } from './materials';
 import type { GeoFeature } from '../tiles/worldTile';
-import type { SimpleLitUniforms } from './simpleLit';
+import { worldTime, type SimpleLitUniforms } from './simpleLit';
 
 // A small stand-in for maplibregl.Map, backed by our own Three.js world.
 // It implements only what City Rider calls, with the same semantics, so the
@@ -357,6 +357,9 @@ export class ThreeMap {
     cam.update();
     // stream around what the camera looks at, plus a bit toward the viewer
     this.world.update(cam.state.center);
+    worldTime.value = performance.now() / 1000;
+    // tiles past the opaque fog are pure fog colour (= sky): skip them entirely
+    this.world.cullBeyond(cam.state.center, this.uniforms.uFogFar.value + 150);
 
     const clip = new THREE.Matrix4().copy(cam.mainMatrix).multiply(this.sceneToMercator);
     // The chain mirrors once (mercator y points south). Pick the face side once.
