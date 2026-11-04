@@ -9,6 +9,11 @@ export const LANGS: { id: Lang; name: string; locale: string }[] = [
 ];
 
 const en = {
+  'time.real': 'Time · now, real sun',
+  'time.morning': 'Time · morning',
+  'time.day': 'Time · midday',
+  'time.evening': 'Time · evening',
+  'time.night': 'Time · night',
   // intro / menu
   'loading.city': 'Loading the city…',
   'webgl.failed': 'Could not start WebGL. Try another browser.',
@@ -136,6 +141,11 @@ const en = {
 export type MessageKey = keyof typeof en;
 
 const pt: Partial<Record<MessageKey, string>> = {
+  'time.real': 'Hora · agora, sol real',
+  'time.morning': 'Hora · manhã',
+  'time.day': 'Hora · meio-dia',
+  'time.evening': 'Hora · fim de tarde',
+  'time.night': 'Hora · noite',
   'loading.city': 'A carregar a cidade…',
   'webgl.failed': 'Não foi possível iniciar o WebGL. Experimente outro navegador.',
   'search.label': 'Procurar cidade',
@@ -249,6 +259,11 @@ const pt: Partial<Record<MessageKey, string>> = {
 };
 
 const ru: Partial<Record<MessageKey, string>> = {
+  'time.real': 'Время · сейчас, реальное солнце',
+  'time.morning': 'Время · утро',
+  'time.day': 'Время · полдень',
+  'time.evening': 'Время · вечер',
+  'time.night': 'Время · ночь',
   'loading.city': 'Загружаем город…',
   'webgl.failed': 'Не удалось запустить WebGL. Попробуйте другой браузер.',
   'search.label': 'Поиск города',

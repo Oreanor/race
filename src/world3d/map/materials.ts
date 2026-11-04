@@ -9,6 +9,12 @@ export type BaseUniforms = {
   uExag: { value: number };
   uCameraPos: { value: THREE.Vector3 };
   uSun: { value: THREE.Vector3 };
+  /** sunlight (or moonlight) colour × intensity, linear */
+  uSunColor: { value: THREE.Color };
+  /** sky light colour × intensity, linear */
+  uAmbient: { value: THREE.Color };
+  /** 0 day … 1 night: lit windows */
+  uNight: { value: number };
   uFogColor: { value: THREE.Color };
   uFogNear: { value: number };
   uFogFar: { value: number };
@@ -22,6 +28,9 @@ export function baseUniforms(fogColor: string): BaseUniforms {
     uExag: { value: 0 },
     uCameraPos: { value: new THREE.Vector3() },
     uSun: { value: new THREE.Vector3(0.45, 0.8, 0.3).normalize() },
+    uSunColor: { value: new THREE.Color(0.64, 0.62, 0.57) },
+    uAmbient: { value: new THREE.Color(0.72, 0.73, 0.75) },
+    uNight: { value: 0 },
     uFogColor: { value: new THREE.Color().setStyle(fogColor, THREE.NoColorSpace) },
     // Fog is fully opaque before the load radius: tiles always arrive unseen.
     uFogNear: { value: 1100 },
@@ -33,6 +42,9 @@ export function baseUniforms(fogColor: string): BaseUniforms {
 
 const COMMON = /* glsl */ `
 uniform vec3 uSun;
+uniform vec3 uSunColor;
+uniform vec3 uAmbient;
+uniform float uNight;
 uniform vec3 uFogColor;
 uniform float uFogNear;
 uniform float uFogFar;
@@ -73,9 +85,9 @@ export function groundMaterial(u: BaseUniforms, raster: THREE.Texture) {
         vec3 n = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
         if (n.y < 0.0) n = -n;
         vec3 albedo = toLinear(texture2D(uMap, vUv).rgb);
-        // soft hillshade: only the slope darkens, flat ground keeps its colour
-        float shade = 0.82 + 0.18 * clamp(dot(n, uSun) / uSun.y, 0.0, 1.2);
-        gl_FragColor = linearToOutputTexel(vec4(fogged(albedo * shade, vWorld), 1.0));
+        // sky light plus sunlight on the slope (hillshade comes from the real sun)
+        vec3 light = uAmbient * 0.9 + uSunColor * 0.55 * max(dot(n, uSun), 0.0);
+        gl_FragColor = linearToOutputTexel(vec4(fogged(albedo * light / 0.91, vWorld), 1.0));
       }
     `,
   });
@@ -102,7 +114,8 @@ export function roadMaterial(u: BaseUniforms) {
       varying vec3 vColor;
       varying vec3 vWorld;
       void main() {
-        gl_FragColor = linearToOutputTexel(vec4(fogged(toLinear(vColor), vWorld), 1.0));
+        vec3 light = (uAmbient * 0.9 + uSunColor * 0.55 * max(uSun.y, 0.0)) / 0.91;
+        gl_FragColor = linearToOutputTexel(vec4(fogged(toLinear(vColor) * light, vWorld), 1.0));
       }
     `,
     polygonOffset: true,
@@ -239,9 +252,28 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
           }
         }
         vec3 n = normalize(vNormal);
-        // flat, comic-like light close to the MeshBasic look of the detailed layer
-        float light = n.y > 0.5 ? 1.0 : 0.86 + 0.14 * max(dot(n, uSun), 0.0);
-        gl_FragColor = linearToOutputTexel(vec4(fogged(albedo * light, vWorld), 1.0));
+        // flat, comic-like light; by day it matches the old fixed look exactly
+        float d = max(dot(n, uSun), 0.0);
+        vec3 light = n.y > 0.5
+          ? (uAmbient + uSunColor * d) / 1.2
+          : (uAmbient + uSunColor * 0.22 * d) / 0.84;
+        vec3 color = albedo * light;
+        // at night a share of the windows is lit, each window its own warm tone
+        if (uNight > 0.01 && vWin.x > 0.5) {
+          vec2 uv = vFacade.xy;
+          if (uv.x >= 0.0 && uv.x < vWin.x && uv.y >= 0.0 && uv.y < vWin.y) {
+            vec2 cell = floor(uv);
+            float h = fract(sin(dot(cell + vColor.rg * 37.0, vec2(12.9898, 78.233))) * 43758.5453);
+            vec2 p = (fract(uv) - 0.5) * vWin.zw;
+            vec2 aa = max(fwidth(uv) * vWin.zw, vec2(1e-4)) * 0.75;
+            float g = box(p, vWinSize * 0.46, aa);
+            float far = smoothstep(0.18, 0.45, max(fwidth(uv.x), fwidth(uv.y)));
+            float share = mix(g, vWinSize.x * vWinSize.y / (vWin.z * vWin.w) * 0.85, far);
+            vec3 warm = mix(vec3(1.0, 0.72, 0.38), vec3(1.0, 0.86, 0.6), fract(h * 7.0));
+            color += warm * 1.1 * share * step(0.62, h) * uNight;
+          }
+        }
+        gl_FragColor = linearToOutputTexel(vec4(fogged(color, vWorld), 1.0));
       }
     `,
   });

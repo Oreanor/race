@@ -7,6 +7,10 @@ import * as THREE from 'three';
 // exaggeration) and the world fog measured from the camera in scene space.
 
 export type SimpleLitUniforms = {
+  uSun: { value: THREE.Vector3 };
+  uSunColor: { value: THREE.Color };
+  uAmbient: { value: THREE.Color };
+  uNight: { value: number };
   uExag: { value: number };
   uCameraPos: { value: THREE.Vector3 };
   uFogColor: { value: THREE.Color };
@@ -23,6 +27,10 @@ export const worldTime = { value: 0 };
 export function standaloneUniforms(): SimpleLitUniforms {
   return {
     uExag: { value: 0 },
+    uSun: { value: SUN.clone() },
+    uSunColor: { value: new THREE.Color(0.64, 0.62, 0.57) },
+    uAmbient: { value: new THREE.Color(0.72, 0.73, 0.75) },
+    uNight: { value: 0 },
     uCameraPos: { value: new THREE.Vector3() },
     uFogColor: { value: new THREE.Color(1, 1, 1) },
     uFogNear: { value: 1e9 },
@@ -40,7 +48,6 @@ export function simpleLit(color: THREE.ColorRepresentation, uniforms: SimpleLitU
     uniforms: {
       ...uniforms,
       uColor: { value: new THREE.Color(color) }, // linear working colour
-      uSun: { value: SUN },
       uTime: worldTime,
     },
     vertexShader: /* glsl */ `
@@ -54,7 +61,9 @@ export function simpleLit(color: THREE.ColorRepresentation, uniforms: SimpleLitU
         attribute float aShade;
         varying float vShade;
       #endif
+      varying float vLocalY;
       void main() {
+        vLocalY = position.y;
         vec4 p = vec4(position, 1.0);
         vec3 n = normal;
         #ifdef USE_INSTANCING
@@ -88,6 +97,9 @@ export function simpleLit(color: THREE.ColorRepresentation, uniforms: SimpleLitU
     fragmentShader: /* glsl */ `
       uniform vec3 uColor;
       uniform vec3 uSun;
+      uniform vec3 uSunColor;
+      uniform vec3 uAmbient;
+      uniform float uNight;
       uniform vec3 uCameraPos;
       uniform vec3 uFogColor;
       uniform float uFogNear;
@@ -98,6 +110,7 @@ export function simpleLit(color: THREE.ColorRepresentation, uniforms: SimpleLitU
       #ifdef FOLIAGE
         varying float vShade;
       #endif
+      varying float vLocalY;
       void main() {
         vec3 n = normalize(vNormal);
         if (!gl_FrontFacing) n = -n;
@@ -105,7 +118,7 @@ export function simpleLit(color: THREE.ColorRepresentation, uniforms: SimpleLitU
           // soft foliage: wrapped light (no hard terminator), gentle top-to-bottom
           // shading, leaf-clump dapple and a bright rim like light through leaves
           float wrap = dot(n, uSun) * 0.5 + 0.5;
-          float light = 0.58 + 0.42 * wrap * wrap + 0.08 * n.y;
+          vec3 light = uAmbient * (0.8 + 0.11 * n.y) + uSunColor * 0.68 * wrap * wrap;
           vec3 color = uColor * vTint * light;
           color *= mix(0.74, 1.08, vShade);
           float dapple = sin(vWorld.x * 2.1 + vWorld.y * 0.7) * sin(vWorld.z * 2.3 - vWorld.y * 1.3) * sin(vWorld.y * 2.7 + vWorld.x * 0.9);
@@ -114,14 +127,16 @@ export function simpleLit(color: THREE.ColorRepresentation, uniforms: SimpleLitU
           float rim = pow(1.0 - max(dot(n, toEye), 0.0), 2.0);
           color += uColor * vTint * vec3(0.18, 0.22, 0.1) * rim;
         #else
-          float light = 0.5 + 0.18 * n.y + 0.42 * max(dot(n, uSun), 0.0);
+          vec3 light = uAmbient * (0.69 + 0.25 * n.y) + uSunColor * 0.68 * max(dot(n, uSun), 0.0);
           vec3 color = uColor * vTint * light;
         #endif
         #ifdef SHINY
           // a little metal: soft sun highlight plus a cool sky sheen on top
           vec3 eye = normalize(uCameraPos - vWorld);
           float spec = pow(max(dot(n, normalize(uSun + eye)), 0.0), 28.0);
-          color += vec3(0.55) * spec + vec3(0.05, 0.06, 0.07) * max(n.y, 0.0);
+          color += uSunColor * 0.88 * spec + uAmbient * 0.07 * max(n.y, 0.0);
+          // lamp heads glow at night
+          color += vec3(1.0, 0.78, 0.45) * 2.2 * uNight * step(6.7, vLocalY);
         #endif
         float fog = smoothstep(uFogNear, uFogFar, distance(vWorld, uCameraPos));
         color = mix(color, pow(uFogColor, vec3(2.2)), fog);

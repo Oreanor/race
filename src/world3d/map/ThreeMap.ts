@@ -4,6 +4,8 @@ import { WorldTiles, defaultWorldOptions } from './WorldTiles';
 import { baseUniforms, facadeMask, type BaseUniforms } from './materials';
 import type { GeoFeature } from '../tiles/worldTile';
 import { worldTime, type SimpleLitUniforms } from './simpleLit';
+import { computeLighting, timeFor, TIME_MODES, type Lighting, type TimeMode } from './lighting';
+import { SkyBodies } from './sky';
 
 // A small stand-in for maplibregl.Map, backed by our own Three.js world.
 // It implements only what City Rider calls, with the same semantics, so the
@@ -105,6 +107,14 @@ export class ThreeMap {
   private side: THREE.Side = THREE.FrontSide;
   private removed = false;
   private mask: THREE.Texture;
+  /** real time, or a typical morning / day / evening / night of today here (key T) */
+  private timeMode: TimeMode = 'real';
+  private modeDate: Date | null = null;
+  /** fixed wall-clock time from ?time=HH:MM (testing) */
+  private fixedTime: Date | null = null;
+  private sky = new SkyBodies();
+  private lighting: Lighting | null = null;
+  private lightClock = 0;
   /** player car (lng/lat, altitude m) for the see-through buildings in front of it */
   private focusCar: { at: [number, number]; altitude: number } | null = null;
   loaded = false;
@@ -142,6 +152,14 @@ export class ThreeMap {
       this.triggerRepaint();
     };
     this.scene.add(this.world.root);
+    this.scene.add(this.sky.group);
+    const wanted = new URLSearchParams(window.location.search).get('time');
+    if (wanted && /^\d{1,2}:\d{2}$/.test(wanted)) {
+      const [h, m] = wanted.split(':').map(Number);
+      const d = new Date();
+      d.setHours(h, m, 0, 0);
+      this.fixedTime = d;
+    }
 
     const s = this.camera.state;
     s.center = [...options.center];
@@ -278,6 +296,17 @@ export class ThreeMap {
     return { lng: hit[0], lat: hit[1] };
   }
 
+  /** Next time of day: real → morning → day → evening → night → real. */
+  cycleTime() {
+    this.timeMode = TIME_MODES[(TIME_MODES.indexOf(this.timeMode) + 1) % TIME_MODES.length];
+    const [lng, lat] = this.camera.state.center;
+    this.modeDate = this.timeMode === 'real' ? null : timeFor(this.timeMode, new Date(), lat, lng);
+    this.lightClock = 0;
+    this.emit('timemode', { mode: this.timeMode });
+    this.triggerRepaint();
+    return this.timeMode;
+  }
+
   /** Where the player car is; buildings between it and the camera become see-through. Null turns it off. */
   setFocusCar(at: [number, number] | null, altitude = 0) {
     this.focusCar = at ? { at: [...at], altitude } : null;
@@ -371,6 +400,7 @@ export class ThreeMap {
     const perMeter = mercatorPerMeter(this.origin.lat);
     const eye = cam.cameraMercator;
     this.uniforms.uCameraPos.value.set((eye.x - this.origin.x01) / perMeter, eye.z / perMeter, (eye.y - this.origin.y01) / perMeter);
+    this.updateLighting(eye, perMeter);
     this.uniforms.uXray.value = this.focusCar ? 1 : 0;
     if (this.focusCar) {
       const c = this.focusCar.at;
@@ -394,6 +424,61 @@ export class ThreeMap {
     this.renderer.resetState();
     for (const marker of this.markers) this.placeMarker(marker);
     this.emit('render', {});
+  }
+
+  /** Sun or moon light for this place and moment; recomputed twice a second. */
+  private updateLighting(eye: THREE.Vector3, perMeter: number) {
+    const now = performance.now();
+    if (!this.lighting || now - this.lightClock > 500) {
+      this.lightClock = now;
+      const [lng, lat] = this.camera.state.center;
+      const date = this.modeDate ?? this.fixedTime ?? new Date();
+      this.lighting = computeLighting(date, lat, lng);
+      const l = this.lighting;
+      const u = this.uniforms;
+      u.uSun.value.copy(l.dir);
+      u.uSunColor.value.copy(l.sun);
+      u.uAmbient.value.copy(l.ambient);
+      u.uNight.value = l.night;
+      u.uFogColor.value.copy(l.sky);
+      this.renderer.setClearColor(new THREE.Color().setRGB(l.sky.r, l.sky.g, l.sky.b, THREE.SRGBColorSpace));
+    }
+    const eyeScene = new THREE.Vector3((eye.x - this.origin.x01) / perMeter, eye.z / perMeter, (eye.y - this.origin.y01) / perMeter);
+    this.sky.update(eyeScene, this.lighting);
+    this.lightLayers(this.lighting);
+  }
+
+  /** The car layer's own lights follow the sun: direction, colour and strength. */
+  private lightLayers(l: Lighting) {
+    const rotation = new THREE.Matrix4();
+    for (const layer of this.fused) {
+      const scene = layer.scene!;
+      rotation.extractRotation(scene.matrix).invert();
+      scene.traverse((object) => {
+        const light = object as THREE.Light;
+        if (!light.isLight) return;
+        light.userData.base ??= { intensity: light.intensity, color: light.color.clone() };
+        const base = light.userData.base as { intensity: number; color: THREE.Color };
+        if ((light as THREE.HemisphereLight).isHemisphereLight) {
+          light.intensity = base.intensity * (0.38 + 0.62 * l.level); // the car stays readable at night
+          light.color.copy(base.color).multiply(new THREE.Color(l.ambient.r / 0.72, l.ambient.g / 0.73, l.ambient.b / 0.75));
+          return;
+        }
+        if ((light as THREE.DirectionalLight).isDirectionalLight) {
+          const dl = light as THREE.DirectionalLight;
+          const strength = (l.sun.r + l.sun.g + l.sun.b) / 3 / 0.61;
+          dl.intensity = base.intensity * Math.max(0.22, strength);
+          dl.color.setRGB(l.sun.r / 0.64, l.sun.g / 0.62, l.sun.b / 0.57).multiplyScalar(1 / Math.max(1, Math.max(l.sun.r / 0.64, l.sun.g / 0.62, l.sun.b / 0.57)));
+          if (!dl.target.parent) scene.add(dl.target);
+          dl.target.position.set(0, 0, 0);
+          // the key light comes from the sun; the rim keeps its offset around it
+          const local = l.dir.clone().applyMatrix4(rotation).normalize();
+          if (!dl.userData.rim) dl.userData.rim = dl.position.lengthSq() > 0 && dl.position.x < 0;
+          if (dl.userData.rim) local.set(-local.x, local.y, -local.z);
+          dl.position.copy(local.multiplyScalar(40));
+        }
+      });
+    }
   }
 
   // ---- input (intro screen navigation; disabled while driving) --------------
@@ -437,6 +522,11 @@ export class ThreeMap {
       this.jumpTo({ zoom: Math.min(22, Math.max(12, this.camera.state.zoom - e.deltaY * 0.0022)) });
     }) as EventListener, { passive: false });
     listen(this.canvas, 'contextmenu', (e) => e.preventDefault());
+    listen(window, 'keydown', ((e: KeyboardEvent) => {
+      if (e.code !== 'KeyT' || e.repeat) return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement) return;
+      this.cycleTime();
+    }) as EventListener);
   }
 
   remove() {
@@ -447,6 +537,7 @@ export class ThreeMap {
     for (const layer of [...this.layers]) this.removeLayer(layer.id);
     for (const marker of [...this.markers]) marker.remove();
     this.world.dispose();
+    this.sky.dispose();
     this.mask.dispose();
     this.renderer.dispose();
     this.canvas.remove();

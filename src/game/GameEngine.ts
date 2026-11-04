@@ -325,6 +325,11 @@ export class GameEngine {
       }
     });
     this.map.on('error', () => this.say(t('status.mapError')));
+    // key T cycles the time of day in our world; tell the player which one
+    this.threeMap?.on('timemode', (event) => {
+      const mode = event.mode as 'real' | 'morning' | 'day' | 'evening' | 'night' | undefined;
+      if (mode) this.say(t(`time.${mode}`), true);
+    });
     this.map.on('load', () => {
       if (this.disposed) return;
       this.decorate();
