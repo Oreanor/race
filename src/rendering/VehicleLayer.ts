@@ -43,6 +43,8 @@ export type VehicleSceneLayer = CustomLayerInterface & {
   scene: THREE.Scene;
   placement: THREE.Matrix4;
   fuse: () => void;
+  /** headlamp glow, 0 off … 1 full (night) */
+  setHeadlights: (on: number) => void;
   setAim: (aim: AimPoint | null) => void;
   setFiring: (firing: boolean) => void;
   flashPlayer: (duration: number) => void;
@@ -269,6 +271,16 @@ export function vehicleLayer(
   scene.add(tracer);
   // muzzle flash, impact sparks and explosions
   const fx = new WorldParticles(scene);
+  // headlamp lenses: glow at night (the beam itself is lit by the world shaders)
+  const lensMaterial = new THREE.MeshBasicMaterial({ color: '#fff6dc', transparent: true, opacity: 0 });
+  const lenses = [-0.62, 0.62].map((x) => {
+    const lens = new THREE.Mesh(new THREE.SphereGeometry(0.13, 10, 8), lensMaterial);
+    lens.scale.set(1.3, 0.7, 0.5);
+    lens.position.set(x, 0.72, 2.08); // the car's nose is +z in this frame
+    lens.visible = false;
+    scene.add(lens);
+    return lens;
+  });
   const healthBackgroundGeometry = new THREE.PlaneGeometry(2.2, 0.24);
   const healthFillGeometry = new THREE.PlaneGeometry(1, 0.12);
   const healthBackgroundMaterial = new THREE.MeshBasicMaterial({
@@ -782,6 +794,16 @@ export function vehicleLayer(
     scene,
     placement,
     fuse() { fused = true; },
+    setHeadlights(on: number) {
+      const k = Math.max(1, scale());
+      for (const lens of lenses) {
+        lens.visible = on > 0.02;
+        lens.position.set(Math.sign(lens.position.x) * 0.62 * k, 0.72 * k, 2.08 * k);
+        lens.scale.set(1.3 * k, 0.7 * k, 0.5 * k);
+      }
+      lensMaterial.opacity = Math.min(1, on);
+      lensMaterial.color.setRGB(1.6, 1.5, 1.2);
+    },
     onAdd(nextMap, gl) {
       map = nextMap;
       if (!fused) {

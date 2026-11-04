@@ -16,6 +16,10 @@ export type BaseUniforms = {
   uAmbient: { value: THREE.Color };
   /** 0 day … 1 night: lit windows */
   uNight: { value: number };
+  /** player headlights: position and direction in scene space, on (0..1) at night */
+  uHeadPos: { value: THREE.Vector3 };
+  uHeadDir: { value: THREE.Vector3 };
+  uHeadOn: { value: number };
   uFogColor: { value: THREE.Color };
   uFogNear: { value: number };
   uFogFar: { value: number };
@@ -32,6 +36,9 @@ export function baseUniforms(fogColor: string): BaseUniforms {
     uSunColor: { value: new THREE.Color(0.64, 0.62, 0.57) },
     uAmbient: { value: new THREE.Color(0.72, 0.73, 0.75) },
     uNight: { value: 0 },
+    uHeadPos: { value: new THREE.Vector3() },
+    uHeadDir: { value: new THREE.Vector3(0, 0, -1) },
+    uHeadOn: { value: 0 },
     uFogColor: { value: new THREE.Color().setStyle(fogColor, THREE.NoColorSpace) },
     // Fog is fully opaque before the load radius: tiles always arrive unseen.
     uFogNear: { value: 1100 },
@@ -46,6 +53,22 @@ uniform vec3 uSun;
 uniform vec3 uSunColor;
 uniform vec3 uAmbient;
 uniform float uNight;
+uniform vec3 uHeadPos;
+uniform vec3 uHeadDir;
+uniform float uHeadOn;
+// the car's headlights: a warm cone in front of it, fading with distance
+vec3 headlight(vec3 world, vec3 n) {
+  if (uHeadOn < 0.01) return vec3(0.0);
+  vec3 d = world - uHeadPos;
+  float dist = length(d);
+  if (dist > 60.0) return vec3(0.0);
+  vec3 l = d / max(dist, 0.001);
+  float cone = smoothstep(0.80, 0.94, dot(l, uHeadDir));
+  float fall = 1.0 / (1.0 + dist * dist * 0.006) * smoothstep(60.0, 20.0, dist);
+  float facing = clamp(dot(n, -l) * 0.8 + 0.35, 0.0, 1.0);
+  return vec3(1.0, 0.9, 0.72) * 2.4 * cone * fall * facing * uHeadOn;
+}
+
 uniform vec3 uFogColor;
 uniform float uFogNear;
 uniform float uFogFar;
@@ -84,7 +107,7 @@ const GROUND_FRAGMENT = /* glsl */ `
     vec3 n = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
     if (n.y < 0.0) n = -n;
     // sky light plus sunlight on the slope (hillshade comes from the real sun)
-    vec3 light = uAmbient * 0.9 + uSunColor * 0.55 * max(dot(n, uSun), 0.0);
+    vec3 light = uAmbient * 0.9 + uSunColor * 0.55 * max(dot(n, uSun), 0.0) + headlight(vWorld, n) * 0.91;
     gl_FragColor = linearToOutputTexel(vec4(fogged(toLinear(vColor) * light / 0.91, vWorld), 1.0));
   }
 `;
@@ -186,7 +209,7 @@ export function roadMaterial(u: BaseUniforms) {
       varying vec3 vColor;
       varying vec3 vWorld;
       void main() {
-        vec3 light = (uAmbient * 0.9 + uSunColor * 0.55 * max(uSun.y, 0.0)) / 0.91;
+        vec3 light = (uAmbient * 0.9 + uSunColor * 0.55 * max(uSun.y, 0.0)) / 0.91 + headlight(vWorld, vec3(0.0, 1.0, 0.0));
         gl_FragColor = linearToOutputTexel(vec4(fogged(toLinear(vColor) * light, vWorld), 1.0));
       }
     `,
@@ -329,7 +352,7 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
         vec3 light = n.y > 0.5
           ? (uAmbient + uSunColor * d) / 1.2
           : (uAmbient + uSunColor * 0.22 * d) / 0.84;
-        vec3 color = albedo * light;
+        vec3 color = albedo * (light + headlight(vWorld, n));
         // at night a share of the windows is lit, each window its own warm tone
         if (uNight > 0.01 && vWin.x > 0.5) {
           vec2 uv = vFacade.xy;

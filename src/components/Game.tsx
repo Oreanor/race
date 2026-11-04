@@ -356,13 +356,11 @@ export default function Game() {
         <>
           <section className="intro">
             <div className="trip-card">
-              <div className="field-label">
-                <span>{t('intro.destination')}</span><span>↗</span>
-              </div>
+              <h3 className="ui-section">{t('intro.destination')}</h3>
               <div className="city-search">
                 <label className="search">
-                  <span>⌕</span>
                   <input
+                    className="ui-input"
                     aria-label={t('search.label')}
                     placeholder={t('search.placeholder')}
                     value={search}
@@ -383,9 +381,7 @@ export default function Game() {
                   </div>
                 )}
               </div>
-              <div className="field-label car-label">
-                <span>{t('intro.car')}</span>
-              </div>
+              <h3 className="ui-section">{t('intro.car')}</h3>
               <div className="cars">
                 {cars.map((c, i) => (
                   <button key={c.id} className={'car-card ' + (car === i ? 'selected' : '')} onClick={() => setCar(i)} aria-pressed={car === i}>
@@ -398,23 +394,8 @@ export default function Game() {
                   </button>
                 ))}
               </div>
-              {booted && (
-                <div className="spawn-hint">
-                  {spawnPin
-                    ? <>
-                        <span className="spawn-hint-icon">📍</span>
-                        <span>{t('spawn.chosen')}</span>
-                        <button className="spawn-clear" onClick={() => { engine.current?.clearCustomSpawn(); }}>{t('spawn.reset')}</button>
-                      </>
-                    : <>
-                        <span className="spawn-hint-icon">🖱</span>
-                        <span>{t('spawn.hint')}</span>
-                      </>
-                  }
-                </div>
-              )}
               <button
-                className="drive"
+                className="ui-btn drive"
                 disabled={!booted}
                 onClick={() => { setApproaching(true); setDriving(true); setSettingsOpen(false); }}
               >
@@ -422,6 +403,16 @@ export default function Game() {
               </button>
             </div>
           </section>
+          {booted && (
+            <div className="map-hint" role="status">
+              {spawnPin
+                ? <>
+                    <span>📍 {t('spawn.chosen')}</span>
+                    <button type="button" className="map-hint-action" onClick={() => { engine.current?.clearCustomSpawn(); }}>{t('spawn.reset')}</button>
+                  </>
+                : <span>{t('spawn.hint')}</span>}
+            </div>
+          )}
           <aside className="destination">
             <span className="eyebrow">{t('next.stop')}</span>
             <h2>{place.name}<span>↗</span></h2>

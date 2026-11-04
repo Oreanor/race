@@ -350,7 +350,7 @@ export class GameEngine {
     // key T cycles the time of day in our world; tell the player which one
     this.threeMap?.on('timemode', (event) => {
       const mode = event.mode as 'real' | 'morning' | 'day' | 'evening' | 'night' | undefined;
-      if (mode) this.say(t(`time.${mode}`), true);
+      if (mode) this.say(t(`time.${mode}`, { clock: String(event.clock ?? '') }), true);
     });
     this.map.on('load', () => {
       if (this.disposed) return;
@@ -2299,7 +2299,7 @@ export class GameEngine {
         bearingNow -= (((bearingNow + 540) % 360) - 180) * e;
       }
       this.map.jumpTo({ center, zoom: zoomNow, pitch: pitchNow, bearing: bearingNow, elevation: this.altitude });
-      this.threeMap?.setFocusCar(this.renderVehicle.position, this.altitude);
+      this.threeMap?.setFocusCar(this.renderVehicle.position, this.altitude, this.renderVehicle.heading);
       this.updateAim();
     } else if (!this.driving) {
       this.threeMap?.setFocusCar(null);

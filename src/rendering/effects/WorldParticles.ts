@@ -237,13 +237,13 @@ export class WorldParticles {
 
   /** Muzzle flash: a hot core, flame tongues along the shot, a couple of sparks. */
   muzzle(here: Position, at: Enu, dir: Enu, now: number) {
-    this.add(here, at, { kind: 'flash', ve: 0, vn: 0, vu: 0, life: 55, size0: 0.55, size1: 0.8, drag: 0, gravity: 0, stretch: 0 }, now);
+    this.add(here, at, { kind: 'flash', ve: 0, vn: 0, vu: 0, life: 40, size0: 0.2, size1: 0.3, drag: 0, gravity: 0, stretch: 0 }, now);
     for (let i = 0; i < 3; i++) {
       const speed = rand(7, 13);
       const spread = 0.18;
       this.add(here, at, {
         kind: 'flame', ve: (dir.e + rand(-spread, spread)) * speed, vn: (dir.n + rand(-spread, spread)) * speed, vu: (dir.u + rand(-spread, spread)) * speed,
-        life: rand(45, 75), size0: 0.22, size1: 0.12, drag: 10, gravity: 0, stretch: 0.07,
+        life: rand(40, 65), size0: 0.15, size1: 0.07, drag: 10, gravity: 0, stretch: 0.07,
       }, now);
     }
     for (let i = 0; i < 2; i++) this.spark(here, at, dir, 0.45, rand(8, 14), now, 160);

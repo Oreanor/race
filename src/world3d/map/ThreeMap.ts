@@ -5,6 +5,7 @@ import { baseUniforms, facadeMask, type BaseUniforms } from './materials';
 import type { GeoFeature } from '../tiles/worldTile';
 import { worldTime, type SimpleLitUniforms } from './simpleLit';
 import { computeLighting, timeFor, TIME_MODES, type Lighting, type TimeMode } from './lighting';
+import { placeClock, placeMoment } from '../placeTime';
 import { SkyBodies } from './sky';
 
 // A small stand-in for maplibregl.Map, backed by our own Three.js world.
@@ -111,7 +112,8 @@ export class ThreeMap {
   private timeMode: TimeMode = 'real';
   private modeDate: Date | null = null;
   /** fixed wall-clock time from ?time=HH:MM (testing) */
-  private fixedTime: Date | null = null;
+  /** ?time=HH:MM: that time on the clocks of the place on screen */
+  private fixedClock: [number, number] | null = null;
   private sky = new SkyBodies();
   private lighting: Lighting | null = null;
   private lightClock = 0;
@@ -121,7 +123,7 @@ export class ThreeMap {
   private holesDirty = false;
   private holesOrigin = '';
   /** player car (lng/lat, altitude m) for the see-through buildings in front of it */
-  private focusCar: { at: [number, number]; altitude: number } | null = null;
+  private focusCar: { at: [number, number]; altitude: number; heading: number } | null = null;
   loaded = false;
 
   constructor(options: ThreeMapOptions) {
@@ -170,9 +172,7 @@ export class ThreeMap {
     const wanted = new URLSearchParams(window.location.search).get('time');
     if (wanted && /^\d{1,2}:\d{2}$/.test(wanted)) {
       const [h, m] = wanted.split(':').map(Number);
-      const d = new Date();
-      d.setHours(h, m, 0, 0);
-      this.fixedTime = d;
+      this.fixedClock = [h, m];
     }
 
     const s = this.camera.state;
@@ -316,14 +316,14 @@ export class ThreeMap {
     const [lng, lat] = this.camera.state.center;
     this.modeDate = this.timeMode === 'real' ? null : timeFor(this.timeMode, new Date(), lat, lng);
     this.lightClock = 0;
-    this.emit('timemode', { mode: this.timeMode });
+    this.emit('timemode', { mode: this.timeMode, clock: placeClock(this.shownTime(lat, lng), lat, lng) });
     this.triggerRepaint();
     return this.timeMode;
   }
 
   /** Where the player car is; buildings between it and the camera become see-through. Null turns it off. */
-  setFocusCar(at: [number, number] | null, altitude = 0) {
-    this.focusCar = at ? { at: [...at], altitude } : null;
+  setFocusCar(at: [number, number] | null, altitude = 0, heading = 0) {
+    this.focusCar = at ? { at: [...at], altitude, heading } : null;
   }
 
   /** First building hit along a shot (like CityBuildings.shoot); `mark` leaves a bullet hole. */
@@ -454,9 +454,16 @@ export class ThreeMap {
     this.updateLighting(eye, perMeter);
     this.placeHoles(perMeter);
     this.uniforms.uXray.value = this.focusCar ? 1 : 0;
+    this.uniforms.uHeadOn.value = this.focusCar ? Math.min(1, (this.lighting?.night ?? 0) * 1.4) : 0;
+    for (const layer of this.fused) (layer as { setHeadlights?: (on: number) => void }).setHeadlights?.(this.uniforms.uHeadOn.value);
     if (this.focusCar) {
       const c = this.focusCar.at;
       this.uniforms.uCar.value.set((mercatorX01(c[0]) - this.origin.x01) / perMeter, this.focusCar.altitude, (mercatorY01(c[1]) - this.origin.y01) / perMeter);
+      // headlights: from the car's nose, aimed a little down the road
+      const h = this.focusCar.heading;
+      const forward = new THREE.Vector3(Math.sin(h), 0, -Math.cos(h));
+      this.uniforms.uHeadPos.value.copy(this.uniforms.uCar.value).addScaledVector(forward, 2.1).add(new THREE.Vector3(0, 0.75, 0));
+      this.uniforms.uHeadDir.value.copy(forward).add(new THREE.Vector3(0, -0.07, 0)).normalize();
     }
 
     const gl = this.renderer.getContext() as WebGL2RenderingContext;
@@ -478,13 +485,19 @@ export class ThreeMap {
     this.emit('render', {});
   }
 
+  /** The moment the world is lit for: the place's real time unless T or ?time= says otherwise. */
+  private shownTime(lat: number, lng: number) {
+    if (this.modeDate) return this.modeDate;
+    if (this.fixedClock) return placeMoment(new Date(), lat, lng, ...this.fixedClock);
+    return new Date();
+  }
   /** Sun or moon light for this place and moment; recomputed twice a second. */
   private updateLighting(eye: THREE.Vector3, perMeter: number) {
     const now = performance.now();
     if (!this.lighting || now - this.lightClock > 500) {
       this.lightClock = now;
       const [lng, lat] = this.camera.state.center;
-      const date = this.modeDate ?? this.fixedTime ?? new Date();
+      const date = this.shownTime(lat, lng);
       this.lighting = computeLighting(date, lat, lng);
       const l = this.lighting;
       const u = this.uniforms;

@@ -11,6 +11,9 @@ export type SimpleLitUniforms = {
   uSunColor: { value: THREE.Color };
   uAmbient: { value: THREE.Color };
   uNight: { value: number };
+  uHeadPos: { value: THREE.Vector3 };
+  uHeadDir: { value: THREE.Vector3 };
+  uHeadOn: { value: number };
   uExag: { value: number };
   uCameraPos: { value: THREE.Vector3 };
   uFogColor: { value: THREE.Color };
@@ -31,6 +34,9 @@ export function standaloneUniforms(): SimpleLitUniforms {
     uSunColor: { value: new THREE.Color(0.64, 0.62, 0.57) },
     uAmbient: { value: new THREE.Color(0.72, 0.73, 0.75) },
     uNight: { value: 0 },
+    uHeadPos: { value: new THREE.Vector3() },
+    uHeadDir: { value: new THREE.Vector3(0, 0, -1) },
+    uHeadOn: { value: 0 },
     uCameraPos: { value: new THREE.Vector3() },
     uFogColor: { value: new THREE.Color(1, 1, 1) },
     uFogNear: { value: 1e9 },
@@ -100,6 +106,22 @@ export function simpleLit(color: THREE.ColorRepresentation, uniforms: SimpleLitU
       uniform vec3 uSunColor;
       uniform vec3 uAmbient;
       uniform float uNight;
+      uniform vec3 uHeadPos;
+      uniform vec3 uHeadDir;
+      uniform float uHeadOn;
+      // the car's headlights: a warm cone in front of it, fading with distance
+      vec3 headlight(vec3 world, vec3 n) {
+        if (uHeadOn < 0.01) return vec3(0.0);
+        vec3 d = world - uHeadPos;
+        float dist = length(d);
+        if (dist > 60.0) return vec3(0.0);
+        vec3 l = d / max(dist, 0.001);
+        float cone = smoothstep(0.80, 0.94, dot(l, uHeadDir));
+        float fall = 1.0 / (1.0 + dist * dist * 0.006) * smoothstep(60.0, 20.0, dist);
+        float facing = clamp(dot(n, -l) * 0.8 + 0.35, 0.0, 1.0);
+        return vec3(1.0, 0.9, 0.72) * 2.4 * cone * fall * facing * uHeadOn;
+      }
+      
       uniform vec3 uCameraPos;
       uniform vec3 uFogColor;
       uniform float uFogNear;
@@ -118,7 +140,7 @@ export function simpleLit(color: THREE.ColorRepresentation, uniforms: SimpleLitU
           // soft foliage: wrapped light (no hard terminator), gentle top-to-bottom
           // shading, leaf-clump dapple and a bright rim like light through leaves
           float wrap = dot(n, uSun) * 0.5 + 0.5;
-          vec3 light = uAmbient * (0.8 + 0.11 * n.y) + uSunColor * 0.68 * wrap * wrap;
+          vec3 light = uAmbient * (0.8 + 0.11 * n.y) + uSunColor * 0.68 * wrap * wrap + headlight(vWorld, n);
           vec3 color = uColor * vTint * light;
           color *= mix(0.74, 1.08, vShade);
           float dapple = sin(vWorld.x * 2.1 + vWorld.y * 0.7) * sin(vWorld.z * 2.3 - vWorld.y * 1.3) * sin(vWorld.y * 2.7 + vWorld.x * 0.9);
@@ -127,7 +149,7 @@ export function simpleLit(color: THREE.ColorRepresentation, uniforms: SimpleLitU
           float rim = pow(1.0 - max(dot(n, toEye), 0.0), 2.0);
           color += uColor * vTint * vec3(0.18, 0.22, 0.1) * rim;
         #else
-          vec3 light = uAmbient * (0.69 + 0.25 * n.y) + uSunColor * 0.68 * max(dot(n, uSun), 0.0);
+          vec3 light = uAmbient * (0.69 + 0.25 * n.y) + uSunColor * 0.68 * max(dot(n, uSun), 0.0) + headlight(vWorld, n);
           vec3 color = uColor * vTint * light;
         #endif
         #ifdef SHINY

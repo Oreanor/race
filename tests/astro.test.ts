@@ -21,3 +21,12 @@ test('moon phase: full and new moons', () => {
   const fresh = moonIllumination(new Date(Date.UTC(2026, 0, 18, 19, 52))); // new moon 18 Jan 2026
   assert.ok(fresh.fraction < 0.02, JSON.stringify(fresh));
 });
+
+test('time of the place, not of the player', async () => {
+  const { placeClock, placeMoment } = await import('../src/world3d/placeTime.ts');
+  const noonUtc = new Date('2026-11-04T12:00:00Z');
+  assert.equal(placeClock(noonUtc, 40.2, -8.42), '12:00'); // Coimbra, winter time
+  assert.equal(placeClock(noonUtc, 55.75, 37.6), '15:00'); // Moscow
+  assert.equal(placeMoment(noonUtc, 55.75, 37.6, 22, 30).toISOString(), '2026-11-04T19:30:00.000Z');
+  assert.equal(placeClock(new Date('2026-07-01T12:00:00Z'), 40.2, -8.42), '13:00'); // summer time
+});

@@ -151,3 +151,21 @@
 .ui-btn:disabled{opacity:.5;cursor:default}
 .travel-hub-marker.is-fuel{color:#2f9e6e}
 .travel-hub-marker.is-repair{color:#c2622f}
+
+/* ---- intro card in the shared UI style ---- */
+.intro .trip-card{display:flex;flex-direction:column;gap:10px;padding:18px;border:0;border-radius:var(--ui-radius);background:var(--ui-bg);box-shadow:var(--ui-shadow);font-family:var(--ui-font);color:var(--ui-ink)}
+.ui-section{margin:4px 0 0;font:600 13px var(--ui-font);color:var(--ui-muted);letter-spacing:.2px}
+.intro .search{display:block;margin:0;padding:0;border:0;background:none}
+.intro .search .ui-input{width:100%}
+.intro .cars{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:0}
+.intro .car-card{display:flex!important;flex-direction:column;align-items:stretch;gap:4px;width:auto!important;height:auto!important;margin:0!important;padding:8px!important;border:1.5px solid var(--ui-line)!important;border-radius:var(--ui-radius-sm)!important;background:var(--ui-bg)!important;color:var(--ui-ink);font:13px var(--ui-font)!important;text-decoration:none!important;cursor:pointer}
+.intro .car-card:hover{background:var(--ui-soft)!important}
+.intro .car-card.selected{border-color:var(--ui-accent)!important;background:var(--ui-soft)!important}
+.intro .car-card .car-number{font-size:11px;color:var(--ui-muted)}
+.intro .car-card .car-name{display:flex;justify-content:space-between;gap:4px;font-size:12px;font-weight:600}
+.intro .car-card .car-name>span:last-child{color:var(--ui-accent)}
+.intro .ui-btn.drive{margin-top:6px!important;height:48px!important;font-size:16px!important}
+.intro .ui-btn.drive:disabled{opacity:.5}
+.map-hint{position:absolute;z-index:30;left:50%;bottom:24px;transform:translateX(-50%);display:flex;align-items:center;gap:10px;max-width:calc(100vw - 32px);padding:8px 14px;border-radius:999px;background:var(--ui-bg);color:var(--ui-ink);box-shadow:var(--ui-shadow);font:13px var(--ui-font);white-space:nowrap}
+.map-hint-action{display:inline!important;width:auto!important;height:auto!important;margin:0!important;padding:0!important;border:0;background:none!important;color:var(--ui-accent)!important;font:600 13px var(--ui-font)!important;text-decoration:none!important;cursor:pointer}
+@media (max-width:720px){.map-hint{bottom:12px;white-space:normal;border-radius:14px}}
