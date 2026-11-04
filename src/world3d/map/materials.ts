@@ -135,7 +135,10 @@ export function groundMaterial(u: BaseUniforms) {
 export function overlayMaterial(u: BaseUniforms, layer: number) {
   return new THREE.ShaderMaterial({
     uniforms: { ...u }, vertexShader: GROUND_VERTEX, fragmentShader: GROUND_FRAGMENT,
-    polygonOffset: true, polygonOffsetFactor: -1 - layer, polygonOffsetUnits: -2 - 2 * layer,
+    // overlapping land-use polygons lie in the same plane: no depth writes, so they never
+    // fight each other; the draw order (renderOrder per layer) decides which is on top
+    depthWrite: false,
+    polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4,
   });
 }
 
@@ -188,9 +191,9 @@ export function waterMaterial(u: BaseUniforms) {
         vec3 color = mix(base, sky, 0.06 + 0.38 * fresnel);
         float glint = pow(max(dot(reflect(-uSun, n), toEye), 0.0), 120.0);
         color += uSunColor * 2.4 * glint * step(0.0, uSun.y);
-        // foam: a broken, gently moving line right at the bank
+        // foam: a thin, broken, gently moving line right at the bank
         float wobble = 0.5 + 0.5 * sin(p.x * 1.7 + t * 1.3) * sin(p.y * 1.9 - t * 1.1);
-        float foam = (1.0 - smoothstep(0.3, 1.6 + wobble, vShore)) * (vPool > 0.5 ? 0.25 : 0.7);
+        float foam = (1.0 - smoothstep(0.1, 0.45 + 0.45 * wobble, vShore)) * (vPool > 0.5 ? 0.2 : 0.45) * step(0.35, wobble);
         color = mix(color, toLinear(vec3(0.94, 0.97, 0.97)) * (uAmbient + uSunColor * 0.4), foam);
         gl_FragColor = linearToOutputTexel(vec4(fogged(color, vWorld), 1.0));
       }

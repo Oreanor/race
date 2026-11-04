@@ -236,7 +236,7 @@ export class WorldTiles {
       g.layers.forEach((layer, i) => {
         if (!layer.index.length) return;
         const mesh = this.mesh(layer, this.overlayMats[i], false);
-        mesh.renderOrder = -3;
+        mesh.renderOrder = -3.9 + i * 0.1; // after the terrain, before water and roads
         group.add(mesh);
         live.disposables.push(mesh.geometry);
       });
@@ -246,6 +246,14 @@ export class WorldTiles {
         water.renderOrder = -3;
         group.add(water);
         live.disposables.push(water.geometry);
+      }
+      if (data.streams.index.length) {
+        // streams look like the rest of the water: away from a bank, no foam
+        const streams = this.mesh(data.streams, this.waterMat, false);
+        streams.geometry.setAttribute('aShore', new THREE.BufferAttribute(new Float32Array(data.streams.positions.length / 3).fill(3), 1));
+        streams.renderOrder = -3;
+        group.add(streams);
+        live.disposables.push(streams.geometry);
       }
       if (data.roads.index.length) {
         const roads = this.mesh(data.roads, this.roadMat, false);

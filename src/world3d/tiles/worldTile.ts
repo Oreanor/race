@@ -41,6 +41,8 @@ export type WorldTileData = {
   /** bridge decks: x0, z0, x1, z1, half width, deck height (tile-local mercator meters, m) */
   bridges: Float32Array;
   roads: MeshData;
+  /** streams, canals, ditches: ribbons drawn with the water material */
+  streams: MeshData;
   buildings: TileData;
   vegetation: VegetationData;
   features: Record<string, GeoFeature[]>;
@@ -156,14 +158,23 @@ function clipSegment(ax: number, ay: number, bx: number, by: number, extent: num
   return [ax + dx * t0, ay + dy * t0, ax + dx * t1, ay + dy * t1];
 }
 
-function roadMesh(vt: VectorTile, span: number, metersScale: number, groundAt: (x: number, z: number) => number, bridges: number[]): MeshData {
+function meshOf(builder: RoadBuilder): MeshData {
+  return {
+    positions: new Float32Array(builder.positions),
+    ground: new Float32Array(builder.ground),
+    colors: new Uint8Array(builder.colors),
+    index: new Uint32Array(builder.index),
+  };
+}
+
+/** Streams, canals, ditches: water ribbons (rivers come as water polygons). */
+function streamMesh(vt: VectorTile, span: number, metersScale: number, groundAt: (x: number, z: number) => number): MeshData {
   const builder = new RoadBuilder(groundAt);
-  // streams, canals, ditches: thin water ribbons (rivers come as water polygons)
   const ways = vt.layers.waterway;
   if (ways) {
     const k = span / ways.extent;
     const toMerc = 1 / metersScale;
-    const rgb = hex('#4aa9c4');
+    const natural: [number, number, number] = [0, 0, 0]; // water kind 0: natural (not a pool)
     for (let i = 0; i < ways.length; i++) {
       const f = ways.feature(i);
       if (f.type !== 2 || f.properties.brunnel === 'tunnel') continue;
@@ -172,10 +183,18 @@ function roadMesh(vt: VectorTile, span: number, metersScale: number, groundAt: (
       const half = (cls === 'canal' ? 4 : 1.3) * toMerc;
       for (const line of f.loadGeometry()) for (let j = 0; j + 1 < line.length; j++) {
         const c = clipSegment(line[j].x, line[j].y, line[j + 1].x, line[j + 1].y, ways.extent);
-        if (c) builder.segment(c[0] * k, c[1] * k, c[2] * k, c[3] * k, half, 0.04, rgb, 10 * toMerc);
+        if (!c) continue;
+        builder.segment(c[0] * k, c[1] * k, c[2] * k, c[3] * k, half, 0.04, natural, 10 * toMerc);
+        // round joins so the bends have no notches
+        if (j > 0 && c[0] === line[j].x && c[1] === line[j].y) builder.disc(c[0] * k, c[1] * k, half, 0.04, natural, 8);
       }
     }
   }
+  return meshOf(builder);
+}
+
+function roadMesh(vt: VectorTile, span: number, metersScale: number, groundAt: (x: number, z: number) => number, bridges: number[]): MeshData {
+  const builder = new RoadBuilder(groundAt);
   const layer = vt.layers.transportation;
   if (layer) {
     const k = span / layer.extent;
@@ -227,12 +246,7 @@ function roadMesh(vt: VectorTile, span: number, metersScale: number, groundAt: (
       }
     }
   }
-  return {
-    positions: new Float32Array(builder.positions),
-    ground: new Float32Array(builder.ground),
-    colors: new Uint8Array(builder.colors),
-    index: new Uint32Array(builder.index),
-  };
+  return meshOf(builder);
 }
 
 // ---- assembly --------------------------------------------------------------
@@ -248,6 +262,7 @@ export function buildWorldTile(buffer: ArrayBuffer, tile: TileId, options: World
   const groundAt = (x: number, z: number) => gridGround(ground.heights, options.grid, x / span, z / span);
   const bridgeList: number[] = [];
   const roads = roadMesh(vt, span, metersScale, groundAt, bridgeList);
+  const streams = streamMesh(vt, span, metersScale, groundAt);
   const bridges = new Float32Array(bridgeList);
   // on a bridge the surface is the deck
   const surfaceAt = (x: number, z: number) => Math.max(groundAt(x, z), bridgeDeck(bridges, x, z) ?? -Infinity);
@@ -267,6 +282,7 @@ export function buildWorldTile(buffer: ArrayBuffer, tile: TileId, options: World
     ground,
     bridges,
     roads,
+    streams,
     buildings: buildTile(vt, tile, { chunks: options.chunks, windows: false, dem, inset: options.inset, legacyColors: true, detailed: { region: options.region } }),
     vegetation: buildVegetation(corner, span, metersScale, features as unknown as Record<string, MapFeature[]>, surfaceAt),
     features,
@@ -278,7 +294,7 @@ export function buildWorldTile(buffer: ArrayBuffer, tile: TileId, options: World
 export function worldTransferables(data: WorldTileData): ArrayBuffer[] {
   const out = [...buildingTransferables(data.buildings), ...vegetationTransferables(data.vegetation)];
   out.push(...groundTransferables(data.ground), data.bridges.buffer as ArrayBuffer);
-  for (const mesh of [data.roads]) {
+  for (const mesh of [data.roads, data.streams]) {
     out.push(mesh.positions.buffer as ArrayBuffer, mesh.ground.buffer as ArrayBuffer, mesh.index.buffer as ArrayBuffer);
     if (mesh.colors) out.push(mesh.colors.buffer as ArrayBuffer);
     if (mesh.uvs) out.push(mesh.uvs.buffer as ArrayBuffer);
