@@ -11,6 +11,14 @@ import type { MapFeature } from '../src/game/WaterCollisionController.ts';
 // Behaviour, not mechanics: on the real streets of a city tile, a bot left to
 // itself for a minute keeps driving and keeps to the roads.
 
+// Bots pace their route planning by the clock (a few times a second); a minute of
+// driving here takes milliseconds, so the clock runs with the simulation instead.
+let simulated = 0;
+const realNow = performance.now.bind(performance);
+performance.now = () => simulated;
+process.on('exit', () => { performance.now = realNow; });
+const step = (dt: number) => { simulated += dt * 1000; };
+
 const tile = { z: 14, x: 7808, y: 6190 };
 const vt = new VectorTile(new PbfReader(readFileSync(new URL('./fixtures/coimbra-14-7808-6190.pbf', import.meta.url))));
 
@@ -35,6 +43,7 @@ test('a bot on real streets drives on for a minute and keeps to the roads', () =
     let travelled = 0;
     let last = [...bot.position] as [number, number];
     for (let frame = 0; frame < 60 * 60; frame++) {
+      step(1 / 60);
       advanceTrafficBot(bot, 1 / 60, network, config);
       if (frame % 30 === 0) {
         travelled += metersBetween(last, bot.position);
@@ -46,5 +55,31 @@ test('a bot on real streets drives on for a minute and keeps to the roads', () =
     }
     assert.ok(travelled > 300, `seed ${seed}: only ${travelled.toFixed(0)} m in a minute`);
     assert.ok(offRoad / samples < 0.05, `seed ${seed}: off the road ${offRoad} of ${samples} times`);
+  }
+});
+
+test('traffic bots never circle a point or stand still for long', () => {
+  const network = new TrafficRoadNetwork();
+  network.addFeatures(roads());
+  const start: [number, number] = [-8.4307, 40.2085];
+  for (let seed = 0; seed < 12; seed++) {
+    const car = cars[seed % cars.length];
+    // as the shared traffic drives them: spawned a few hundred meters away, easy on the pedal
+    const bot = createTrafficBot(`t${seed}`, 'x', car, network, start, 0, new Set(), 'explore', seed * 7919, { min: 160, max: 520 });
+    const config = { ...vehicleConfig, acceleration: Math.min(car.acceleration, 9), maxSpeed: Math.min(car.maxSpeed, 14) };
+    const trail: [number, number][] = [];
+    for (let frame = 0; frame < 60 * 120; frame++) {
+      step(1 / 60);
+      advanceTrafficBot(bot, 1 / 60, network, config);
+      if (frame % 60) continue;
+      trail.push([...bot.position] as [number, number]);
+      // going round a point (or standing) keeps the car within a small circle for
+      // long; a U-turn at a dead end, or driving there and back, does not
+      if (trail.length > 25) {
+        const anchor = trail[trail.length - 26];
+        const far = Math.max(...trail.slice(-25).map((p) => metersBetween(anchor, p)));
+        assert.ok(far >= 30, `seed ${seed}: within ${far.toFixed(0)} m for 25 s at ${frame / 60} s (circling or stuck)`);
+      }
+    }
   }
 });

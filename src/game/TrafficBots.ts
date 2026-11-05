@@ -544,7 +544,12 @@ export function trafficBotKeys(bot: TrafficBot, network: TrafficRoadNetwork) {
 
   // the last point counts too: past it the route is done and a new one is found
   // (circling a missed end point kept bots busy in one spot)
-  while (bot.routeIndex < bot.route.length && metersBetween(bot.position, bot.route[bot.routeIndex]) < 9) bot.routeIndex++;
+  // a point is passed when close, or when it is already behind us (else bots circled it)
+  const passed = (point: Position) => {
+    const d = metersBetween(bot.position, point);
+    return d < 9 || (d < 25 && Math.abs(angleDifference(headingTo(bot.position, point), bot.heading)) > 1.9);
+  };
+  while (bot.routeIndex < bot.route.length && passed(bot.route[bot.routeIndex])) bot.routeIndex++;
   if (bot.routeIndex >= bot.route.length) return cruiseKeys(bot);
   const keys = new Set<string>();
   // Wall/corner escape: keep reversing+turning for a bit so step() doesn't cancel it with KeyW.
@@ -568,6 +573,11 @@ export function trafficBotKeys(bot: TrafficBot, network: TrafficRoadNetwork) {
   let targetSpeed = hunting
     ? (closing ? 15 : farHunt ? 20 : turnAngle > 0.55 ? 10 : 16)
     : (turnAngle > 0.5 ? 8 : 15);
+  // facing well away from the next point: slow down to turn onto it (at speed the
+  // turning circle is wider than the street and the bot orbits the point)
+  const off = Math.abs(error);
+  if (off > 1.1) targetSpeed = Math.min(targetSpeed, 4);
+  else if (off > 0.5) targetSpeed = Math.min(targetSpeed, 8);
   // ease in to the end of the route instead of overshooting it
   if (bot.routeIndex === bot.route.length - 1 && !hunting) targetSpeed = Math.min(targetSpeed, Math.max(3, metersBetween(bot.position, target) * 0.45));
   if (bot.controller.speed < targetSpeed) keys.add('KeyW');
