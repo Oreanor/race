@@ -63,19 +63,28 @@ test('parallel vehicles outside each other width do not collide', () => {
 });
 test('reverse reaches reverse speed',()=>{const v=new VehicleController([0,40],0);for(let i=0;i<300;i++)v.step(1/60,new Set(['KeyS']),config);assert.equal(v.speed,-config.reverseSpeed);});
 test('space holds a fifty percent faster cap',()=>{const v=new VehicleController([0,40],0);for(let i=0;i<800;i++)v.step(1/60,new Set(['KeyW']),config);assert.equal(v.speed,config.maxSpeed);for(let i=0;i<800;i++)v.step(1/60,new Set(['KeyW','Space']),config);assert.equal(v.speed,config.maxSpeed*1.5);v.step(1/60,new Set(['KeyW']),config);assert.equal(v.speed,config.maxSpeed);});
-test('handbrake turns the nose while the car keeps sliding',()=>{
+test('clutch holds the car and builds revs at a standstill',()=>{
+  const v=new VehicleController([0,40],0);
+  for(let i=0;i<120;i++)v.step(1/60,new Set(['KeyW','ShiftLeft']),config);
+  assert.ok(Math.abs(v.speed)<0.1);
+  assert.ok(v.revs>0.7);
+});
+test('releasing the clutch launches from held revs',()=>{
+  const v=new VehicleController([0,40],0);
+  for(let i=0;i<120;i++)v.step(1/60,new Set(['KeyW','ShiftLeft']),config);
+  assert.ok(v.revs>0.5);
+  v.step(1/60,new Set(['KeyW']),config);
+  assert.ok(v.speed>4);
+});
+test('clutch while moving only allows braking',()=>{
   const v=new VehicleController([0,40],0);
   for(let i=0;i<180;i++)v.step(1/60,new Set(['KeyW']),config);
-  const carried=v.speed;
-  const nose=v.heading;
-  for(let i=0;i<40;i++)v.step(1/60,new Set(['KeyW','KeyA','ShiftLeft']),config);
-  const plain=new VehicleController([0,40],0);
-  for(let i=0;i<180;i++)plain.step(1/60,new Set(['KeyW']),config);
-  for(let i=0;i<40;i++)plain.step(1/60,new Set(['KeyW','KeyA']),config);
-  assert.ok(v.heading<nose-0.8);
-  assert.ok(v.heading<plain.heading-0.4);
-  assert.ok(v.speed>carried*0.55);
-  assert.ok(Math.abs(v.slip)>0.4);
+  const before=v.speed;
+  for(let i=0;i<60;i++)v.step(1/60,new Set(['KeyW','ShiftLeft']),config);
+  assert.ok(v.speed<before);
+  const coasting=v.speed;
+  for(let i=0;i<60;i++)v.step(1/60,new Set(['KeyS','ShiftLeft']),config);
+  assert.ok(v.speed<coasting-2);
 });
 test('ferrari pulls hardest, ford stays fast, howler is slower but not flat',()=>{const pace=(car:typeof cars[number])=>{const v=new VehicleController([0,40],0);for(let i=0;i<60;i++)v.step(1/60,new Set(['KeyW']),{...vehicleConfig,acceleration:car.acceleration,maxSpeed:car.maxSpeed});return v.speed;};const [ferrari,ford,howler]=cars.map(pace);assert.ok(ferrari>ford&&ford>howler);assert.ok(ferrari>14);assert.ok(howler>8);assert.ok(ford>howler+1);});
 test('wall contact and courtyard geometry',()=>{const p:[number,number][][]=[[[0,0],[10,0],[10,10],[0,10],[0,0]],[[3,3],[7,3],[7,7],[3,7],[3,3]]];assert.equal(circleHitsPolygon([-0.5,5],1,p),true);assert.equal(circleHitsPolygon([-2,5],1,p),false);assert.equal(circleHitsPolygon([5,5],1,p),false);assert.equal(circleHitsPolygon([1,1],.5,p),true);});

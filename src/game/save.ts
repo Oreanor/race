@@ -8,6 +8,8 @@ export type GameSave = {
   position: [number, number];
   heading: number;
   place: { name: string; country: string; coords: [number, number] };
+  /** road coin ids already taken — stay gone after reload */
+  collected?: string[];
 };
 
 const STORE = 'cityRider.save';
@@ -19,6 +21,7 @@ export function loadSave(): GameSave | null {
     const data = JSON.parse(raw) as GameSave;
     if (!data || !Array.isArray(data.position) || data.position.length !== 2) return null;
     if (!Number.isFinite(data.money) || !data.carId) return null;
+    if (data.collected != null && !Array.isArray(data.collected)) return null;
     return data;
   } catch {
     return null;

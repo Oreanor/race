@@ -82,10 +82,14 @@ type RosterNodes = {
 
 function syncRoster(root: HTMLElement, store: Map<string, RosterNodes>, drivers: HudParticipant[]) {
   const active = new Set(drivers.map(driver => driver.id));
-  for (const [id, nodes] of store) {
-    if (active.has(id)) continue;
+  // drop entries that left the roster (or were orphaned by HMR / remount)
+  for (const [id, nodes] of [...store]) {
+    if (active.has(id) && nodes.entry.parentElement === root) continue;
     nodes.entry.remove();
     store.delete(id);
+  }
+  for (const child of [...root.children]) {
+    if (![...store.values()].some((nodes) => nodes.entry === child)) child.remove();
   }
   for (const driver of drivers) {
     let nodes = store.get(driver.id);
@@ -128,9 +132,10 @@ function syncRoster(root: HTMLElement, store: Map<string, RosterNodes>, drivers:
       nodes = { entry, name, meter, fill, hp, money, moneyValue, wins, winsValue };
       store.set(driver.id, nodes);
     }
+    nodes.name.textContent = driver.name;
     const dead = driver.id !== 'player' && driver.hp <= 0;
     nodes.entry.classList.toggle('is-dead', dead);
-    nodes.name.style.color = dead ? '#8b9198' : driver.color;
+    nodes.name.style.color = dead ? '#8b9198' : (driver.color || '');
     nodes.meter.className = `roster-health ${dead ? 'dead' : healthColor(driver.hp, driver.maxHp)}`;
     nodes.meter.setAttribute('aria-valuemax', String(driver.maxHp));
     nodes.meter.setAttribute('aria-valuenow', String(Math.ceil(driver.hp)));
@@ -152,9 +157,6 @@ export default function Game() {
   const host = useRef<HTMLDivElement>(null);
   const engine = useRef<GameEngine | null>(null);
   // the name other players see: typed in, or a default one, remembered between visits
-  const [playerName, setPlayerName] = useState(() => {
-    try { return localStorage.getItem('cityRider.name') ?? ''; } catch { return ''; }
-  });
   const [defaultName] = useState(() => {
     // one number per browser, so the default name stays the same between visits
     let n = '';
@@ -164,6 +166,14 @@ export default function Game() {
       try { localStorage.setItem('cityRider.nameNumber', n); } catch { /* private mode */ }
     }
     return t('net.defaultName', { n });
+  });
+  // saved name, else the generated default — what you see is what you play as
+  const [playerName, setPlayerName] = useState(() => {
+    try {
+      const saved = localStorage.getItem('cityRider.name')?.trim();
+      if (saved) return saved;
+    } catch { /* private mode */ }
+    return '';
   });
   const shownName = playerName.trim() || defaultName;
   const nameRef = useRef(shownName);
@@ -215,8 +225,9 @@ export default function Game() {
     }
     return cheapestCarIndex();
   });
-  const [driving, setDriving] = useState(false);
-  const [approaching, setApproaching] = useState(false);
+  // mid-drive save: skip the intro shelf and land back on the road
+  const [driving, setDriving] = useState(() => Boolean(bootSave()));
+  const [approaching, setApproaching] = useState(() => Boolean(bootSave()));
   const [booted, setBooted] = useState(false);
   const [exitConfirm, setExitConfirm] = useState(false);
   const [search, setSearch] = useState('');
@@ -263,7 +274,12 @@ export default function Game() {
     const save = bootSave();
     if (save) {
       const at = { position: save.position, heading: save.heading, hp: save.hp };
-      carryRef.current = { money: save.money, fuel: save.fuel, at };
+      carryRef.current = {
+        money: save.money,
+        fuel: save.fuel,
+        at,
+        collected: save.collected ?? [],
+      };
       resumeAtRef.current = at;
       resumeRef.current = true;
     }
@@ -353,6 +369,8 @@ export default function Game() {
           if (at) live.resumeFrom(at);
           setApproaching(true);
           setDriving(true);
+          // driving may already be true from boot — push it into the engine explicitly
+          live.setDriving(true);
           return;
         }
         if (arriveRef.current) {
@@ -423,10 +441,22 @@ export default function Game() {
       setStatusToast('');
       setEventOffer(null);
       setEventResult(null);
-      rosterStoreRef.current.clear();
-      if (rosterRef.current) rosterRef.current.replaceChildren();
+      // menu: keep the player plaque in the corner (money + full HP)
+      if (rosterRef.current) {
+        syncRoster(rosterRef.current, rosterStoreRef.current, [{
+          id: 'player',
+          name: shownName,
+          color: '',
+          hp: 1000,
+          maxHp: 1000,
+          money: STARTING_CASH,
+          wins: 0,
+        }]);
+      } else {
+        engine.current?.joinNetwork(shownName);
+      }
     }
-  }, [driving]);
+  }, [driving, playerName, defaultName, shownName]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.code === 'Escape') {
@@ -571,14 +601,16 @@ export default function Game() {
           <span className="brand-icon">↗</span> city rider
         </a>
       </header>
-      <span className="fps" ref={fpsRef} aria-live="off">— FPS</span>
-      <span className="local-clock" ref={clockRef} aria-live="off" />
+      <div className="meta-hud" aria-hidden="true">
+        <span className="fps" ref={fpsRef}>— FPS</span>
+        <span className="local-clock" ref={clockRef} />
+      </div>
+      <div className="roster-hud" ref={rosterRef} aria-label={t('hud.racers')} />
 
       {!driving ? (
         <>
           <section className="intro">
             <div className="trip-card">
-              <h3 className="ui-section">{t('net.name')}</h3>
               <input
                 className="ui-input"
                 aria-label={t('net.name')}
@@ -588,17 +620,16 @@ export default function Game() {
                 onChange={e => {
                   const value = e.target.value;
                   setPlayerName(value);
-                  try { localStorage.setItem('cityRider.name', value); } catch { /* private mode */ }
+                  try { localStorage.setItem('cityRider.name', value.trim()); } catch { /* private mode */ }
                   engine.current?.joinNetwork(value.trim() || defaultName);
                 }}
               />
-              <h3 className="ui-section">{t('intro.destination')}</h3>
               <div className="city-search">
                 <label className="search">
                   <input
                     className="ui-input"
-                    aria-label={t('search.label')}
-                    placeholder={t('search.placeholder')}
+                    aria-label={t('intro.destination')}
+                    placeholder={t('intro.destination')}
                     value={search}
                     onFocus={() => setSearchOpen(search.trim().length >= 2)}
                     onChange={e => {
@@ -617,13 +648,13 @@ export default function Game() {
                   </div>
                 )}
               </div>
-              <h3 className="ui-section">{t('intro.car')}</h3>
-              <div className="ui-row ui-wallet"><span>{t('travel.wallet')}</span><strong>{t('travel.coins', { n: formatNumber(STARTING_CASH) })}</strong></div>
               <CarCarousel index={car} onIndex={setCar}>
                 <div className="car-deal">
                   <span>{t('dealer.shelf', { price: formatNumber(starterPrice) })}</span>
-                  <strong className={canBuyStarter ? '' : 'is-broke'}>
-                    {canBuyStarter ? t('travel.coins', { n: formatNumber(starterPrice) }) : t('dialog.broke')}
+                  <strong className={canBuyStarter ? 'ui-coins' : 'ui-coins is-broke'}>
+                    {canBuyStarter
+                      ? <><i className="money-coin" aria-hidden="true" />{formatNumber(starterPrice)}</>
+                      : t('dialog.broke')}
                   </strong>
                 </div>
               </CarCarousel>
@@ -650,7 +681,6 @@ export default function Game() {
           <aside className="destination">
             <span className="eyebrow">{t('next.stop')}</span>
             <h2>{place.name}<span>↗</span></h2>
-            <p>{cityNote(place)}</p>
             <div className="coordinates">
               {Math.abs(place.coords[1]).toFixed(4)}° {place.coords[1] < 0 ? 'S' : 'N'} &nbsp; {Math.abs(place.coords[0]).toFixed(4)}° {place.coords[0] < 0 ? 'W' : 'E'}
             </div>
@@ -662,7 +692,6 @@ export default function Game() {
         </>
       ) : !approaching ? (
         <>
-          <div className="roster-hud" ref={rosterRef} aria-label={t('hud.racers')} />
           <FuelGauge subscribe={subscribeFuel} />
           <NetHud subscribe={subscribeNet} send={sendChat} />
           <div className="speed-hud" aria-label={t('hud.speed')}>
@@ -696,12 +725,12 @@ export default function Game() {
               </div>
             </div>
             <label>{t('settings.skin')}<select value={settings.skin} onChange={e => update({ skin: e.target.value as Settings['skin'] })}>{SKINS.map(id => <option key={id} value={id}>{t(`skin.${id}`)}</option>)}</select></label>
-            <label className="toggle">{t('settings.follow')}<input type="checkbox" checked={settings.follow} onChange={e => update({ follow: e.target.checked })} /></label>
+            <label>{t('settings.quality')}<select value={settings.quality} onChange={e => update({ quality: e.target.value as Settings['quality'] })}><option value="low">{t('quality.low')}</option><option value="medium">{t('quality.medium')}</option><option value="high">{t('quality.high')}</option></select></label>
             <label className="toggle">{t('settings.terrain')}<input type="checkbox" checked={settings.terrain} onChange={e => update({ terrain: e.target.checked })} /></label>
+            <label className="toggle">{t('settings.follow')}<input type="checkbox" checked={settings.follow} onChange={e => update({ follow: e.target.checked })} /></label>
             <label>{t('settings.sensitivity')}<input type="range" min="0.3" max="2" step="0.1" value={settings.sensitivity} onChange={e => update({ sensitivity: Number(e.target.value) })} /></label>
             <label className="toggle">{t('settings.stats')}<input type="checkbox" checked={perfOn} onChange={e => toggleStats(e.target.checked)} /></label>
             <ServerStatus />
-            <label>{t('settings.quality')}<select value={settings.quality} onChange={e => update({ quality: e.target.value as Settings['quality'] })}><option value="low">{t('quality.low')}</option><option value="medium">{t('quality.medium')}</option><option value="high">{t('quality.high')}</option></select></label>
           </div>
         </Dialog>
       )}
@@ -779,7 +808,7 @@ export default function Game() {
           </>}
         >
           <p className="ui-text">{t('bounty.text', { name: bountyOffer.name, car: bountyOffer.car, place: bountyOffer.place, country: bountyOffer.country, km: formatNumber(bountyOffer.km) })}</p>
-          <div className="ui-row ui-wallet"><span>{t('bounty.reward')}</span><strong>{t('travel.coins', { n: formatNumber(bountyOffer.reward) })}</strong></div>
+          <div className="ui-row ui-wallet is-reward"><span>{t('bounty.reward')}</span><strong className="ui-coins"><i className="money-coin" aria-hidden="true" />{formatNumber(bountyOffer.reward)}</strong></div>
         </Dialog>
       )}
 

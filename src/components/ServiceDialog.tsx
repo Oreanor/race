@@ -7,7 +7,7 @@ import Dialog from './ui/Dialog';
 /** Fuel station or car service: what you can buy here with your coins. */
 export default function ServiceDialog({ offer, onBuy, onLeave }: { offer: ServiceOffer; onBuy: () => void; onLeave: () => void }) {
   useLang();
-  const wallet = <div className="ui-row ui-wallet"><span>{t('travel.wallet')}</span><strong>{t('travel.coins', { n: formatNumber(offer.money) })}</strong></div>;
+  const wallet = <div className="ui-row ui-wallet"><strong className="ui-coins"><i className="money-coin" aria-hidden="true" />{formatNumber(offer.money)}</strong></div>;
   const leave = <button type="button" className="ui-btn is-ghost" onClick={onLeave}>{t('dialog.leave')}</button>;
 
   if (offer.kind === 'fuel') {

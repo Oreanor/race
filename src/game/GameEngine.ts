@@ -30,16 +30,18 @@ import { fuelStationsLayer } from '@/rendering/FuelStationsLayer';
 import { trainsLayer } from '@/rendering/TrainsLayer';
 import { RailNetwork, TrainTraffic } from './Trains';
 import { hubAt, hubsFromFeatures, kilometres, nearestHub, ticketPrice, type Hub, type HubKind } from './Travel';
-import { bearingTo, loadBounty, makeBounty, saveBounty, type Bounty } from './Bounty';
+import { bearingTo, BOUNTY_RANGE_KM, loadBounty, makeBounty, saveBounty, type Bounty } from './Bounty';
 import type { GameSave } from './save';
 
-export type FuelHud = { level: number; tank: number; refuelling: boolean; station: number | null; money: number; hub: { kind: HubKind; distance: number } | null };
+export type FuelHud = { level: number; tank: number; rpm: number; refuelling: boolean; station: number | null; money: number; hub: { kind: HubKind; distance: number } | null };
 /** What a player takes along to another city (ticket) or restores on page reload. */
 export type PlayerCarry = {
   money: number;
   fuel: number;
   /** page reload: keep the car where it was */
   at?: { position: [number, number]; heading: number; hp: number };
+  /** road coins already collected (reload only) */
+  collected?: string[];
 };
 export type TravelOffer = { kind: HubKind; from: [number, number]; money: number; target?: { name: string; country: string; coords: [number, number] } };
 /** A wanted driver somewhere in the world, offered as a job. */
@@ -82,7 +84,6 @@ export type Settings = {
 };
 
 const DRIVER_NAMES = ['Ines', 'Tiago', 'Marta', 'Rui', 'Leonor', 'Duarte', 'Beatriz', 'Nuno', 'Sofia', 'Miguel', 'Rafael', 'Ana'];
-const PICKUP_COLORS = ['#ff4f79', '#ffc837', '#45d8ef', '#a96aff', '#69e286', '#ff8745'];
 const TRAFFIC_MARKER_COLORS = ['#ff3b30', '#00e5ff', '#ffe600'];
 const METERS_PER_DEGREE = 111319.49;
 const GRAVITY = 9.81;
@@ -98,7 +99,7 @@ export const RAMP = {
 };
 
 export type HudParticipant = { id: string; name: string; color: string; hp: number; maxHp: number; money: number; wins: number };
-type ActivePickup = { position: [number, number]; color: string; kind: 'ball' | 'coin' };
+type ActivePickup = { position: [number, number]; color: string; kind: 'coin' };
 
 
 
@@ -323,22 +324,33 @@ export class GameEngine {
   private playerMoney = 0;
   get booted() { return this.mapShown; }
   private aimingFire = false;
-  /** 0…1 ease: chase cam pulls in while the gun is held */
-  private fireCam = 0;
   /** LMB: drag to look around; hold still to aim/fire (no permanent reticle). */
   private lookPointer: number | null = null;
   private lookOrigin: { x: number; y: number } | null = null;
   private lookDragging = false;
+  private city: City;
   constructor(el: HTMLElement, city: City, car: Car, settings: Settings, private hud: (speed: number, distance: number, fps: number, participants: HudParticipant[]) => void, private status: (s: string, toast?: boolean) => void, private aimHud: (x: number, y: number, visible: boolean, firing?: boolean) => void, carry: PlayerCarry | null = null) {
+    this.city = city;
     this.fuel = new FuelTank(car.fuel);
     this.carry = carry;
+    // Reload mid-drive: pin spawn so the first setTargetVehicles keeps money/hp/coins.
+    if (carry?.at) this.customSpawn = { position: [...carry.at.position], heading: carry.at.heading };
+    // Drop leftover worldwide hunts — bounties are local (≤ 10 km) now.
+    if (this.bounty) {
+      const at = this.bounty.spot ?? this.bounty.place.coords;
+      if (kilometres(city.coords, at) > BOUNTY_RANGE_KM) {
+        this.bounty = null;
+        saveBounty(null);
+      }
+    }
     (window as unknown as { __cityRider?: GameEngine }).__cityRider = this; // console debugging
     this.host = el;
     el.style.opacity = '0';
     this.bootAt = performance.now();
     this.settings = settings;
     this.car = car;
-    this.vehicle = new VehicleController(city.coords, city.heading);
+    const startAt = carry?.at;
+    this.vehicle = new VehicleController(startAt?.position ?? city.coords, startAt ? startAt.heading * 180 / Math.PI : city.heading);
     this.healthMeters = new HealthMeters(el);
     const engine = this;
     this.players = new NetPlayers({
@@ -695,18 +707,19 @@ export class GameEngine {
     this.eventOffer = null;
     this.eventCooldown = 0;
     this.raceGoal = null;
-    const resumeHp = this.carry?.at?.hp;
+    const carry = this.carry;
+    const resumeHp = carry?.at?.hp;
     this.playerHp = resumeHp != null ? Math.max(1, Math.min(this.playerMaxHp, resumeHp)) : this.playerMaxHp;
     this.wins.clear();
     this.clearEventBots();
     this.pickups.clear();
     this.combatLayer?.setPickups([]);
-    this.collectedPickups.clear();
+    this.collectedPickups = new Set(carry?.collected?.filter((id) => typeof id === 'string') ?? []);
     this.pickupFocus = null;
     this.pickupNetworkRevision = -1;
     // travel / reload keep the purse; a fresh start buys the intro car out of STARTING_CASH
-    this.playerMoney = this.carry?.money ?? Math.max(0, STARTING_CASH - carPrice(this.car));
-    this.fuel.level = this.fuel.spec.tank * (this.carry?.fuel ?? 1);
+    this.playerMoney = carry?.money ?? Math.max(0, STARTING_CASH - carPrice(this.car));
+    this.fuel.level = this.fuel.spec.tank * (carry?.fuel ?? 1);
     this.carry = null;
     this.fuelOut = false;
     this.onFuelOut(false);
@@ -724,6 +737,9 @@ export class GameEngine {
 
   /** Snapshot for localStorage so a refresh lands back mid-drive. */
   snapshot(place: { name: string; country: string; coords: [number, number] }): GameSave {
+    const collected = [...this.collectedPickups];
+    // keep the newest ids if the list grows huge (localStorage quota)
+    if (collected.length > 4000) collected.splice(0, collected.length - 4000);
     return {
       money: Math.floor(this.playerMoney),
       fuel: this.fuel.ratio,
@@ -732,6 +748,7 @@ export class GameEngine {
       position: [...this.vehicle.position] as [number, number],
       heading: this.vehicle.heading,
       place: { name: place.name, country: place.country, coords: [...place.coords] as [number, number] },
+      collected,
     };
   }
 
@@ -741,9 +758,12 @@ export class GameEngine {
     this.vehicle.position = [...at.position];
     this.vehicle.heading = at.heading;
     this.bearing = at.heading * 180 / Math.PI;
-    this.spawnResolved = true;
     this.renderVehicle.reset(this.vehicle);
-    this.setTargetVehicles(at.position, at.heading);
+    // Spawn already applied money/hp/coins via carry — do not reset them again.
+    if (!this.spawnResolved) {
+      this.spawnResolved = true;
+      this.setTargetVehicles(at.position, at.heading);
+    }
   }
 
   /** Exit to menu: drop this run so the next drive is a fresh purchase. */
@@ -754,6 +774,9 @@ export class GameEngine {
     this.playerMoney = 0;
     this.playerHp = this.playerMaxHp;
     this.carry = null;
+    this.collectedPickups.clear();
+    this.pickups.clear();
+    this.combatLayer?.setPickups([]);
     this.fuel.level = this.fuel.spec.tank;
     this.fuelOut = false;
     this.onFuelOut(false);
@@ -1011,7 +1034,7 @@ export class GameEngine {
     return [
       {
         id: 'player',
-        name: t('you'),
+        name: this.playerName || t('you'),
         color: '#111111',
         hp: this.playerHp,
         maxHp: this.playerMaxHp,
@@ -1281,18 +1304,8 @@ export class GameEngine {
       this.pickups.delete(id);
     }
 
-    for (const pickup of this.trafficNetwork.pickupLocations(position)) {
-      if (this.pickups.has(pickup.id) || this.collectedPickups.has(pickup.id)) continue;
-      let hash = 0;
-      for (const character of pickup.id) hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
-      this.pickups.set(pickup.id, {
-        position: pickup.position,
-        color: PICKUP_COLORS[hash % PICKUP_COLORS.length],
-        kind: 'ball',
-      });
-    }
-    // big spinning coins: as many as balls, halfway between them
-    for (const spot of this.trafficNetwork.pickupLocations(position, 650, 80, 0)) {
+    // spinning coins on the road — money only, no coloured score orbs
+    for (const spot of this.trafficNetwork.pickupLocations(position)) {
       const id = `coin:${spot.id}`;
       if (this.pickups.has(id) || this.collectedPickups.has(id)) continue;
       this.pickups.set(id, { position: spot.position, color: '#f2c230', kind: 'coin' });
@@ -1318,7 +1331,7 @@ export class GameEngine {
         if (metersBetween(position, pickup.position) > 3.5) continue;
         this.pickups.delete(id);
         this.collectedPickups.add(id);
-        money += 100;
+        money += 10;
       }
       return money;
     };
@@ -1336,8 +1349,14 @@ export class GameEngine {
   /** Send a chat line to everybody. */
   chat(text: string) { this.players.say(text); }
 
+  /** our name on the roster and in multiplayer */
+  private playerName = '';
+
   /** Join the shared world under this name (again: just a rename). */
-  joinNetwork(name: string) { this.players.join(name); }
+  joinNetwork(name: string) {
+    this.playerName = name.trim();
+    this.players.join(this.playerName);
+  }
 
   private ensureTrafficMarkers() {
     if (!this.trafficMarkerLayer) {
@@ -1522,7 +1541,7 @@ export class GameEngine {
     this.placeTargetIndicator(marker, target, 0);
   }
 
-  /** Spawn a local wanted pin now and then; take the job there, then hunt the city. */
+  /** Spawn a local wanted pin now and then; take the job and hunt within 10 km. */
   private updateBounty() {
     const now = performance.now();
     const here = this.vehicle.position;
@@ -1547,13 +1566,27 @@ export class GameEngine {
     if (!this.bounty) {
       const busy = this.mode !== 'roam' || this.bountyPending || this.eventOffer || this.travelOpen || this.serviceOpen || this.dealerOpen || this.fuelOut;
       if (busy || now < this.bountyOfferAt) return;
-      this.bountyPending = makeBounty(here);
       const seed = Math.round(here[0] * 1e5) ^ Math.round(here[1] * 1e5) ^ (now | 0);
+      const avoid = this.missions.map(mission => mission.position);
       this.bountyPickup = this.pickBeaconSpot(
         here as [number, number],
         this.vehicle.heading,
         seed,
-        this.missions.map(mission => mission.position),
+        avoid,
+      );
+      // Fight spot farther out, but never beyond 10 km.
+      const huntSpot = this.pickBeaconSpot(
+        here as [number, number],
+        this.vehicle.heading,
+        seed + 31,
+        [...avoid, this.bountyPickup],
+        { min: 2500, max: BOUNTY_RANGE_KM * 1000 },
+      );
+      this.bountyPending = makeBounty(
+        here,
+        huntSpot,
+        { name: this.city.name, country: this.city.country, coords: this.city.coords },
+        ((seed >>> 0) % 1_000_000) / 1_000_000,
       );
       this.bountyOfferShown = false;
       this.syncMissionVisuals(true);
@@ -1562,9 +1595,9 @@ export class GameEngine {
     }
     const bounty = this.bounty;
     if (this.bountyFight || this.mode !== 'roam') return;
-    // in the target's city: pin the exact spot on a road near its centre
-    if (!bounty.spot && kilometres(here, bounty.place.coords) < 2.5) {
-      const node = this.trafficNetwork.nearest(bounty.place.coords, new Set(), 0, 1500);
+    // Old saves without a spot: pin one nearby once roads are loaded.
+    if (!bounty.spot && kilometres(here, bounty.place.coords) <= BOUNTY_RANGE_KM) {
+      const node = this.trafficNetwork.nearest(bounty.place.coords, new Set(), 0, BOUNTY_RANGE_KM * 1000);
       if (node) {
         bounty.spot = [...node.position] as [number, number];
         saveBounty(bounty);
@@ -1575,12 +1608,13 @@ export class GameEngine {
   }
 
   private bountyOfferOf(bounty: Bounty): BountyOffer {
+    const target = bounty.spot ?? bounty.place.coords;
     return {
       name: bounty.name,
       car: carsConfig.find((car) => car.id === bounty.car)?.name ?? '',
       place: bounty.place.name,
       country: bounty.place.country,
-      km: Math.round(kilometres(this.vehicle.position, bounty.place.coords)),
+      km: Math.max(1, Math.round(kilometres(this.vehicle.position, target))),
       reward: bounty.reward,
     };
   }
@@ -1599,7 +1633,8 @@ export class GameEngine {
     const goals = this.focusGoals();
     const bountyIndex = goals.findIndex(goal => goal.kind === 'bounty');
     if (bountyIndex >= 0) this.missionFocus = bountyIndex;
-    const km = Math.round(kilometres(this.vehicle.position, this.bounty.place.coords));
+    const target = this.bounty.spot ?? this.bounty.place.coords;
+    const km = Math.max(1, Math.round(kilometres(this.vehicle.position, target)));
     this.say(t('bounty.accepted', { place: this.bounty.place.name, km: formatNumber(km) }), true);
   }
 
@@ -1881,8 +1916,8 @@ export class GameEngine {
     this.travelOpen = true;
     this.keys.clear();
     this.vehicle.speed = 0;
-    const target = this.bounty ? { name: this.bounty.place.name, country: this.bounty.place.country, coords: [...this.bounty.place.coords] as [number, number] } : undefined;
-    this.onTravelOffer({ kind: hub.kind, from: [...this.vehicle.position], money: Math.floor(this.playerMoney), target });
+    // Local hunts stay in-city — no ticket destination for the bounty.
+    this.onTravelOffer({ kind: hub.kind, from: [...this.vehicle.position], money: Math.floor(this.playerMoney) });
   }
 
   declineTravel() {
@@ -2336,7 +2371,13 @@ export class GameEngine {
       this.climb += (measured - this.climb) * (1 - Math.exp(-dt * 8));
       this.modelPitch = settle(this.modelPitch, this.wheelTargets.pitch);
     }
-    this.modelRoll = settle(this.modelRoll, this.wheelTargets.roll);
+      this.modelRoll = settle(this.modelRoll, this.wheelTargets.roll);
+    // Clutch staging: hold Shift+gas at a stop — the chassis shakes with the revs.
+    if (speed < 0.5 && this.vehicle.revs > 0.15) {
+      const shake = this.vehicle.revs;
+      this.modelRoll += Math.sin(now * 0.055) * shake * 0.048;
+      this.modelPitch += Math.cos(now * 0.073) * shake * 0.02;
+    }
     this.wasOnRamp = lift != null;
   }
 
@@ -2607,10 +2648,7 @@ export class GameEngine {
       this.plantWheels(dt, now);
       this.updateRamp(now, dt);
       this.nudgeCamera(dt);
-      // pull in while firing; keep the player's wheel-zoom distance when they let go
-      const fireWant = this.aimingFire && !this.lookDragging && !this.mapInspecting() ? 1 : 0;
-      this.fireCam += (fireWant - this.fireCam) * (1 - Math.exp(-dt * 10));
-      const chaseDistance = this.distance + (Math.min(this.distance, cameraConfig.aimDistance) - this.distance) * this.fireCam;
+      const chaseDistance = this.distance;
       // north up (compass double-click) until the player turns the view themselves
       if (this.northUp && this.orbit !== 0) {
         this.northUp = false;
@@ -2727,7 +2765,7 @@ export class GameEngine {
       const hubHud = hub && hub.distance < hubHint
         ? { kind: hub.hub.kind, distance: hub.distance }
         : null;
-      this.onFuel({ level: this.fuel.level, tank: this.fuel.spec.tank, refuelling: this.refuelling, station: near ? near.distance : null, money: Math.floor(this.playerMoney), hub: hubHud });
+      this.onFuel({ level: this.fuel.level, tank: this.fuel.spec.tank, rpm: this.vehicle.revs, refuelling: this.refuelling, station: near ? near.distance : null, money: Math.floor(this.playerMoney), hub: hubHud });
     }
     if (!this.mapShown) this.settleBoot();
     this.map.triggerRepaint();

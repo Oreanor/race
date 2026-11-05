@@ -33,11 +33,18 @@ export type Car = typeof cars[number];
 /** Coins on a fresh start; the intro car is bought out of this purse. */
 export const STARTING_CASH = 5000;
 
+/** Shelf prices pinned into the starter tier (≤ STARTING_CASH). */
+const STARTER_PRICE: Partial<Record<string, number>> = {
+  '02': 4500, // Ford 31
+};
+
 /**
  * Showroom price in coins. Steep curve on speed and punch so a starter purse
  * only covers the slowest beaters; race cars need arena / bounty money.
  */
 export function carPrice(car: Car): number {
+  const pinned = STARTER_PRICE[car.id];
+  if (pinned != null) return pinned;
   const kph = car.maxSpeed * 3.6;
   const raw =
     (kph / 125) ** 2.8 * 2200 +

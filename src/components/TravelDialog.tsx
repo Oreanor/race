@@ -63,7 +63,7 @@ export default function TravelDialog({ offer, current, onBuy, onStay }: {
       actions={<button type="button" className="ui-btn is-ghost" onClick={onStay}>{t('travel.stay')}</button>}
     >
       <p className="ui-text">{t('travel.question')}{offer.kind === 'airport' ? ` ${t('travel.planeMore')}` : offer.kind === 'station' ? ` ${t('travel.trainMore')}` : ''}</p>
-      <div className="ui-row ui-wallet"><span>{t('travel.wallet')}</span><strong>{t('travel.coins', { n: formatNumber(offer.money) })}</strong></div>
+      <div className="ui-row ui-wallet"><strong className="ui-coins"><i className="money-coin" aria-hidden="true" />{formatNumber(offer.money)}</strong></div>
       <input
         className="ui-input"
         placeholder={t('travel.search')}

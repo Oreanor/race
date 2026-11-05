@@ -40,14 +40,14 @@ export default function DealershipDialog({ offer, onBuy, onLeave }: {
         <button type="button" className="ui-btn is-ghost" onClick={onLeave}>{t('dialog.leave')}</button>
       </>}
     >
-      <div className="ui-row ui-wallet"><span>{t('travel.wallet')}</span><strong>{t('travel.coins', { n: formatNumber(offer.money) })}</strong></div>
+      <div className="ui-row ui-wallet"><strong className="ui-coins"><i className="money-coin" aria-hidden="true" />{formatNumber(offer.money)}</strong></div>
       <CarCarousel index={index} onIndex={setIndex}>
         <div className="car-deal">
           <span>{t('dealer.shelf', { price: formatNumber(price) })}</span>
-          <strong className={affordable ? '' : 'is-broke'}>{deal}</strong>
+          <strong className={affordable ? 'ui-coins' : 'ui-coins is-broke'}>{deal}</strong>
         </div>
       </CarCarousel>
-      <p className="ui-text">{t('dealer.tradeIn')}: {t('travel.coins', { n: formatNumber(offer.tradeIn) })}</p>
+      <p className="ui-text">{t('dealer.tradeIn')}: <span className="ui-coins"><i className="money-coin" aria-hidden="true" />{formatNumber(offer.tradeIn)}</span></p>
     </Dialog>
   );
 }
