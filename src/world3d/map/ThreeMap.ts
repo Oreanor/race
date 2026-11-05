@@ -65,6 +65,8 @@ export class ThreeMarker {
   private element: HTMLElement;
   private lngLat: [number, number] = [0, 0];
   private map: ThreeMap | null = null;
+  /** @internal the ground under it, once a tile there has told us */
+  altitude: number | null = null;
   constructor(options: { element?: HTMLElement; anchor?: string } = {}) {
     this.element = options.element ?? document.createElement('div');
     this.element.style.position = 'absolute';
@@ -74,7 +76,7 @@ export class ThreeMarker {
     // anchor: bottom (the only one the game uses)
     this.element.dataset.anchor = options.anchor ?? 'center';
   }
-  setLngLat(p: LngLatLike) { this.lngLat = toLngLat(p); this.map?.placeMarker(this); return this; }
+  setLngLat(p: LngLatLike) { this.lngLat = toLngLat(p); this.altitude = null; this.map?.placeMarker(this); return this; }
   getLngLat() { return { lng: this.lngLat[0], lat: this.lngLat[1] }; }
   addTo(map: ThreeMap) { this.map = map; map.addMarker(this); return this; }
   remove() { this.map?.removeMarker(this); this.map = null; return this; }
@@ -311,10 +313,11 @@ export class ThreeMap {
   getCanvasContainer() { return this.container; }
   getContainer() { return this.container; }
 
+  /** Screen point of a place on the ground; where no tile is in yet, at the view centre's height (not sea level). */
   project(p: LngLatLike) {
     this.camera.update();
     const [lng, lat] = toLngLat(p);
-    const altitude = this.groundAt([lng, lat]) ?? 0;
+    const altitude = this.groundAt([lng, lat]) ?? this.camera.state.elevation;
     return this.camera.project(lng, lat, altitude);
   }
   unproject(point: { x: number; y: number } | [number, number]) {
@@ -494,7 +497,14 @@ export class ThreeMap {
   /** @internal */ removeMarker(marker: ThreeMarker) { this.markers.delete(marker); marker.getElement().remove(); }
   /** @internal */ placeMarker(marker: ThreeMarker) {
     const el = marker.getElement();
-    const p = this.project(marker.position());
+    const [lng, lat] = marker.position();
+    // stands on the ground under it: known once its tile is in (kept after the tile goes);
+    // until then hidden, a label at a guessed height slides across the screen as the camera moves
+    const ground = this.groundAt([lng, lat]);
+    if (ground != null) marker.altitude = ground;
+    if (marker.altitude == null) { el.style.visibility = 'hidden'; return; }
+    this.camera.update();
+    const p = this.camera.project(lng, lat, marker.altitude);
     if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) { el.style.visibility = 'hidden'; return; }
     el.style.visibility = '';
     const shift = el.dataset.anchor === 'bottom' ? 'translate(-50%,-100%)' : 'translate(-50%,-50%)';
