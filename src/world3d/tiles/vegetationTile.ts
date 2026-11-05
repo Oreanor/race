@@ -9,6 +9,7 @@ import { planParkFences, planVegetation, type VegetationInput } from '../../game
 import type { MapFeature } from '../../game/WaterCollisionController.ts';
 import { latFromMercator, lngFromMercator, mercatorX, mercatorY } from '../mercator.ts';
 import { planStreets } from './streetscape.ts';
+import type { Furniture } from './furniture.ts';
 import { FLORA_MODELS, MODEL_HEIGHT, PRESETS, VARIANTS, pickMix, selectPreset, type FloraModel } from './flora.ts';
 
 export type InstanceSet = {
@@ -39,8 +40,19 @@ export type VegetationData = {
   plinthsLong: InstanceSet;
   figures: InstanceSet;
   riders: InstanceSet;
-  /** each monument's footprint for collisions: x, z (tile-local mercator), ground, half width, half length (m), yaw */
-  monuments: Float32Array;
+  /** fountains: the stone basin and column, the water */
+  fountains: InstanceSet;
+  fountainWater: InstanceSet;
+  /** bus shelters: the frame, roof and bench; the glass */
+  shelters: InstanceSet;
+  shelterGlass: InstanceSet;
+  /** football goals */
+  goals: InstanceSet;
+  /**
+   * What a car cannot drive through (pedestals, basins, shelters), SOLID_STRIDE
+   * floats each: x, z (tile-local mercator), ground, half width, half length (m), yaw, height (m)
+   */
+  solids: Float32Array;
   /**
    * Things gunfire or a car can knock over, FELL_STRIDE floats each: kind
    * (0 tree, 1 lamp), x, z (tile-local mercator), ground, top (m above ground),
@@ -56,6 +68,9 @@ export type VegetationData = {
 
 /** texels per tile edge of the baked street light (≈3 m each) */
 export const LAMP_MAP = 768;
+/** floats per solid (see VegetationData.solids) */
+export const SOLID_STRIDE = 7;
+
 /** where the bronze stands on a monument's pedestal (m above the ground) */
 export const MONUMENT_PLINTH_TOP = 2.7;
 export const MONUMENT_PLINTH_LONG_TOP = 2.4;
@@ -173,7 +188,7 @@ export function buildVegetation(
   metersScale: number,
   features: Record<string, MapFeature[]>,
   groundAt: (x: number, z: number) => number,
-  monumentSpots: { x: number; z: number; seed: number }[] = [],
+  furniture: Furniture = { monuments: [], fountains: [], shelters: [], goals: [], lines: [] },
 ): VegetationData {
   const toMerc = 1 / metersScale;
   const center: [number, number] = [lngFromMercator(corner[0] + span / 2), latFromMercator(corner[1] - span / 2)];
@@ -285,36 +300,50 @@ export function buildVegetation(
   for (const lamp of streets.lamps) heads.push(lamp.x + Math.cos(lamp.yaw) * LAMP_ARM * toMerc, lamp.z - Math.sin(lamp.yaw) * LAMP_ARM * toMerc);
   const lampLight = new Uint8Array(LAMP_MAP * LAMP_MAP);
   bakeLampLight(heads, span, metersScale, lampLight);
-  // ---- monuments: a statue on a pedestal, about one in three on horseback --------
+  // ---- street furniture: statues, fountains, bus shelters, goals -------------------
   const plinths = new Instances(), plinthsLong = new Instances(), figures = new Instances(), riders = new Instances();
-  const monuments: number[] = [];
-  for (const spot of monumentSpots) {
+  const fountains = new Instances(), fountainWater = new Instances();
+  const shelters = new Instances(), shelterGlass = new Instances(), goals = new Instances();
+  const solids: number[] = [];
+  const at = (set: Instances, spot: { x: number; z: number; yaw: number }, y: number, ground: number, scale = 1) =>
+    set.push(spot.x, y, spot.z, spot.yaw, toMerc * scale, scale, toMerc * scale, ground);
+  for (const spot of furniture.monuments) {
     const ground = groundAt(spot.x, spot.z);
-    const yaw = (spot.seed % 360) * Math.PI / 180;
-    const mounted = spot.seed % 3 === 0;
-    if (mounted) {
-      plinthsLong.push(spot.x, 0, spot.z, yaw, toMerc, 1, toMerc, ground);
-      riders.push(spot.x, MONUMENT_PLINTH_LONG_TOP, spot.z, yaw, toMerc, 1, toMerc, ground);
-      monuments.push(spot.x, spot.z, ground, 1.25, 2.1, yaw);
+    // about one in three on horseback
+    if (spot.seed % 3 === 0) {
+      at(plinthsLong, spot, 0, ground); at(riders, spot, MONUMENT_PLINTH_LONG_TOP, ground);
+      solids.push(spot.x, spot.z, ground, 1.25, 2.1, spot.yaw, MONUMENT_PLINTH_LONG_TOP);
     } else {
-      plinths.push(spot.x, 0, spot.z, yaw, toMerc, 1, toMerc, ground);
-      figures.push(spot.x, MONUMENT_PLINTH_TOP, spot.z, yaw, toMerc, 1, toMerc, ground);
-      monuments.push(spot.x, spot.z, ground, 1.1, 1.1, yaw);
+      at(plinths, spot, 0, ground); at(figures, spot, MONUMENT_PLINTH_TOP, ground);
+      solids.push(spot.x, spot.z, ground, 1.1, 1.1, spot.yaw, MONUMENT_PLINTH_TOP);
     }
   }
+  for (const spot of furniture.fountains) {
+    const ground = groundAt(spot.x, spot.z);
+    at(fountains, spot, 0, ground); at(fountainWater, spot, 0, ground);
+    solids.push(spot.x, spot.z, ground, 3, 3, spot.yaw, 0.7);
+  }
+  for (const spot of furniture.shelters) {
+    const ground = groundAt(spot.x, spot.z);
+    at(shelters, spot, 0, ground); at(shelterGlass, spot, 0, ground);
+    solids.push(spot.x, spot.z, ground, 1.7, 0.75, spot.yaw, 2.6);
+  }
+  for (const goal of furniture.goals) at(goals, goal, 0, groundAt(goal.x, goal.z), goal.scale);
   return {
     flora: flora.map((f) => f.done(true)), preset: presetId, posts: posts.done(), rails: rails.done(), lamps: lamps.done(),
-    plinths: plinths.done(), plinthsLong: plinthsLong.done(), figures: figures.done(), riders: riders.done(), monuments: new Float32Array(monuments),
+    plinths: plinths.done(), plinthsLong: plinthsLong.done(), figures: figures.done(), riders: riders.done(),
+    fountains: fountains.done(), fountainWater: fountainWater.done(), shelters: shelters.done(), shelterGlass: shelterGlass.done(), goals: goals.done(),
+    solids: new Float32Array(solids),
     fell: new Float32Array(fell), lampLight,
   };
 }
 
 export function vegetationTransferables(v: VegetationData): ArrayBuffer[] {
   const out: ArrayBuffer[] = [];
-  for (const set of [...v.flora, v.posts, v.rails, v.lamps, v.plinths, v.plinthsLong, v.figures, v.riders]) {
+  for (const set of [...v.flora, v.posts, v.rails, v.lamps, v.plinths, v.plinthsLong, v.figures, v.riders, v.fountains, v.fountainWater, v.shelters, v.shelterGlass, v.goals]) {
     out.push(set.matrices.buffer as ArrayBuffer, set.ground.buffer as ArrayBuffer);
     for (const extra of [set.colors, set.bark, set.traits]) if (extra) out.push(extra.buffer as ArrayBuffer);
   }
-  out.push(v.fell.buffer as ArrayBuffer, v.lampLight.buffer as ArrayBuffer, v.monuments.buffer as ArrayBuffer);
+  out.push(v.fell.buffer as ArrayBuffer, v.lampLight.buffer as ArrayBuffer, v.solids.buffer as ArrayBuffer);
   return out;
 }

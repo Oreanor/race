@@ -19,7 +19,8 @@ const pieces = createPieceGeometries();
 // tree / shrub shape per tile (all in one material), plus fences, lamps and
 // roof props. Ground height and fog in the shader.
 
-type Kind = 'post' | 'rail' | 'chimney' | 'vent' | 'lamp' | 'plinth' | 'plinthLong' | 'figure' | 'rider';
+type Kind = 'post' | 'rail' | 'chimney' | 'vent' | 'lamp' | 'plinth' | 'plinthLong' | 'figure' | 'rider'
+  | 'fountain' | 'fountainWater' | 'shelter' | 'shelterGlass' | 'goal';
 
 /** Merge simple pieces into one shape, no uvs. */
 function shape(pieces: THREE.BufferGeometry[]) {
@@ -71,6 +72,68 @@ function figureGeometry() {
     new THREE.SphereGeometry(0.17, 8, 6).translate(0, 2.42, 0.01),
     // a hat brim
     new THREE.CylinderGeometry(0.22, 0.22, 0.04, 8).translate(0, 2.56, 0),
+  ]);
+}
+
+/** A round stone basin (6 m across, 0.7 m rim) with a column and a bowl in the middle. */
+function fountainGeometry() {
+  // the basin turned from its profile: outer wall, lip, inner wall, floor
+  const basin = new THREE.LatheGeometry([
+    new THREE.Vector2(3.1, 0), new THREE.Vector2(3.0, 0.7), new THREE.Vector2(2.75, 0.7),
+    new THREE.Vector2(2.75, 0.25), new THREE.Vector2(0.01, 0.25),
+  ], 24);
+  return shape([
+    basin,
+    new THREE.CylinderGeometry(0.28, 0.4, 1.9, 8).translate(0, 0.95, 0),
+    new THREE.CylinderGeometry(1.0, 0.35, 0.3, 12).translate(0, 1.95, 0),
+    new THREE.CylinderGeometry(0.15, 0.2, 0.6, 8).translate(0, 2.35, 0),
+    new THREE.SphereGeometry(0.22, 8, 6).translate(0, 2.75, 0),
+  ]);
+}
+
+/** The water in a fountain: the pool and the upper bowl's surface. */
+function fountainWaterGeometry() {
+  return shape([
+    new THREE.CircleGeometry(2.75, 24).rotateX(-Math.PI / 2).translate(0, 0.55, 0),
+    new THREE.CircleGeometry(0.92, 12).rotateX(-Math.PI / 2).translate(0, 2.08, 0),
+  ]);
+}
+
+/** A bus shelter, open toward +Z (the road): posts, roof, back frame, bench, the stop's sign. */
+function shelterGeometry() {
+  return shape([
+    new THREE.BoxGeometry(0.08, 2.45, 0.08).translate(-1.6, 1.22, -0.6),
+    new THREE.BoxGeometry(0.08, 2.45, 0.08).translate(1.6, 1.22, -0.6),
+    new THREE.BoxGeometry(0.08, 2.45, 0.08).translate(-1.6, 1.22, 0.55),
+    new THREE.BoxGeometry(0.08, 2.45, 0.08).translate(1.6, 1.22, 0.55),
+    new THREE.BoxGeometry(3.5, 0.1, 1.55).translate(0, 2.5, -0.02),
+    new THREE.BoxGeometry(3.2, 0.06, 0.06).translate(0, 0.12, -0.6),
+    new THREE.BoxGeometry(2.4, 0.06, 0.38).translate(0, 0.48, -0.42),
+    new THREE.BoxGeometry(0.06, 0.45, 0.06).translate(-1.1, 0.24, -0.42),
+    new THREE.BoxGeometry(0.06, 0.45, 0.06).translate(1.1, 0.24, -0.42),
+    // the sign on its pole, beside the shelter
+    new THREE.CylinderGeometry(0.04, 0.04, 2.7, 6).translate(2.2, 1.35, 0.5),
+    new THREE.BoxGeometry(0.5, 0.5, 0.05).translate(2.2, 2.55, 0.5),
+  ]);
+}
+
+/** The shelter's glass: the back and one end. */
+function shelterGlassGeometry() {
+  return shape([
+    new THREE.BoxGeometry(3.12, 2.1, 0.03).translate(0, 1.25, -0.6),
+    new THREE.BoxGeometry(0.03, 2.1, 1.1).translate(-1.6, 1.25, -0.03),
+  ]);
+}
+
+/** A football goal (7.32 × 2.44 m) standing on the goal line, the net sloping back (−Z). */
+function goalGeometry() {
+  return shape([
+    new THREE.CylinderGeometry(0.06, 0.06, 2.44, 6).translate(-3.66, 1.22, 0),
+    new THREE.CylinderGeometry(0.06, 0.06, 2.44, 6).translate(3.66, 1.22, 0),
+    new THREE.CylinderGeometry(0.06, 0.06, 7.44, 6).rotateZ(Math.PI / 2).translate(0, 2.44, 0),
+    new THREE.CylinderGeometry(0.03, 0.03, 2.6, 4).rotateX(0.95).translate(-3.66, 1.25, -0.95),
+    new THREE.CylinderGeometry(0.03, 0.03, 2.6, 4).rotateX(0.95).translate(3.66, 1.25, -0.95),
+    new THREE.CylinderGeometry(0.03, 0.03, 7.32, 4).rotateZ(Math.PI / 2).translate(0, 0.03, -1.9),
   ]);
 }
 
@@ -212,6 +275,7 @@ export class VegetationRenderer {
       vent: pieces.vent,
       lamp: this.classicLamp,
       plinth: plinthGeometry(), plinthLong: plinthLongGeometry(), figure: figureGeometry(), rider: riderGeometry(),
+      fountain: fountainGeometry(), fountainWater: fountainWaterGeometry(), shelter: shelterGeometry(), shelterGlass: shelterGlassGeometry(), goal: goalGeometry(),
     };
     const lambert = (color: string | number) => simpleLit(color, uniforms);
     this.materials = {
@@ -221,6 +285,9 @@ export class VegetationRenderer {
       // pale stone, dark bronze
       plinth: lambert('#c9c1b3'), plinthLong: lambert('#c9c1b3'),
       figure: simpleLit('#5a4a33', uniforms, { shiny: true }), rider: simpleLit('#5a4a33', uniforms, { shiny: true }),
+      fountain: lambert('#cfc6b6'), fountainWater: simpleLit('#4f8fa8', uniforms, { shiny: true }),
+      shelter: simpleLit('#59626b', uniforms, { shiny: true }), shelterGlass: simpleLit('#a9c4d2', uniforms, { shiny: true }),
+      goal: lambert('#f2f2ee'),
     };
     this.flora = createFloraModels();
     this.floraFar = createFarFloraModels(this.flora);
@@ -238,7 +305,8 @@ export class VegetationRenderer {
   build(data: VegetationData): THREE.InstancedMesh[] {
     const out: THREE.InstancedMesh[] = [];
     data.flora.forEach((set, i) => out.push(...this.instanced(`flora${i}`, this.flora[i], this.floraMat, set)));
-    for (const [kind, set] of [['post', data.posts], ['rail', data.rails], ['lamp', data.lamps], ['plinth', data.plinths], ['plinthLong', data.plinthsLong], ['figure', data.figures], ['rider', data.riders]] as [Kind, InstanceSet][]) {
+    for (const [kind, set] of [['post', data.posts], ['rail', data.rails], ['lamp', data.lamps], ['plinth', data.plinths], ['plinthLong', data.plinthsLong], ['figure', data.figures], ['rider', data.riders],
+      ['fountain', data.fountains], ['fountainWater', data.fountainWater], ['shelter', data.shelters], ['shelterGlass', data.shelterGlass], ['goal', data.goals]] as [Kind, InstanceSet][]) {
       out.push(...this.instanced(kind, this.geometries[kind], this.materials[kind], set));
     }
     // every lamp's cone of light, on its own copy of the matrices: a lamp knocked down puts it out

@@ -12,7 +12,7 @@ import { farBuildingMaterial, groundMaterial, overlayMaterial, roadMaterial, wat
 import { VegetationRenderer } from './vegetation';
 import { simpleLit } from './simpleLit';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { bakeLampLight, FELL_STRIDE, LAMP_ARM, LAMP_MAP, lampRegion } from '../tiles/vegetationTile';
+import { bakeLampLight, FELL_STRIDE, LAMP_ARM, LAMP_MAP, lampRegion, SOLID_STRIDE } from '../tiles/vegetationTile';
 import { roofClearanceAt, type RoofProfile } from '@/game/buildings/RoofGenerator';
 
 /** top of the pavement above the terrain (road ribbons sit 0.09–0.15 m up) */
@@ -645,14 +645,14 @@ export class WorldTiles {
     this.eachFootprint(center, radius, (rings, _height, roof, crest) => {
       out.push({ rings: rings(), crest: crest * exaggeration, roof });
     });
-    // monuments: their pedestals are solid too (a car stops at them, flies over on a jump)
+    // street furniture: pedestals, basins, bus shelters (a car stops at them, flies over on a jump)
     const mx = mercatorX(center[0]), my = mercatorY(center[1]);
     for (const live of this.tiles.values()) {
-      const m = live.data.vegetation.monuments;
+      const m = live.data.vegetation.solids;
       if (!m?.length) continue;
       const [cx, cy] = live.data.corner;
       const k = 1 / live.data.metersScale;
-      for (let i = 0; i < m.length; i += 6) {
+      for (let i = 0; i < m.length; i += SOLID_STRIDE) {
         const x = cx + m[i], y = cy - m[i + 1];
         if (Math.hypot(x - mx, y - my) * live.data.metersScale > radius) continue;
         const c = Math.cos(m[i + 5]), s = Math.sin(m[i + 5]);
@@ -661,7 +661,7 @@ export class WorldTiles {
           // yaw as the instance matrix turns it (x east, z south)
           return [lngFromMercator(x + c * ex + s * ez), latFromMercator(y - (-s * ex + c * ez))];
         });
-        out.push({ rings: [ring], crest: m[i + 2] * exaggeration, roof: { eaves: 2.6, peak: 2.6, half: 0, ridgeA: null, ridgeB: null } });
+        out.push({ rings: [ring], crest: m[i + 2] * exaggeration, roof: { eaves: m[i + 6], peak: m[i + 6], half: 0, ridgeA: null, ridgeB: null } });
       }
     }
     return out;
