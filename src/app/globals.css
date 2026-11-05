@@ -215,23 +215,23 @@
 @media (max-width:720px){.map-hint{bottom:12px;white-space:normal;border-radius:14px}}
 
 /* the car carousel (menu and showroom): one car at a time, full width, arrows to flip */
-.car-{position:relative;border:1.5px solid var(--ui-line);border-radius:var(--ui-radius-sm);background:var(--ui-soft);overflow:hidden}
-.car- .car-preview{position:relative;height:320px;width:100%}
+.car-pick{position:relative;border:1.5px solid var(--ui-line);border-radius:var(--ui-radius-sm);background:var(--ui-soft);overflow:hidden}
+.car-pick .car-preview{position:relative;height:320px;width:100%}
 .car-preview-spinner{position:absolute;inset:0;margin:auto;width:22px;height:22px;border:2px solid var(--ui-line,#c4d2da);border-top-color:var(--ui-accent,#3b5f78);border-radius:50%;pointer-events:none;animation:car-preview-spin .7s linear infinite}
 @keyframes car-preview-spin{to{transform:rotate(360deg)}}
-.car-{position:absolute;top:142px;width:36px;height:36px;border-radius:50%;background:var(--ui-bg);border:1.5px solid var(--ui-line);color:var(--ui-ink);font:600 22px/1 var(--ui-font);display:flex;align-items:center;justify-content:center;padding:0 0 3px}
-.car-:hover{border-color:var(--ui-accent);color:var(--ui-accent)}
-.car-.is-prev{left:8px}
-.car-.is-next{right:8px}
-.car--name{display:flex;justify-content:space-between;align-items:baseline;padding:0 12px 10px;font:13px var(--ui-font);color:var(--ui-ink)}
-.car--name span{font-size:11px;color:var(--ui-muted);padding:2px 8px;border:1.5px solid var(--ui-line);border-radius:999px;background:var(--ui-bg)}
-@media (max-height:850px){.car- .car-preview{height:240px}.car-{top:102px}}
-.car-{margin:0;padding:2px 12px 10px}
-.car- div{display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:5px 0;border-top:1px solid var(--ui-line)}
-.car- dt{font:12px var(--ui-font);color:var(--ui-muted)}
-.car- dd{margin:0;font:600 12px var(--ui-font);color:var(--ui-ink)}
+.car-arrow{position:absolute;top:142px;width:36px;height:36px;border-radius:50%;background:var(--ui-bg);border:1.5px solid var(--ui-line);color:var(--ui-ink);font:600 22px/1 var(--ui-font);display:flex;align-items:center;justify-content:center;padding:0 0 3px}
+.car-arrow:hover{border-color:var(--ui-accent);color:var(--ui-accent)}
+.car-arrow.is-prev{left:8px}
+.car-arrow.is-next{right:8px}
+.car-pick-name{display:flex;justify-content:space-between;align-items:baseline;padding:0 12px 10px;font:13px var(--ui-font);color:var(--ui-ink)}
+.car-pick-name span{font-size:11px;color:var(--ui-muted);padding:2px 8px;border:1.5px solid var(--ui-line);border-radius:999px;background:var(--ui-bg)}
+@media (max-height:850px){.car-pick .car-preview{height:240px}.car-arrow{top:102px}}
+.car-specs{margin:0;padding:2px 12px 10px}
+.car-specs div{display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:5px 0;border-top:1px solid var(--ui-line)}
+.car-specs dt{font:12px var(--ui-font);color:var(--ui-muted)}
+.car-specs dd{margin:0;font:600 12px var(--ui-font);color:var(--ui-ink)}
 
-.car--name strong{font-size:17px;letter-spacing:-.2px}
+.car-pick-name strong{font-size:17px;letter-spacing:-.2px}
 /* bounty hunt: red marker and off-screen pointer */
 .bounty-map-marker{display:flex;align-items:center;padding:4px 10px;border-radius:999px;background:#d63a2f;color:#fff;font:700 12px var(--ui-font);box-shadow:0 2px 8px #8a1c1488;white-space:nowrap}
 .bounty-indicator{color:#ff8a7a!important;text-shadow:0 1px 3px #000,0 0 5px #000}
@@ -275,5 +275,4 @@
 
 .local-clock{position:absolute;z-index:12;top:36px;right:18px;font-variant-numeric:tabular-nums;font-weight:700;font-size:13px;letter-spacing:.3px;color:#fff;text-shadow:0 0 2px #000,0 1px 3px #000,0 0 10px #000a;pointer-events:none;white-space:nowrap}@media(max-width:800px){.local-clock{top:30px;right:14px;font-size:12px}}
 .server-status{display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:12px;margin:22px 0}.server-status-value{display:flex;align-items:center;gap:7px;font-weight:600}.server-status-value i{width:8px;height:8px;border-radius:50%;background:#9aa39a}.server-status-value.is-up i{background:#2fb35a;box-shadow:0 0 6px #2fb35a}.server-status-value.is-down i{background:#d9534f}.server-status-value.is-checking i{animation:boot-pulse 1.1s ease-in-out infinite}
-
 .car-deal{display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:8px 12px 12px;border-top:1px solid var(--ui-line);font:12px var(--ui-font);color:var(--ui-muted)}.car-deal strong{font:700 14px var(--ui-font);color:var(--ui-ink)}.car-deal strong.is-broke{color:#d9534f}
