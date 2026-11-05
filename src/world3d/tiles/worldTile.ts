@@ -366,7 +366,7 @@ function endHeight(p: Pt, real: boolean, at: Surfaces, lifted = -Infinity) {
  * every lower road or railway it crosses, climbing to that at RAMP_SLOPE — so a deck may end above the ground; the approach roads then rise
  * to meet it (see planBridges).
  */
-function deckProfile(line: Pt[], ends: [number, number], at: Surfaces, needs: Need[], real: [boolean, boolean] = [true, true]): Deck {
+function deckProfile(line: Pt[], ends: [number, number], at: Surfaces, needs: Need[], real: [boolean, boolean] = [true, true], free: [boolean, boolean] = [false, false]): Deck {
   const { pts, s } = subdivide(line, at.toMerc);
   const length = s[s.length - 1];
   const water = pts.map(([x, z]) => at.waterAt(x, z));
@@ -390,6 +390,14 @@ function deckProfile(line: Pt[], ends: [number, number], at: Surfaces, needs: Ne
   }
   // clear every lower way crossed, climbing at RAMP_SLOPE (approach roads rise to meet it)
   for (const need of needs) for (let i = 0; i < h.length; i++) h[i] = Math.max(h[i], need.h - RAMP_SLOPE * Math.abs(s[i] - need.s) / at.toMerc);
+  // an end nothing continues from (a footbridge into a square, a building): no road
+  // can ramp up to meet it, so the deck itself comes down to the ground there
+  if (free[0] || free[1]) {
+    for (let i = 0; i < h.length; i++) {
+      if (free[0]) h[i] = Math.min(h[i], h0 + RAMP_SLOPE * s[i] / at.toMerc);
+      if (free[1]) h[i] = Math.min(h[i], h1 + RAMP_SLOPE * (length - s[i]) / at.toMerc);
+    }
+  }
   return { pts, s, h, bed, length };
 }
 
@@ -469,6 +477,9 @@ export function planBridges(ways: Map<number, Way>, extent: number, span: number
   const k = span / extent;
   const toM = (p: XY): Pt => [p.x * k, p.y * k];
   const key = (p: XY) => p.x + ',' + p.y;
+  // how many lines pass through each point: a bridge end on one line only continues nowhere
+  const through = new Map<string, number>();
+  for (const way of ways.values()) for (const line of way.lines) for (const k of new Set(line.map(key))) through.set(k, (through.get(k) ?? 0) + 1);
   // a line cut by the tile buffer ends on its edge, outside the tile
   let lo = Infinity, hi = -Infinity;
   for (const way of ways.values()) for (const line of way.lines) for (const p of line) { lo = Math.min(lo, p.x, p.y); hi = Math.max(hi, p.x, p.y); }
@@ -512,7 +523,7 @@ export function planBridges(ways: Map<number, Way>, extent: number, span: number
         const deck = deckProfile(pts, [
           endHeight(pts[0], !cut(first), at, ends.get(key(first))),
           endHeight(pts[pts.length - 1], !cut(last), at, ends.get(key(last))),
-        ], at, needs, [!cut(first), !cut(last)]);
+        ], at, needs, [!cut(first), !cut(last)], [!cut(first) && (through.get(key(first)) ?? 0) < 2, !cut(last) && (through.get(key(last)) ?? 0) < 2]);
         decks.push(deck);
         for (const [p, h] of [[first, deck.h[0]], [last, deck.h[deck.h.length - 1]]] as [XY, number][]) {
           if (!cut(p)) next.set(key(p), Math.max(next.get(key(p)) ?? -Infinity, h));
