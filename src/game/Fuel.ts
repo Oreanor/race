@@ -1,4 +1,4 @@
-import type { Position } from './VehicleController.ts';
+import { type Position, metersBetween } from './VehicleController.ts';
 
 // Fuel: every car has its own tank and consumption, stations come from real
 // OpenStreetMap POIs (OpenMapTiles `poi` layer, class "fuel").
@@ -8,7 +8,8 @@ export const EVACUATION_COST = 100; // coins
 /** what the tow truck leaves in the tank, as a share of capacity, so nobody gets stuck broke */
 export const EVACUATION_RESERVE = 0.1;
 const REFUEL_RATE = 12; // litres per second at the pump
-const STATION_REACH = 30; // meters from the station point (it may sit on the shop roof)
+/** meters from the (road-snapped) pumps — OSM points often sit inside the shop */
+export const STATION_REACH = 55;
 const IDLE_BURN = 0.004; // litres per second with the engine running
 
 export type FuelSpec = {
@@ -21,12 +22,8 @@ export type FuelSpec = {
 /** Abstract fuel station: real location, no brand or name on purpose. */
 export type Station = { id: string; position: Position };
 
-const METERS = 111319.49;
 
-export function metersBetween(a: Position, b: Position) {
-  const cos = Math.cos(((a[1] + b[1]) / 2) * Math.PI / 180);
-  return Math.hypot((b[0] - a[0]) * METERS * cos, (b[1] - a[1]) * METERS);
-}
+export { metersBetween };
 
 export class FuelTank {
   level: number;
@@ -97,6 +94,17 @@ export function repairShopsFromFeatures(features: Parameters<typeof stationsFrom
     return p.subclass === 'car_repair' || (p.class === 'car' && /repair|tyres?/.test(String(p.subclass ?? '')));
   }).map((f) => ({ ...f, properties: { ...(f.properties ?? {}), class: 'fuel', subclass: 'repair' } }));
   return stationsFromFeatures(shops).map((s) => ({ ...s, id: `repair:${s.id}` }));
+}
+
+/** Car dealerships (OpenMapTiles poi: class car, subclass car — not repair). */
+export function dealershipsFromFeatures(features: Parameters<typeof stationsFromFeatures>[0]): Station[] {
+  const shops = features.filter((f) => {
+    const p = f.properties ?? {};
+    if (p.class !== 'car') return false;
+    const sub = String(p.subclass ?? 'car');
+    return sub === 'car' || sub === 'car_dealer' || sub === 'vehicle';
+  }).map((f) => ({ ...f, properties: { ...(f.properties ?? {}), class: 'fuel', subclass: 'dealer' } }));
+  return stationsFromFeatures(shops).map((s) => ({ ...s, id: `dealer:${s.id}` }));
 }
 
 export function nearestStation(position: Position, stations: readonly Station[]) {

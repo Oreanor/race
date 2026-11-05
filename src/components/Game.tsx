@@ -1,12 +1,43 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { cars, cities, type City } from '@/config/vehicle.config';
+import { SKINS } from '@/world3d/buildings/skins';
+import { NetHud, type NetFeed } from './NetHud';
+import ServerStatus from './ServerStatus';
 import { findPlaces } from '@/game/findPlaces';
 import { healthColor } from '@/game/health';
-import { GameEngine, type BountyOffer, type FuelHud, type HudParticipant, type PlayerCarry, type ServiceOffer, type Settings, type Theme, type TravelOffer } from '@/game/GameEngine';
+import { GameEngine, type BountyOffer, type DealerOffer, type EventResult, type FuelHud, type HudParticipant, type PlayerCarry, type ServiceOffer, type Settings, type Theme, type TravelOffer } from '@/game/GameEngine';
 import { EVACUATION_COST } from '@/game/Fuel';
-import { formatNumber, LANGS, setLang, t, type Lang, type MessageKey } from '@/i18n';
+import { formatNumber, getLang, LANGS, setLang, t, type Lang, type MessageKey } from '@/i18n';
 import { useLang } from '@/i18n/react';
+
+const LOCALES: Record<Lang, string> = { en: 'en-GB', pt: 'pt-PT', ru: 'ru-RU' };
+let clockFormat: { key: string; time: Intl.DateTimeFormat; date: Intl.DateTimeFormat } | null = null;
+
+/** "09:15 · Thu, 5 November" at a place, in the game's language. */
+function localClock(at: Date, timeZone: string) {
+  const locale = LOCALES[getLang()] ?? 'en-GB';
+  const key = locale + '|' + timeZone;
+  if (clockFormat?.key !== key) {
+    clockFormat = {
+      key,
+      time: new Intl.DateTimeFormat(locale, { timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }),
+      date: new Intl.DateTimeFormat(locale, { timeZone, weekday: 'short', day: 'numeric', month: 'long' }),
+    };
+  }
+  return clockFormat.time.format(at) + ' · ' + clockFormat.date.format(at);
+}
+
+/** A start place from the address, ?at=lng,lat&heading=deg (for checking a spot quickly). */
+function placeFromAddress(): City | null {
+  if (typeof location === 'undefined') return null;
+  const params = new URLSearchParams(location.search);
+  const at = (params.get('at') ?? '').split(',').map(Number);
+  if (at.length !== 2 || !at.every(Number.isFinite) || Math.abs(at[0]) > 180 || Math.abs(at[1]) > 85) return null;
+  const heading = Number(params.get('heading') ?? 0) || 0;
+  const near = cities.reduce((best, c) => Math.hypot(c.coords[0] - at[0], c.coords[1] - at[1]) < Math.hypot(best.coords[0] - at[0], best.coords[1] - at[1]) ? c : best, cities[0]);
+  return { ...near, coords: [at[0], at[1]] as [number, number], heading, road: '', note: '' };
+}
 
 /** Localised note of a city: built-in cities have translations, search results keep their own. */
 function cityNote(city: City) {
@@ -18,6 +49,7 @@ import CarPreview from './CarPreview';
 import FuelGauge from './FuelGauge';
 import TravelDialog from './TravelDialog';
 import ServiceDialog from './ServiceDialog';
+import DealershipDialog from './DealershipDialog';
 import Dialog from './ui/Dialog';
 import PerfOverlay from './PerfOverlay';
 import { PerfMonitor, benchmark, type BenchResult, type PerfSnapshot } from '@/world3d/perf/PerfMonitor';
@@ -90,6 +122,9 @@ function syncRoster(root: HTMLElement, store: Map<string, RosterNodes>, drivers:
     nodes.meter.setAttribute('aria-valuenow', String(Math.ceil(driver.hp)));
     nodes.fill.style.width = `${Math.max(0, Math.min(100, driver.hp / driver.maxHp * 100))}%`;
     nodes.hp.textContent = String(Math.ceil(driver.hp));
+    // other players: their money and wins are not ours to show
+    nodes.money.style.visibility = Number.isFinite(driver.money) ? '' : 'hidden';
+    nodes.wins.style.visibility = Number.isFinite(driver.wins) ? '' : 'hidden';
     nodes.moneyValue.data = String(driver.money);
     nodes.money.setAttribute('aria-label', t('roster.coins', { n: driver.money }));
     nodes.winsValue.data = String(driver.wins);
@@ -102,8 +137,26 @@ export default function Game() {
   const lang = useLang();
   const host = useRef<HTMLDivElement>(null);
   const engine = useRef<GameEngine | null>(null);
+  // the name other players see: typed in, or a default one, remembered between visits
+  const [playerName, setPlayerName] = useState(() => {
+    try { return localStorage.getItem('cityRider.name') ?? ''; } catch { return ''; }
+  });
+  const [defaultName] = useState(() => {
+    // one number per browser, so the default name stays the same between visits
+    let n = '';
+    try { n = localStorage.getItem('cityRider.nameNumber') ?? ''; } catch { /* private mode */ }
+    if (!/^\d{4}$/.test(n)) {
+      n = String(1000 + Math.floor(Math.random() * 9000));
+      try { localStorage.setItem('cityRider.nameNumber', n); } catch { /* private mode */ }
+    }
+    return t('net.defaultName', { n });
+  });
+  const shownName = playerName.trim() || defaultName;
+  const nameRef = useRef(shownName);
+  nameRef.current = shownName;
   const speedRef = useRef<HTMLElement>(null);
   const fpsRef = useRef<HTMLElement>(null);
+  const clockRef = useRef<HTMLElement>(null);
   const compassRef = useRef<HTMLDivElement>(null);
   // compass: the rose turns against the camera so N always points north
   useEffect(() => {
@@ -122,7 +175,8 @@ export default function Game() {
   const drivingRef = useRef(false);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const [place, setPlace] = useState<City>(cities[0]);
+  // ?at=lng,lat&heading=deg (testing): start right there instead of the first city
+  const [place, setPlace] = useState<City>(() => placeFromAddress() ?? cities[0]);
   const [car, setCar] = useState(0);
   const [driving, setDriving] = useState(false);
   const [approaching, setApproaching] = useState(false);
@@ -134,6 +188,7 @@ export default function Game() {
   const [searchFailed, setSearchFailed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [eventOffer, setEventOffer] = useState<'arena' | 'race' | null>(null);
+  const [eventResult, setEventResult] = useState<EventResult | null>(null);
   const [status, setStatus] = useState(() => t('loading.city'));
   const [statusToast, setStatusToast] = useState('');
   const [spawnPin, setSpawnPin] = useState<[number, number] | null>(null);
@@ -150,9 +205,13 @@ export default function Game() {
   const perfGl = useRef<WebGL2RenderingContext | null>(null);
   const fuelListener = useRef<((fuel: FuelHud) => void) | null>(null);
   const subscribeFuel = useCallback((fn: ((fuel: FuelHud) => void) | null) => { fuelListener.current = fn; }, []);
+  const netFeed = useRef<NetFeed | null>(null);
+  const subscribeNet = useCallback((feed: NetFeed | null) => { netFeed.current = feed; }, []);
+  const sendChat = useCallback((text: string) => engine.current?.chat(text), []);
   const [fuelOut, setFuelOut] = useState(false);
   const [travelOffer, setTravelOffer] = useState<TravelOffer | null>(null);
   const [serviceOffer, setServiceOffer] = useState<ServiceOffer | null>(null);
+  const [dealerOffer, setDealerOffer] = useState<DealerOffer | null>(null);
   const [bountyOffer, setBountyOffer] = useState<BountyOffer | null>(null);
   // a bought ticket: what the player takes to the next city, and drive on arrival
   const carryRef = useRef<PlayerCarry | null>(null);
@@ -172,6 +231,7 @@ export default function Game() {
       quality: 'high',
       buildingDetail: 'high',
       architecture: 'auto',
+      skin: 'original',
       theme,
     };
   });
@@ -182,7 +242,8 @@ export default function Game() {
     setApproaching(false);
     setBooted(false);
     setSpawnPin(null);
-    let game: GameEngine;
+    let game: GameEngine | undefined;
+    let clockAt = 0;
     try {
       game = new GameEngine(
         host.current!,
@@ -195,6 +256,13 @@ export default function Game() {
             speedRef.current.textContent = String(shown).padStart(2, '0');
           }
           if (fpsRef.current) fpsRef.current.textContent = (frames || '—') + ' FPS';
+          // local date and time where the car is, a few times a second at most
+          const now = performance.now();
+          if (clockRef.current && now - clockAt > 500 && game) {
+            clockAt = now;
+            const { at, timeZone } = game.map.localTime();
+            clockRef.current.textContent = localClock(at, timeZone);
+          }
           if (drivingRef.current && rosterRef.current) syncRoster(rosterRef.current, rosterStoreRef.current, drivers);
         },
         (text, toast) => {
@@ -230,12 +298,22 @@ export default function Game() {
       };
       game.onTravelOffer = (offer) => setTravelOffer(offer);
       game.onServiceOffer = (offer) => setServiceOffer(offer);
+      game.onDealerOffer = (offer) => setDealerOffer(offer);
+      game.onCarBought = (bought) => {
+        const index = cars.findIndex((entry) => entry.id === bought.id);
+        if (index >= 0) setCar(index);
+      };
       game.onBountyOffer = (offer) => setBountyOffer(offer);
       game.onSpawnSet = (pos) => setSpawnPin(pos);
       game.onEventOffer = (kind) => setEventOffer(kind);
+      game.onEventResult = (result) => setEventResult(result);
       game.onFuel = (fuel) => fuelListener.current?.(fuel);
+      game.onOnline = (players) => netFeed.current?.online(players);
+      game.onChat = (line) => netFeed.current?.chat(line);
+      game.onNetNotice = (notice) => netFeed.current?.notice(notice);
       game.onFuelOut = (out) => setFuelOut(out);
       engine.current = game;
+      game.joinNetwork(nameRef.current);
     } catch (error) {
       console.error('Failed to initialize the game engine', error);
       setStatus(t('webgl.failed'));
@@ -270,8 +348,8 @@ export default function Game() {
   useEffect(() => engine.current?.applySettings(settings), [settings]);
   useEffect(() => engine.current?.setDriving(driving), [driving]);
   useEffect(() => {
-    engine.current?.setPaused((settingsOpen || Boolean(eventOffer) || fuelOut || Boolean(travelOffer) || Boolean(serviceOffer)) && driving);
-  }, [settingsOpen, eventOffer, fuelOut, travelOffer, serviceOffer, driving]);
+    engine.current?.setPaused((settingsOpen || Boolean(eventOffer) || Boolean(eventResult) || Boolean(bountyOffer) || fuelOut || Boolean(travelOffer) || Boolean(serviceOffer)) && driving);
+  }, [settingsOpen, eventOffer, eventResult, bountyOffer, fuelOut, travelOffer, serviceOffer, driving]);
   useEffect(() => {
     drivingRef.current = driving;
     if (!driving) {
@@ -279,6 +357,7 @@ export default function Game() {
       toastTimerRef.current = null;
       setStatusToast('');
       setEventOffer(null);
+      setEventResult(null);
       rosterStoreRef.current.clear();
       if (rosterRef.current) rosterRef.current.replaceChildren();
     }
@@ -371,7 +450,7 @@ export default function Game() {
     <main className={`game-shell${driving ? ' is-driving' : ''}`} data-theme={settings.theme}>
       <div ref={host} className="map" />
       <div ref={aimRef} className="aim-reticle" aria-hidden="true"><span /></div>
-      <div className="compass" aria-hidden="true">
+      <div className="compass" role="button" tabIndex={-1} title={t('compass.north')} onDoubleClick={() => engine.current?.faceNorth()}>
         <div className="compass-rose" ref={compassRef}>
           <i className="compass-needle" />
           <b className="compass-n">N</b>
@@ -388,15 +467,28 @@ export default function Game() {
         <a className="brand" href="/" aria-label="City Rider">
           <span className="brand-icon">↗</span> city rider
         </a>
-        <div className="header-right">
-          <span className="fps" ref={fpsRef} hidden={!perfOn}>— FPS</span>
-        </div>
       </header>
+      <span className="fps" ref={fpsRef} aria-live="off">— FPS</span>
+      <span className="local-clock" ref={clockRef} aria-live="off" />
 
       {!driving ? (
         <>
           <section className="intro">
             <div className="trip-card">
+              <h3 className="ui-section">{t('net.name')}</h3>
+              <input
+                className="ui-input"
+                aria-label={t('net.name')}
+                placeholder={defaultName}
+                maxLength={24}
+                value={playerName}
+                onChange={e => {
+                  const value = e.target.value;
+                  setPlayerName(value);
+                  try { localStorage.setItem('cityRider.name', value); } catch { /* private mode */ }
+                  engine.current?.joinNetwork(value.trim() || defaultName);
+                }}
+              />
               <h3 className="ui-section">{t('intro.destination')}</h3>
               <div className="city-search">
                 <label className="search">
@@ -474,6 +566,7 @@ export default function Game() {
         <>
           <div className="roster-hud" ref={rosterRef} aria-label={t('hud.racers')} />
           <FuelGauge subscribe={subscribeFuel} />
+          <NetHud subscribe={subscribeNet} send={sendChat} />
           <div className="speed-hud" aria-label={t('hud.speed')}>
             <strong ref={speedRef}>00</strong>
             <span>{t('hud.kmh')}</span>
@@ -504,11 +597,12 @@ export default function Game() {
                 </button>
               </div>
             </div>
-            <label>{t('settings.detail')}<select value={settings.buildingDetail} onChange={e => update({ buildingDetail: e.target.value as Settings['buildingDetail'] })}><option value="off">{t('level.off')}</option><option value="low">{t('level.low')}</option><option value="medium">{t('level.medium')}</option><option value="high">{t('level.high')}</option></select></label>
+            <label>{t('settings.skin')}<select value={settings.skin} onChange={e => update({ skin: e.target.value as Settings['skin'] })}>{SKINS.map(id => <option key={id} value={id}>{t(`skin.${id}`)}</option>)}</select></label>
             <label className="toggle">{t('settings.follow')}<input type="checkbox" checked={settings.follow} onChange={e => update({ follow: e.target.checked })} /></label>
             <label className="toggle">{t('settings.terrain')}<input type="checkbox" checked={settings.terrain} onChange={e => update({ terrain: e.target.checked })} /></label>
             <label>{t('settings.sensitivity')}<input type="range" min="0.3" max="2" step="0.1" value={settings.sensitivity} onChange={e => update({ sensitivity: Number(e.target.value) })} /></label>
             <label className="toggle">{t('settings.stats')}<input type="checkbox" checked={perfOn} onChange={e => toggleStats(e.target.checked)} /></label>
+            <ServerStatus />
             <label>{t('settings.quality')}<select value={settings.quality} onChange={e => update({ quality: e.target.value as Settings['quality'] })}><option value="low">{t('quality.low')}</option><option value="medium">{t('quality.medium')}</option><option value="high">{t('quality.high')}</option></select></label>
           </div>
         </Dialog>
@@ -569,7 +663,7 @@ export default function Game() {
         </Dialog>
       )}
 
-      {eventOffer && !settingsOpen && (
+      {eventOffer && !settingsOpen && !eventResult && (
         <Dialog
           title={eventOffer === 'arena' ? t('event.arena') : t('event.race')}
           actions={<>
@@ -578,6 +672,23 @@ export default function Game() {
           </>}
         >
           <p className="ui-text">{eventOffer === 'arena' ? t('event.arena.text') : t('event.race.text')}</p>
+        </Dialog>
+      )}
+
+      {eventResult && driving && !settingsOpen && (
+        <Dialog
+          title={eventResult.kind === 'arena' ? t('event.arena') : t('event.race')}
+          tone={eventResult.won ? 'default' : 'alert'}
+          onBackdrop={() => setEventResult(null)}
+          actions={
+            <button type="button" className="ui-btn" autoFocus onClick={() => setEventResult(null)}>{t('event.result.ok')}</button>
+          }
+        >
+          <p className="ui-text">
+            {eventResult.kind === 'arena'
+              ? (eventResult.won ? t('arena.won') : t('arena.lost'))
+              : (eventResult.won ? t('race.won') : t('race.lost', { name: eventResult.name ?? '' }))}
+          </p>
         </Dialog>
       )}
     </main>

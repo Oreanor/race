@@ -15,6 +15,9 @@ export type SimpleLitUniforms = {
   uHeadDir: { value: THREE.Vector3 };
   uHeadSide: { value: THREE.Vector3 };
   uHeadOn: { value: number };
+  uLampColor: { value: THREE.Color };
+  /** 0 lamps light a cone down (classic heads), 1 all around (glass posts) */
+  uLampOmni: { value: number };
   uExag: { value: number };
   uCameraPos: { value: THREE.Vector3 };
   uFogColor: { value: THREE.Color };
@@ -28,6 +31,8 @@ const SUN = new THREE.Vector3(0.45, 0.8, 0.3).normalize();
 export const worldTime = { value: 0 };
 /** Season weights (spring, summer, autumn, winter), blended by the host on a change. */
 export const seasonWeights = { value: new THREE.Vector4(0, 1, 0, 0) };
+/** 0..1 lying snow allowed here (latitude band); host blends it with the season. */
+export const snowCover = { value: 0 };
 
 /** Uniforms with fog effectively off, for hosts without a world (MapLibre mode). */
 export function standaloneUniforms(): SimpleLitUniforms {
@@ -41,6 +46,8 @@ export function standaloneUniforms(): SimpleLitUniforms {
     uHeadDir: { value: new THREE.Vector3(0, 0, -1) },
     uHeadSide: { value: new THREE.Vector3(0.6, 0, 0) },
     uHeadOn: { value: 0 },
+    uLampColor: { value: new THREE.Color(1, 0.8, 0.52) },
+    uLampOmni: { value: 0 },
     uCameraPos: { value: new THREE.Vector3() },
     uFogColor: { value: new THREE.Color(1, 1, 1) },
     uFogNear: { value: 1e9 },
@@ -48,12 +55,13 @@ export function standaloneUniforms(): SimpleLitUniforms {
   };
 }
 
-export function simpleLit(color: THREE.ColorRepresentation, uniforms: SimpleLitUniforms, options: { side?: THREE.Side; foliage?: boolean; shiny?: boolean; broadleaf?: boolean; branches?: boolean } = {}) {
+export function simpleLit(color: THREE.ColorRepresentation, uniforms: SimpleLitUniforms, options: { side?: THREE.Side; foliage?: boolean; shiny?: boolean; glow?: boolean; broadleaf?: boolean; branches?: boolean } = {}) {
   const defines: Record<string, string> = {};
   if (options.broadleaf) defines.BROADLEAF = '';
   if (options.branches) defines.BRANCHES = '';
   if (options.foliage) defines.FOLIAGE = '';
   if (options.shiny) defines.SHINY = '';
+  if (options.glow) defines.GLOW_PARTS = '';
   return new THREE.ShaderMaterial({
     side: options.side ?? THREE.FrontSide,
     defines,
@@ -62,6 +70,8 @@ export function simpleLit(color: THREE.ColorRepresentation, uniforms: SimpleLitU
       uColor: { value: new THREE.Color(color) }, // linear working colour
       uTime: worldTime,
       uSeason: seasonWeights,
+      // world BaseUniforms may already carry uSkin; keep a default for standalone hosts
+      uSkin: 'uSkin' in uniforms ? (uniforms as { uSkin: { value: number } }).uSkin : { value: 0 },
     },
     vertexShader: /* glsl */ `
       uniform float uExag;
@@ -77,8 +87,17 @@ export function simpleLit(color: THREE.ColorRepresentation, uniforms: SimpleLitU
         varying float vShade;
       #endif
       varying float vLocalY;
+      #ifdef GLOW_PARTS
+        attribute float aGlow;
+        // per lamp: 1 lit, 0 knocked down (dark)
+        attribute float iOn;
+        varying float vGlow;
+      #endif
       void main() {
         vLocalY = position.y;
+        #ifdef GLOW_PARTS
+          vGlow = aGlow * iOn;
+        #endif
         vec3 local = position;
         vHash = 0.0;
         #ifdef USE_INSTANCING
@@ -166,6 +185,10 @@ export function simpleLit(color: THREE.ColorRepresentation, uniforms: SimpleLitU
         varying float vShade;
       #endif
       varying float vLocalY;
+      #ifdef GLOW_PARTS
+        varying float vGlow;
+        uniform float uSkin;
+      #endif
       void main() {
         vec3 n = normalize(vNormal);
         vec3 tint = vTint;
@@ -199,9 +222,142 @@ export function simpleLit(color: THREE.ColorRepresentation, uniforms: SimpleLitU
           vec3 eye = normalize(uCameraPos - vWorld);
           float spec = pow(max(dot(n, normalize(uSun + eye)), 0.0), 28.0);
           color += uSunColor * 0.88 * spec + uAmbient * 0.07 * max(n.y, 0.0);
-          // lamp heads glow at night
-          color += vec3(1.0, 0.78, 0.45) * 2.2 * uNight * step(6.7, vLocalY);
         #endif
+        #ifdef GLOW_PARTS
+          // lamp head / neon tube: warm classic, cyan futuristic (skin index 2)
+          float futuristic = step(1.5, uSkin) * (1.0 - step(2.5, uSkin));
+          vec3 lampGlow = mix(vec3(1.0, 0.78, 0.45), vec3(0.35, 0.92, 1.2), futuristic);
+          float strength = mix(2.2 * uNight, 0.65 + 3.1 * uNight, futuristic);
+          color += lampGlow * strength * vGlow;
+          color = mix(color, lampGlow * 0.55, vGlow * futuristic * (0.35 + 0.45 * uNight));
+        #endif
+        float fog = smoothstep(uFogNear, uFogFar, distance(vWorld, uCameraPos));
+        color = mix(color, pow(uFogColor, vec3(2.2)), fog);
+        gl_FragColor = linearToOutputTexel(vec4(color, 1.0));
+      }
+    `,
+  });
+}
+
+/**
+ * All trees and shrubs of the catalog (map/floraModels) in one material.
+ * Per instance: leaf colour (instanceColor), bark colour (iBark) and traits
+ * (iTraits: habit, autumn colour). Deciduous crowns fall away in winter and
+ * leave the bare limbs; semi-deciduous ones thin out; evergreens only dull a
+ * little; grass turns ochre.
+ */
+export function floraLit(uniforms: SimpleLitUniforms) {
+  return new THREE.ShaderMaterial({
+    uniforms: { ...uniforms, uTime: worldTime, uSeason: seasonWeights, uSnow: snowCover },
+    vertexShader: /* glsl */ `
+      uniform float uExag;
+      uniform float uTime;
+      uniform vec4 uSeason;
+      uniform float uSnow;
+      attribute float iGround;
+      attribute vec3 iBark;
+      attribute vec4 iTraits;
+      attribute float aPart;
+      attribute float aShade;
+      varying vec3 vNormal;
+      varying vec3 vWorld;
+      varying vec3 vColor;
+      varying float vLeaf;
+      varying float vShade;
+      void main() {
+        float hash = fract(sin(dot(instanceMatrix[3].xz, vec2(12.9898, 78.233))) * 43758.5453);
+        float habit = iTraits.x;
+        vec3 summer = instanceColor;
+        vec3 autumn = iTraits.yzw * mix(0.82, 1.15, fract(hash * 7.31));
+        vec3 leaf = summer;
+        float leafy = 1.0;
+        if (habit < 0.5) {
+          leaf = summer * (1.0 - 0.15 * uSeason.w);
+        } else if (habit < 1.5) {
+          // deciduous: fresh green or blossom in spring, autumn colours, bare in winter
+          vec3 spring = hash < 0.07 ? vec3(0.89, 0.42, 0.58) : hash < 0.12 ? vec3(0.9, 0.86, 0.8) : summer * vec3(1.15, 1.3, 0.85);
+          leaf = spring * uSeason.x + summer * uSeason.y + autumn * (uSeason.z + uSeason.w);
+          leafy = clamp((1.0 - uSeason.w) * 1.6 - hash * 0.6, 0.0, 1.0);
+        } else if (habit < 2.5) {
+          leaf = mix(summer, autumn, 0.6 * (uSeason.z + uSeason.w));
+          leafy = 1.0 - 0.45 * uSeason.w;
+        } else {
+          // grass / undergrowth: ochre in autumn, snow only where the latitude allows it
+          leaf = mix(summer, autumn, 0.7 * uSeason.z);
+          leaf = mix(leaf, vec3(0.9, 0.925, 0.95), uSeason.w * uSnow);
+        }
+        vLeaf = aPart;
+        vShade = aShade;
+        vColor = aPart > 0.5 ? leaf : iBark;
+        vec3 local = position;
+        // leaves pull in to the stem at their own height; at zero they vanish
+        if (aPart > 0.5) local.xz *= leafy;
+        vec4 p = instanceMatrix * vec4(local, 1.0);
+        mat3 im = mat3(instanceMatrix);
+        vec3 n = im * (normal / vec3(dot(im[0], im[0]), dot(im[1], im[1]), dot(im[2], im[2])));
+        // gentle wind: crown tops sway, trunks stay put
+        float amp = aPart * aShade * aShade * 0.012 * position.y;
+        vec2 phase = instanceMatrix[3].xz * 0.37;
+        p.x += sin(uTime * 1.25 + phase.x) * amp;
+        p.z += cos(uTime * 0.95 + phase.y) * amp * 0.7;
+        vec4 world = modelMatrix * p;
+        world.y += iGround * uExag;
+        vWorld = world.xyz;
+        vNormal = normalize(mat3(modelMatrix) * n);
+        gl_Position = projectionMatrix * viewMatrix * world;
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform vec3 uSun;
+      uniform vec3 uSunColor;
+      uniform vec3 uAmbient;
+      uniform vec3 uHeadPos;
+      uniform vec3 uHeadDir;
+      uniform vec3 uHeadSide;
+      uniform float uHeadOn;
+      uniform vec3 uCameraPos;
+      uniform vec3 uFogColor;
+      uniform float uFogNear;
+      uniform float uFogFar;
+      varying vec3 vNormal;
+      varying vec3 vWorld;
+      varying vec3 vColor;
+      varying float vLeaf;
+      varying float vShade;
+      vec3 headBeam(vec3 world, vec3 n, vec3 lamp) {
+        vec3 d = world - lamp;
+        float dist = length(d);
+        if (dist > 55.0) return vec3(0.0);
+        vec3 l = d / max(dist, 0.001);
+        vec3 side = normalize(cross(uHeadDir, vec3(0.0, 1.0, 0.0)));
+        float across = dot(l, side);
+        float along = dot(l, uHeadDir);
+        float cone = smoothstep(0.86, 0.97, along - across * across * 0.35);
+        float fall = 1.0 / (1.0 + dist * dist * 0.008) * smoothstep(55.0, 18.0, dist);
+        float facing = clamp(dot(n, -l) * 0.85 + 0.3, 0.0, 1.0);
+        return vec3(1.0, 0.92, 0.78) * cone * fall * facing;
+      }
+      vec3 headlight(vec3 world, vec3 n) {
+        if (uHeadOn < 0.01) return vec3(0.0);
+        return (headBeam(world, n, uHeadPos + uHeadSide) + headBeam(world, n, uHeadPos - uHeadSide)) * 1.35 * uHeadOn;
+      }
+      void main() {
+        vec3 n = normalize(vNormal);
+        if (!gl_FrontFacing) n = -n;
+        vec3 color;
+        if (vLeaf > 0.5) {
+          // soft foliage: wrapped light, darker inside and below, leaf dapple, a bright rim
+          float wrap = dot(n, uSun) * 0.5 + 0.5;
+          vec3 light = uAmbient * (0.8 + 0.11 * n.y) + uSunColor * 0.68 * wrap * wrap + headlight(vWorld, n);
+          color = vColor * light * mix(0.72, 1.08, vShade);
+          float dapple = sin(vWorld.x * 2.1 + vWorld.y * 0.7) * sin(vWorld.z * 2.3 - vWorld.y * 1.3) * sin(vWorld.y * 2.7 + vWorld.x * 0.9);
+          color *= 1.0 + 0.09 * dapple;
+          float rim = pow(1.0 - max(dot(n, normalize(uCameraPos - vWorld)), 0.0), 2.0);
+          color += vColor * vec3(0.18, 0.22, 0.1) * rim;
+        } else {
+          vec3 light = uAmbient * (0.69 + 0.25 * n.y) + uSunColor * 0.68 * max(dot(n, uSun), 0.0) + headlight(vWorld, n);
+          color = vColor * light;
+        }
         float fog = smoothstep(uFogNear, uFogFar, distance(vWorld, uCameraPos));
         color = mix(color, pow(uFogColor, vec3(2.2)), fog);
         gl_FragColor = linearToOutputTexel(vec4(color, 1.0));

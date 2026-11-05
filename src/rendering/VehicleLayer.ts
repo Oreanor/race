@@ -1,5 +1,6 @@
 import { TireTracks } from './TireTracks';
-import { WorldParticles, type Enu } from './effects/WorldParticles';
+import { WorldParticles, type Enu, type Surface } from './effects/WorldParticles';
+import { fireEye, WreckFire } from './effects/WreckFire';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { MapLayer, ThreeMap } from '@/world3d/map/ThreeMap';
@@ -7,18 +8,17 @@ import { mercatorPerMeter, mercatorX01, mercatorY01 } from '@/world3d/map/camera
 import type { Car } from '@/config/vehicle.config';
 import { offsetPosition, type Position } from '@/game/VehicleController';
 import type { Pose } from '@/game/VehiclePose';
-import { healthColor } from '@/game/health';
 import { t } from '@/i18n';
 
 export type TargetVehicle = { id: string; driver: string; car: Car; position: Position; heading: number };
+/** Another player's car (multiplayer): drawn only, never shot or hit here. Altitude in meters as drawn. */
+export type RemoteCar = { id: string; car: Car; position: Position; heading: number; altitude: number; pitch: number; roll: number; hp?: number };
 export type TargetHealth = { id: string; driver: string; color: string; hp: number; maxHp: number };
 export type PickupVisual = { id: string; position: Position; color: string; kind?: 'ball' | 'coin' };
 type DeathPhase = 'tumble' | 'burn' | 'wreck';
 type CharMat = { material: THREE.MeshPhongMaterial; r: number; g: number; b: number };
 type TargetState = TargetVehicle & {
   root: THREE.Group;
-  healthBar: THREE.Group;
-  healthFill: THREE.Mesh;
   explosion: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>;
   hp: number;
   destroyed: boolean;
@@ -51,6 +51,21 @@ export type VehicleSceneLayer = MapLayer & {
   flashPlayer: (duration: number) => void;
   setCar: (next: Car) => void;
   setTargets: (vehicles: TargetVehicle[]) => void;
+  /** targets beside the missions' (shared traffic, test cars): by id, never counted for a mission */
+  setExtraTargets: (vehicles: TargetVehicle[]) => void;
+  /** a target's health as its owner says (shared traffic); 0 blows it up */
+  setTargetHp: (id: string, hp: number) => void;
+  targetHp: (id: string) => number | null;
+  /** the extra targets still standing, for the HUD's health meters */
+  extraHealth: () => (TargetHealth & { position: Position })[];
+  /** our bullet hit a target */
+  onTargetHit: (id: string) => void;
+  /** other players, every frame; cars come and go with the list */
+  setRemotes: (cars: RemoteCar[]) => void;
+  /** our bullet hit another player's car */
+  onRemoteHit: (id: string) => void;
+  /** our own car blows up (another player got us): a burst on the spot */
+  explodePlayer: () => void;
   updateTargets: (vehicles: TargetVehicle[]) => void;
   flashTarget: (id: string, duration: number) => void;
   damageTarget: (id: string, amount: number) => boolean;
@@ -58,10 +73,10 @@ export type VehicleSceneLayer = MapLayer & {
   isTargetAlive: (id: string) => boolean;
   targetHealth: () => TargetHealth[];
   setPickups: (pickups: PickupVisual[]) => void;
-  setMissionBeacons: (beacons: { id: string; kind: 'arena' | 'race'; position: Position }[]) => void;
+  setMissionBeacons: (beacons: { id: string; kind: 'arena' | 'race' | 'bounty'; position: Position }[]) => void;
   setRaceFinish: (goal: Position | null) => void;
   /** the J ramp: low edge at `position`, rising along `heading`; null takes it away */
-  setRamp: (ramp: { position: Position; heading: number; ground: number; tilt: number } | null) => void;
+  setRamp: (ramp: { position: Position; heading: number; ground: number; tilt: number; length: number; height: number; width: number } | null) => void;
 };
 
 export function disposeObject(object: THREE.Object3D) {
@@ -81,15 +96,16 @@ function glossy(material: THREE.Material) {
   const paint = new THREE.MeshPhongMaterial({
     map: source.map ?? null,
     color: source.color ?? new THREE.Color('#ffffff'),
-    shininess: 48,
-    specular: new THREE.Color('#ffffff'),
+    shininess: 62,
+    specular: new THREE.Color('#d8dde8'),
+    reflectivity: 0.28,
   });
   source.map = null;
   source.dispose();
   return paint;
 }
 
-function polish(object: THREE.Object3D) {
+export function polish(object: THREE.Object3D) {
   object.traverse((child) => {
     if (!(child instanceof THREE.Mesh)) return;
     const current = Array.isArray(child.material) ? child.material : [child.material];
@@ -112,6 +128,7 @@ export async function loadCar(car: Car) {
   const root = new THREE.Group();
   root.add(group);
   root.rotation.y = car.yaw;
+  polish(root);
   return root;
 }
 
@@ -204,13 +221,16 @@ export function vehicleLayer(
   rim.position.set(-4, 12, -8);
   scene.add(rim);
   const haze = smokeTexture();
-  const puffs = Array.from({ length: 20 }, () => {
+  const puffs = Array.from({ length: 64 }, () => {
     const mesh = puffMesh(haze);
     scene.add(mesh);
-    return { mesh, place: [0, 0] as Position, east: 0, north: 0, up: 0, born: 0, life: 1, size: 0.4, active: false };
+    return { mesh, place: [0, 0] as Position, east: 0, north: 0, up: 0, rise: 0.7, born: 0, life: 1, size: 0.4, active: false };
   });
   let cursor = 0;
   let lastSpawn = 0;
+  let lastDust = 0;
+  let surface: Surface = 'paved';
+  let surfaceAt = 0;
   let lastFrame = 0;
   const tireTracks = new TireTracks(scene);
   const targets = new Map<string, TargetState>();
@@ -241,33 +261,37 @@ export function vehicleLayer(
     return coin;
   }
   const pickupMaterials = new Map<string, THREE.MeshStandardMaterial>();
-  function makeBeacon(pole: string, glow: string, orb: string, base: string) {
+  function makeBeacon(pole: string, glow: string, orb: string, _base: string) {
     const group = new THREE.Group();
-    const shaft = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.22, 0.28, 2.55, 12),
-      new THREE.MeshStandardMaterial({ color: pole, emissive: glow, emissiveIntensity: 0.55, metalness: 0.25, roughness: 0.38 }),
-    );
-    shaft.position.y = 1.275;
-    shaft.frustumCulled = false;
+    // inverted drop / map pin: tip on the ground, fat bulb up
+    const profile = [
+      new THREE.Vector2(0, 0),
+      new THREE.Vector2(0.28, 0.55),
+      new THREE.Vector2(0.72, 1.45),
+      new THREE.Vector2(1.15, 2.35),
+      new THREE.Vector2(1.35, 3.15),
+      new THREE.Vector2(1.2, 3.95),
+      new THREE.Vector2(0.7, 4.55),
+      new THREE.Vector2(0, 4.85),
+    ];
     const tip = new THREE.Mesh(
-      new THREE.SphereGeometry(0.42, 16, 12),
-      new THREE.MeshStandardMaterial({ color: orb, emissive: pole, emissiveIntensity: 0.85, metalness: 0.1, roughness: 0.28 }),
+      new THREE.LatheGeometry(profile, 28),
+      new THREE.MeshStandardMaterial({ color: pole, emissive: glow, emissiveIntensity: 0.7, metalness: 0.18, roughness: 0.32 }),
     );
-    tip.position.y = 2.85;
     tip.frustumCulled = false;
-    const footing = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.55, 0.7, 0.18, 12),
-      new THREE.MeshStandardMaterial({ color: base, metalness: 0.2, roughness: 0.5 }),
+    const core = new THREE.Mesh(
+      new THREE.SphereGeometry(0.55, 16, 12),
+      new THREE.MeshStandardMaterial({ color: orb, emissive: pole, emissiveIntensity: 1.05, metalness: 0.05, roughness: 0.22 }),
     );
-    footing.position.y = 0.09;
-    footing.frustumCulled = false;
-    group.add(footing, shaft, tip);
+    core.position.y = 3.35;
+    core.frustumCulled = false;
+    group.add(tip, core);
     group.visible = false;
     group.frustumCulled = false;
     scene.add(group);
-    return { group, tip };
+    return { group, tip: core };
   }
-  const missionBeacons = new Map<string, { kind: 'arena' | 'race'; position: Position; visual: ReturnType<typeof makeBeacon> }>();
+  const missionBeacons = new Map<string, { kind: 'arena' | 'race' | 'bounty'; position: Position; visual: ReturnType<typeof makeBeacon> }>();
   const raceFinish = new THREE.Group();
   const finishPole = new THREE.Mesh(
     new THREE.CylinderGeometry(0.08, 0.1, 3.2, 8),
@@ -297,21 +321,6 @@ export function vehicleLayer(
   scene.add(tracer);
   // muzzle flash, impact sparks and explosions
   const fx = new WorldParticles(scene);
-  const healthBackgroundGeometry = new THREE.PlaneGeometry(2.2, 0.24);
-  const healthFillGeometry = new THREE.PlaneGeometry(1, 0.12);
-  const healthBackgroundMaterial = new THREE.MeshBasicMaterial({
-    color: '#17251c',
-    transparent: true,
-    opacity: 0.88,
-    depthWrite: false,
-    depthTest: false,
-    side: THREE.DoubleSide,
-  });
-  const healthFillMaterials = {
-    green: new THREE.MeshBasicMaterial({ color: '#19ff62', depthWrite: false, depthTest: false, side: THREE.DoubleSide }),
-    yellow: new THREE.MeshBasicMaterial({ color: '#ffe600', depthWrite: false, depthTest: false, side: THREE.DoubleSide }),
-    red: new THREE.MeshBasicMaterial({ color: '#ff2b25', depthWrite: false, depthTest: false, side: THREE.DoubleSide }),
-  };
   const explosionGeometry = new THREE.SphereGeometry(1, 10, 8);
   const targetMaxHp = 1000;
   const targetDamagePerShot = 15;
@@ -321,8 +330,6 @@ export function vehicleLayer(
   let firing = false;
   let lastShot = 0;
   let tracerUntil = 0;
-  let flashUntil = 0;
-  let impactUntil = 0;
   let playerFlashUntil = 0;
   let playerFlashing = false;
 
@@ -365,7 +372,7 @@ export function vehicleLayer(
     }
   }
 
-  function setMissionBeacons(beacons: { id: string; kind: 'arena' | 'race'; position: Position }[]) {
+  function setMissionBeacons(beacons: { id: string; kind: 'arena' | 'race' | 'bounty'; position: Position }[]) {
     const active = new Set(beacons.map(beacon => beacon.id));
     for (const [id, entry] of missionBeacons) {
       if (active.has(id)) continue;
@@ -377,7 +384,9 @@ export function vehicleLayer(
       if (!entry) {
         const visual = beacon.kind === 'arena'
           ? makeBeacon('#2f7dff', '#1a4fb8', '#6eb6ff', '#1e3a66')
-          : makeBeacon('#ff7a1a', '#b84a00', '#ffb86b', '#6a3110');
+          : beacon.kind === 'bounty'
+            ? makeBeacon('#d63a2f', '#8a1c14', '#ff8a7a', '#5a1510')
+            : makeBeacon('#ff7a1a', '#b84a00', '#ffb86b', '#6a3110');
         entry = { kind: beacon.kind, position: [...beacon.position], visual };
         missionBeacons.set(beacon.id, entry);
       }
@@ -388,7 +397,7 @@ export function vehicleLayer(
     map?.triggerRepaint();
   }
 
-  // kicker ramp: a wedge rising along +z (the car's forward), grows in and shrinks away
+  // kicker ramp: unit wedge (scaled to charged length / 30% grade)
   const rampSize = { length: 3.2, width: 3.2, height: 1.0 };
   const rampMesh = (() => {
     const side = new THREE.Shape([new THREE.Vector2(0, 0), new THREE.Vector2(rampSize.length, 0), new THREE.Vector2(rampSize.length, rampSize.height)]);
@@ -405,13 +414,14 @@ export function vehicleLayer(
     scene.add(mesh);
     return mesh;
   })();
-  let ramp: { position: Position; heading: number; ground: number; tilt: number } | null = null;
+  let ramp: { position: Position; heading: number; ground: number; tilt: number; length: number; height: number; width: number } | null = null;
   let rampShown = 0;
   let rampTarget = 0;
   function setRamp(next: typeof ramp) {
     if (next) {
+      const first = !ramp;
       ramp = { ...next, position: [...next.position] as Position };
-      rampShown = 0;
+      if (first) rampShown = 0;
     }
     rampTarget = next ? 1 : 0;
     map?.triggerRepaint();
@@ -423,31 +433,6 @@ export function vehicleLayer(
     map?.triggerRepaint();
   }
 
-
-  function createHealthBar() {
-    const bar = new THREE.Group();
-    const background = new THREE.Mesh(healthBackgroundGeometry, healthBackgroundMaterial);
-    background.renderOrder = 10;
-    const fill = new THREE.Mesh(healthFillGeometry, healthFillMaterials.green);
-    fill.position.set(0, 0, 0.015);
-    fill.scale.x = 2;
-    fill.renderOrder = 11;
-    bar.add(background, fill);
-    scene.add(bar);
-    bar.visible = false;
-    return { bar, fill };
-  }
-
-  function updateHealthFill(fill: THREE.Mesh, hp: number, maxHp: number) {
-    const fraction = Math.max(0, Math.min(1, hp / maxHp));
-    fill.scale.x = 2 * fraction;
-    fill.position.x = -1 + fraction;
-    fill.material = healthFillMaterials[healthColor(hp, maxHp)];
-  }
-
-  function updateHealthBar(target: TargetState) {
-    updateHealthFill(target.healthFill, target.hp, targetMaxHp);
-  }
 
   function captureCharMats(root: THREE.Group) {
     const mats: CharMat[] = [];
@@ -482,6 +467,14 @@ export function vehicleLayer(
     fx.explosion(here, { e: o.east + jitter(), n: o.north + jitter(), u: 0.6 + Math.random() * 0.8 }, 0.75 * size, now, size > 1);
   }
 
+  /** when each burning wreck last put out a puff of smoke */
+  const fireAt = new WeakMap<TargetState, number>();
+  /** the flames on each burning wreck */
+  const fires = new Map<TargetState, WreckFire>();
+  function putOut(target: TargetState) {
+    fires.get(target)?.dispose();
+    fires.delete(target);
+  }
   const wreckYawScratch = new THREE.Quaternion();
   const wreckEulerScratch = new THREE.Euler(0, 0, 0, 'XYZ');
 
@@ -505,7 +498,6 @@ export function vehicleLayer(
     target.destroyed = true;
     target.deathPhase = 'tumble';
     target.root.visible = true;
-    target.healthBar.visible = false;
     target.explodedAt = now;
     // About one flip onto the side/roof — not a washing-machine spin.
     const flip = (Math.random() < 0.5 ? 1 : -1) * Math.PI * (0.85 + Math.random() * 0.3);
@@ -530,19 +522,112 @@ export function vehicleLayer(
     target.nextBlastAt = now + 70 + Math.random() * 90;
   }
 
-  function setTargets(next: TargetVehicle[]) {
-    for (const [id, target] of targets) {
-      scene.remove(target.root);
-      disposeObject(target.root);
-      scene.remove(target.healthBar, target.explosion);
-      target.explosion.material.dispose();
-      targets.delete(id);
+  // ---- other players ------------------------------------------------------
+  const remotes = new Map<string, { spec: RemoteCar; root: THREE.Group; body: THREE.Group; beam: THREE.Mesh; path: string; flashUntil: number; flashing: boolean }>();
+  /** set by the game: our bullet hit another player's car */
+  let remoteHitHandler: (id: string) => void = () => {};
+  /** set by the game: our bullet hit a target */
+  let targetHitHandler: (id: string) => void = () => {};
+  /** 0 by day … 1 at night: other players' headlight beams */
+  let night = 0;
+  // one soft light cone for every other player's car: bright at the lamps, gone 18 m ahead
+  const beamGeometry = (() => {
+    const g = new THREE.ConeGeometry(3.4, 18, 18, 1, true);
+    g.rotateX(-Math.PI / 2); // tip toward -z, opening toward +z (the car's forward)
+    g.translate(0, 0, 9);
+    g.rotateX(0.08); // aimed a little down the road
+    const pos = g.getAttribute('position');
+    const colors = new Float32Array(pos.count * 3);
+    for (let i = 0; i < pos.count; i++) {
+      const k = Math.max(0, 1 - pos.getZ(i) / 18);
+      colors.set([1 * k, 0.93 * k, 0.78 * k], i * 3);
     }
+    g.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    return g;
+  })();
+  const beamMaterial = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+  function setRemotes(next: RemoteCar[]) {
+    const seen = new Set<string>();
     for (const spec of next) {
+      seen.add(spec.id);
+      let remote = remotes.get(spec.id);
+      if (!remote || remote.path !== spec.car.path) {
+        if (remote) { remote.root.remove(remote.beam); scene.remove(remote.root); disposeObject(remote.body); }
+        const root = new THREE.Group();
+        const body = new THREE.Group();
+        body.add(fallbackCar(spec.car.color));
+        root.add(body);
+        const beam = new THREE.Mesh(beamGeometry, beamMaterial);
+        beam.position.set(0, 0.7, spec.car.length * 0.5);
+        beam.renderOrder = 8;
+        root.add(beam);
+        scene.add(root);
+        remote = { spec, root, body, beam, path: spec.car.path, flashUntil: 0, flashing: false };
+        remotes.set(spec.id, remote);
+        const mine = remote;
+        loadCar(spec.car).then((model) => {
+          if (disposed || remotes.get(spec.id) !== mine) { disposeObject(model); return; }
+          disposeObject(mine.body);
+          mine.body.clear();
+          mine.body.add(model);
+          map?.triggerRepaint();
+        }).catch((error: unknown) => console.error(`Failed to load player car ${spec.car.path}`, error));
+      }
+      remote.spec = spec;
+    }
+    for (const [id, remote] of remotes) {
+      if (seen.has(id)) continue;
+      remote.root.remove(remote.beam);
+      scene.remove(remote.root);
+      disposeObject(remote.body);
+      remotes.delete(id);
+    }
+  }
+
+  /**
+   * Targets that live beside the missions' (shared traffic, test cars): they come
+   * and go by id, and missions neither count nor clear them.
+   */
+  const extraIds = new Set<string>();
+
+  function removeTarget(id: string) {
+    const target = targets.get(id);
+    if (!target) return;
+    putOut(target);
+    scene.remove(target.root);
+    disposeObject(target.root);
+    scene.remove(target.explosion);
+    target.explosion.material.dispose();
+    targets.delete(id);
+  }
+
+  /** The missions' targets, all replaced at once (the extra ones stay). */
+  function setTargets(next: TargetVehicle[]) {
+    for (const id of [...targets.keys()]) if (!extraIds.has(id)) removeTarget(id);
+    for (const spec of next) addTarget(spec);
+    map?.triggerRepaint();
+  }
+
+  /** The extra targets: new ids come in, missing ones go, the rest move on. */
+  function setExtraTargets(next: TargetVehicle[]) {
+    const keep = new Set(next.map((spec) => spec.id));
+    for (const id of [...extraIds]) if (!keep.has(id)) { removeTarget(id); extraIds.delete(id); }
+    for (const spec of next) {
+      const target = targets.get(spec.id);
+      if (target) {
+        if (!target.destroyed) { target.position = [...spec.position]; target.heading = spec.heading; }
+        continue;
+      }
+      extraIds.add(spec.id);
+      addTarget(spec);
+    }
+  }
+
+  function addTarget(spec: TargetVehicle) {
+    {
       const root = new THREE.Group();
       root.add(fallbackCar(spec.car.color));
       scene.add(root);
-      const { bar: healthBar, fill: healthFill } = createHealthBar();
       const explosion = new THREE.Mesh(
         explosionGeometry,
         new THREE.MeshBasicMaterial({ color: '#ff722b', transparent: true, opacity: 0, depthWrite: false, depthTest: false }),
@@ -551,7 +636,7 @@ export function vehicleLayer(
       explosion.renderOrder = 12;
       scene.add(explosion);
       const target: TargetState = {
-        ...spec, root, healthBar, healthFill, explosion, hp: targetMaxHp,
+        ...spec, root, explosion, hp: targetMaxHp,
         destroyed: false, deathPhase: null, explodedAt: 0, flashUntil: 0, flashing: false,
         spinX: 0, spinY: 0, spinZ: 0, velUp: 0, blastsLeft: 0, nextBlastAt: 0, charMats: [],
         wreckQuat: null, wreckBakeHeading: 0, wreckRestY: 0.45,
@@ -559,7 +644,6 @@ export function vehicleLayer(
       targets.set(spec.id, target);
       loadCar(spec.car).then(model => {
         if (disposed || targets.get(spec.id) !== target) { disposeObject(model); return; }
-        polish(model);
         disposeObject(root);
         root.clear();
         root.add(model);
@@ -574,7 +658,6 @@ export function vehicleLayer(
         console.error(`Failed to load target vehicle model ${spec.car.path}`, error);
       });
     }
-    map?.triggerRepaint();
   }
 
   function updateTargets(next: TargetVehicle[]) {
@@ -589,7 +672,7 @@ export function vehicleLayer(
 
   /** Height of the ground at a point relative to the car's frame (0 where not known yet). */
   function groundLift(point: Position) {
-    const ground = map.getTerrain() ? map.queryTerrainElevation(point) : 0;
+    const ground = map.groundAt(point);
     return ground == null ? 0 : ground - height();
   }
 
@@ -611,7 +694,7 @@ export function vehicleLayer(
     const mercPerMeter = 1 / (2 * Math.PI * 6378137 * Math.max(0.05, cos));
     const pixelsPerMeter = mercPerMeter * 512 * 2 ** map.getZoom();
     const distance = (0.5 / Math.tan(0.6435011087932844 / 2) * heightPx) / Math.max(1e-6, pixelsPerMeter);
-    const ground = map.queryTerrainElevation(center) ?? carAlt;
+    const ground = map.groundAt(center) ?? carAlt;
     const camAlt = ground + Math.cos(pitchRad) * distance;
     const horiz = Math.sin(pitchRad) * distance;
     const camPos: Position = [
@@ -627,7 +710,7 @@ export function vehicleLayer(
     lastShot = now;
     const carAlt = height();
     const cam = cameraPose(here, carAlt);
-    const groundAlt = map.queryTerrainElevation(aim.ground) ?? carAlt;
+    const groundAlt = map.groundAt(aim.ground) ?? carAlt;
     const ground = eastNorth(here, aim.ground);
     const dx = ground.east - cam.east;
     const dy = (groundAlt - carAlt) - cam.up;
@@ -662,6 +745,29 @@ export function vehicleLayer(
       hitUp = Math.max(0.35, Math.min(1.6, up));
     }
 
+    // other players' cars: the same upright cylinder, at their own height
+    let remoteHit: string | null = null;
+    for (const remote of remotes.values()) {
+      const delta = eastNorth(here, remote.spec.position);
+      const ox = cam.east - delta.east;
+      const oz = cam.north - delta.north;
+      const a = ux * ux + uz * uz;
+      if (a < 1e-8) continue;
+      const b = 2 * (ox * ux + oz * uz);
+      const c = ox * ox + oz * oz - radius * radius;
+      const disc = b * b - 4 * a * c;
+      if (disc < 0) continue;
+      const t = (-b - Math.sqrt(disc)) / (2 * a);
+      if (t < 1.2 || t > bestT) continue;
+      const rel = remote.spec.altitude - carAlt;
+      const up = cam.up + uy * t;
+      if (up < rel - 0.4 || up > rel + 2.6) continue;
+      bestT = t;
+      hit = null;
+      remoteHit = remote.spec.id;
+      hitUp = Math.max(rel + 0.35, Math.min(rel + 1.6, up));
+    }
+
     const wall = resolveShot(cam.position, cam.altitude, aim.ground, groundAlt, false);
     let wallHit = false;
     let groundHit = false;
@@ -670,13 +776,14 @@ export function vehicleLayer(
       const wallT = (wallDelta.east - cam.east) * ux + (wall.altitude - carAlt - cam.up) * uy + (wallDelta.north - cam.north) * uz;
       if (wallT > 1 && wallT < bestT) {
         hit = null;
+        remoteHit = null;
         bestT = wallT;
         hitUp = wall.altitude - carAlt;
         wallHit = true;
         resolveShot(cam.position, cam.altitude, aim.ground, groundAlt, true);
       }
     }
-    if (!hit && !wallHit) {
+    if (!hit && !wallHit && !remoteHit) {
       bestT = Math.min(bestT, rayLen);
       hitUp = groundAlt - carAlt;
       groundHit = true;
@@ -719,21 +826,23 @@ export function vehicleLayer(
     fx.muzzle(here, muzzleAt, shotDir, now);
     fx.tracer(here, muzzleAt, hitAt, now);
     tracer.visible = false; // the particle streak replaces the 1px line
-    flashUntil = now + 75;
-    if (hit) {
+    if (remoteHit) {
+      fx.impact(here, hitAt, bounce, now, { scale: 1 });
+      remoteHitHandler(remoteHit);
+      const struck = remotes.get(remoteHit);
+      if (struck) struck.flashUntil = now + 130;
+    } else if (hit) {
+      targetHitHandler(hit.id);
       hit.hp = Math.max(0, hit.hp - targetDamagePerShot);
-      updateHealthBar(hit);
       if (hit.hp === 0) {
         destroyTarget(hit, now, here, heading);
       } else {
         hit.flashUntil = now + 130;
         fx.impact(here, hitAt, bounce, now, { scale: 1 });
-        impactUntil = now + 90;
       }
     } else if (wallHit || groundHit) {
       const normal: Enu = groundHit ? { e: bounce.e * 0.4, n: bounce.n * 0.4, u: 1 } : bounce;
       fx.impact(here, hitAt, normal, now, { scale: groundHit ? 0.7 : 0.9, dust: true });
-      impactUntil = now + 90;
     }
   }
 
@@ -757,10 +866,13 @@ export function vehicleLayer(
 
   const spawn = (side: number, now: number) => {
     const lean = pitch();
-    const back = -car.length * 0.56;
-    const rise = 0.55;
-    const x = side * (0.62 + Math.random() * 0.12);
-    // nose-up lean lowers the tail pipe
+    const howler = currentCar.id === '03';
+    // Howler: twin stacks behind the cab, straight up; others: rear pipes
+    const len = currentCar.length;
+    const back = howler ? -len * 0.12 : -len * 0.56;
+    const rise = howler ? 1.85 : 0.55;
+    const x = side * (howler ? 0.38 + Math.random() * 0.06 : 0.62 + Math.random() * 0.12);
+    // nose-up lean lowers the tail pipe / tips the stacks
     const y = rise * Math.cos(lean) + back * Math.sin(lean);
     const z = -rise * Math.sin(lean) + back * Math.cos(lean);
     const heading = vehicle.heading;
@@ -768,16 +880,26 @@ export function vehicleLayer(
     cursor += 1;
     puff.active = true;
     puff.place = offsetPosition(vehicle.position, -x * Math.cos(heading) + z * Math.sin(heading), x * Math.sin(heading) + z * Math.cos(heading));
-    puff.east = -Math.sin(heading) * (0.7 + Math.random() * 0.5);
-    puff.north = -Math.cos(heading) * (0.7 + Math.random() * 0.5);
+    if (howler) {
+      // only rise — motion leaves the plume behind
+      puff.east = (Math.random() - 0.5) * 0.08;
+      puff.north = (Math.random() - 0.5) * 0.08;
+      puff.rise = 3.2 + Math.random() * 1.2;
+      puff.life = 1400 + Math.random() * 500;
+      puff.size = 1.15 + Math.random() * 0.45;
+    } else {
+      const backPush = 0.7 + Math.random() * 0.5;
+      puff.east = -Math.sin(heading) * backPush + (Math.random() - 0.5) * 0.1;
+      puff.north = -Math.cos(heading) * backPush + (Math.random() - 0.5) * 0.1;
+      puff.rise = 0.7;
+      puff.life = 1100 + Math.random() * 400;
+      puff.size = 0.9 + Math.random() * 0.35;
+    }
     puff.up = y;
     puff.born = now;
-    puff.life = 1100 + Math.random() * 400;
-    puff.size = 0.9 + Math.random() * 0.35;
     puff.mesh.visible = true;
   };
   function installCarModel(model: THREE.Group) {
-    polish(model);
     for (const child of [...root.children]) {
       root.remove(child);
       disposeObject(child);
@@ -808,11 +930,38 @@ export function vehicleLayer(
     setAim(next) { aim = next; },
     setFiring(value) { firing = value; },
     flashPlayer(duration) { playerFlashUntil = Math.max(playerFlashUntil, performance.now() + duration); },
+    get onRemoteHit() { return remoteHitHandler; },
+    set onRemoteHit(handler: (id: string) => void) { remoteHitHandler = handler; },
+    explodePlayer() {
+      const here = vehicle.position;
+      const now = performance.now();
+      fx.altitude = height();
+      fx.explosion(here, { e: 0, n: 0, u: 0.9 }, 1.1, now, true);
+      fx.explosion(here, { e: 0.8, n: -0.6, u: 1.2 }, 0.8, now + 140, false);
+      playerFlashUntil = Math.max(playerFlashUntil, now + 600);
+    },
     setCar(next) {
       if (next.id === currentCar.id && next.path === currentCar.path) return;
       loadPlayerCar(next, false);
     },
     setTargets,
+    setExtraTargets,
+    setTargetHp(id, hp) {
+      const target = targets.get(id);
+      if (!target || target.destroyed) return;
+      if (hp <= 0) { target.hp = 0; destroyTarget(target, performance.now(), vehicle.position, vehicle.heading); return; }
+      if (Math.abs(target.hp - hp) < 1) return;
+      target.hp = Math.min(targetMaxHp, hp);
+    },
+    extraHealth: () => [...extraIds].map((id) => targets.get(id)).filter((t): t is TargetState => Boolean(t && !t.destroyed))
+      .map((t) => ({ id: t.id, driver: t.driver, color: t.car.color, hp: t.hp, maxHp: targetMaxHp, position: t.position })),
+    targetHp: (id) => {
+      const target = targets.get(id);
+      return target ? (target.destroyed ? 0 : target.hp) : null;
+    },
+    get onTargetHit() { return targetHitHandler; },
+    set onTargetHit(handler: (id: string) => void) { targetHitHandler = handler; },
+    setRemotes,
     updateTargets,
     flashTarget(id, duration) {
       const target = targets.get(id);
@@ -822,7 +971,6 @@ export function vehicleLayer(
       const target = targets.get(id);
       if (!target || target.destroyed || amount <= 0) return false;
       target.hp = Math.max(0, target.hp - amount);
-      updateHealthBar(target);
       target.flashUntil = Math.max(target.flashUntil, performance.now() + 160);
       if (target.hp === 0) {
         const here = vehicle.position;
@@ -830,12 +978,12 @@ export function vehicleLayer(
       }
       return true;
     },
-    aliveTargetCount: () => [...targets.values()].filter(target => !target.destroyed).length,
+    aliveTargetCount: () => [...targets.values()].filter(target => !target.destroyed && !extraIds.has(target.id)).length,
     isTargetAlive: id => {
       const target = targets.get(id);
       return Boolean(target && !target.destroyed);
     },
-    targetHealth: () => [...targets.values()].map(target => ({
+    targetHealth: () => [...targets.values()].filter(target => !extraIds.has(target.id)).map(target => ({
       id: target.id,
       driver: target.driver,
       color: target.car.color,
@@ -850,7 +998,10 @@ export function vehicleLayer(
     placement,
     fuse() { fused = true; },
     // the beams are lit by the world shaders; no lens discs (they never sit on every model's lamps)
-    setHeadlights() {},
+    setHeadlights(on) {
+      night = on;
+      fx.light = 1 - 0.75 * Math.min(1, on); // smoke and dust are not lit by the scene: dim them at night
+    },
     onAdd(nextMap, gl) {
       map = nextMap;
       if (!fused) {
@@ -863,27 +1014,51 @@ export function vehicleLayer(
       const now = performance.now();
       const dt = lastFrame ? Math.min(0.05, (now - lastFrame) / 1000) : 0;
       lastFrame = now;
-      if (vehicle.throttle && now - lastSpawn > 150) {
+      if (vehicle.throttle && now - lastSpawn > 45) {
         lastSpawn = now;
         spawn(1, now);
         spawn(-1, now);
       }
       const heading = vehicle.heading;
       const here = vehicle.position;
+      const drift = vehicle.slip ?? 0, speed = vehicle.speed ?? 0;
+      const slip = Math.abs(drift);
+      if (slip > 0.28 && Math.abs(speed) > 3) {
+        const dustGap = 45 - Math.min(25, slip * 20);
+        if (now - lastDust > dustGap) {
+          lastDust = now;
+          // what the rear wheels are on, looked up a few times a second
+          if (now - surfaceAt > 150) {
+            surfaceAt = now;
+            const rear = offsetPosition(here, -Math.sin(heading) * currentCar.length * 0.36, -Math.cos(heading) * currentCar.length * 0.36);
+            surface = map?.surfaceAt(rear) ?? 'paved';
+          }
+          fx.altitude = height();
+          fx.driftDust(here, heading, drift, speed, currentCar.length, now, surface);
+        }
+      }
       if (firing) fire(now, heading, here);
       const flashPlayer = now < playerFlashUntil;
       if (playerFlashing !== flashPlayer) {
         playerFlashing = flashPlayer;
         tintVehicle(root, flashPlayer);
       }
-      const bearing = map.getBearing() * Math.PI / 180;
-      const pitchAngle = map.getPitch() * Math.PI / 180;
-      const cameraNormal = new THREE.Vector3(
-        -Math.sin(bearing) * Math.cos(pitchAngle),
-        Math.sin(pitchAngle),
-        Math.cos(bearing) * Math.cos(pitchAngle),
-      ).applyAxisAngle(new THREE.Vector3(0, 1, 0), heading - Math.PI);
       tracer.visible = tracer.visible && now < tracerUntil;
+      beamMaterial.opacity = 0.22 * night;
+      for (const remote of remotes.values()) {
+        const { spec, root: car, beam } = remote;
+        // past the fog there is nothing to see
+        const offset = scenePoint(here, spec.position, heading, spec.altitude - height());
+        car.visible = Math.hypot(offset.x, offset.z) < 1600;
+        car.position.copy(offset);
+        // hit: a red flash (their health is the overhead meter, as for bots)
+        const flashing = now < remote.flashUntil;
+        if (flashing !== remote.flashing) { remote.flashing = flashing; tintVehicle(remote.body, flashing); }
+        // yaw, then the lean on slopes: pitch about the car's side, roll about its length
+        car.rotation.order = 'YXZ';
+        car.rotation.set(-spec.pitch, heading - spec.heading, spec.roll);
+        beam.visible = night > 0.02;
+      }
       for (const target of targets.values()) {
         const offset = scenePoint(here, target.position, heading, 0);
         if (target.destroyed) {
@@ -919,13 +1094,33 @@ export function vehicleLayer(
               applyWreckPose(target, heading);
             }
           } else if (target.deathPhase === 'burn') {
-            const burn = Math.min(1, (age - tumbleMs) / 3500);
-            const flicker = 0.25 + 0.55 * Math.abs(Math.sin(now * 0.018));
+            // a couple of seconds of real fire on the wreck, then it smoulders out
+            const burn = Math.min(1, (age - tumbleMs) / 2800);
             target.root.position.copy(offset);
             target.root.position.y += target.wreckRestY;
             applyWreckPose(target, heading);
-            applyChar(target, 0.35 + burn * 0.65, flicker * (1 - burn));
+            applyChar(target, 0.35 + burn * 0.65, 0);
+            const strength = burn < 0.7 ? 1 : (1 - burn) / 0.3;
+            // flames rooted on the wreck (a shader, they flicker in place)
+            let fire = fires.get(target);
+            if (!fire) {
+              fire = new WreckFire(target.car.length);
+              fires.set(target, fire);
+              scene.add(fire.group);
+            }
+            fire.group.position.copy(target.root.position);
+            fire.group.position.y -= target.wreckRestY * 0.6;
+            fire.group.rotation.y = target.root.rotation.y;
+            fire.strength = strength;
+            // black smoke and a spark now and then, as particles
+            if (now - (fireAt.get(target) ?? 0) > 35) {
+              fireAt.set(target, now);
+              const o = eastNorth(here, target.position);
+              fx.altitude = height();
+              fx.burning(here, { e: o.east, n: o.north, u: target.wreckRestY + 0.3 }, strength, now);
+            }
             if (burn >= 1) {
+              putOut(target);
               target.deathPhase = 'wreck';
               applyChar(target, 1, 0);
             }
@@ -938,14 +1133,11 @@ export function vehicleLayer(
         }
         target.root.position.copy(offset);
         target.root.rotation.y = heading - target.heading;
-        target.healthBar.position.copy(offset);
-        target.healthBar.position.y += 3.8;
-        target.healthBar.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), cameraNormal);
         tintTarget(target, now < target.flashUntil);
       }
       for (const pickup of pickups.values()) {
         // stand on the ground under the pickup, not at the car's height
-        if (pickup.ground == null) pickup.ground = map.getTerrain() ? map.queryTerrainElevation(pickup.position) : 0;
+        if (pickup.ground == null) pickup.ground = map.groundAt(pickup.position);
         const lift = (pickup.ground ?? height()) - height();
         if (pickup.coin) {
           // 1 m coin hovering just above the road, turning about its upright axis
@@ -960,7 +1152,12 @@ export function vehicleLayer(
         // grow in / shrink away over a quarter second instead of popping
         rampShown += Math.sign(rampTarget - rampShown) * Math.min(Math.abs(rampTarget - rampShown), 0.06);
         rampMesh.visible = rampShown > 0.001;
-        rampMesh.scale.set(1, Math.max(0.001, rampShown), 1);
+        const appear = Math.max(0.001, rampShown);
+        rampMesh.scale.set(
+          (ramp.width / rampSize.width) * appear,
+          (ramp.height / rampSize.height) * appear,
+          (ramp.length / rampSize.length) * appear,
+        );
         rampMesh.position.copy(scenePoint(here, ramp.position, heading, ramp.ground - height()));
         rampMesh.rotation.set(-ramp.tilt, heading - ramp.heading, 0);
         if (!rampTarget && rampShown <= 0.001) ramp = null;
@@ -980,7 +1177,7 @@ export function vehicleLayer(
         raceFinish.rotation.set(0, heading - now * 0.0008, 0);
         finishFlag.rotation.y = Math.sin(now * 0.003) * 0.15;
       }
-      tireTracks.update(here, heading, 1, car.length, height(), p => map.getTerrain() ? map.queryTerrainElevation(p) : 0);
+      tireTracks.update(here, heading, 1, car.length, height(), p => map.groundAt(p));
       for (const puff of puffs) {
         if (!puff.active) continue;
         const age = now - puff.born;
@@ -990,7 +1187,9 @@ export function vehicleLayer(
           continue;
         }
         puff.place = offsetPosition(puff.place, puff.east * dt, puff.north * dt);
-        puff.up += dt * 0.7;
+        puff.up += dt * puff.rise;
+        puff.east *= 1 - 0.4 * dt;
+        puff.north *= 1 - 0.4 * dt;
         const offset = eastNorth(vehicle.position, puff.place);
         const fade = 1 - age / puff.life;
         puff.mesh.position.set(offset.north * Math.sin(heading) - offset.east * Math.cos(heading), puff.up, offset.north * Math.cos(heading) + offset.east * Math.sin(heading));
@@ -1011,6 +1210,8 @@ export function vehicleLayer(
       const eye = new THREE.Vector4(0, 0, -1, 1).applyMatrix4(clipToLocal);
       fx.altitude = height();
       fx.update(now, dt, here, heading, new THREE.Vector3(eye.x / eye.w, eye.y / eye.w, eye.z / eye.w));
+      fireEye.value.set(eye.x / eye.w, eye.y / eye.w, eye.z / eye.w);
+      WreckFire.tick(now);
       if (fused || !renderer) return;
       camera.projectionMatrix.fromArray(Array.from(args.defaultProjectionData.mainMatrix)).multiply(matrix);
       renderer.resetState();

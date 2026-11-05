@@ -1,6 +1,6 @@
 import type { Car } from '@/config/vehicle.config';
 import type { MapFeature } from './WaterCollisionController';
-import { VehicleController, type Position } from './VehicleController.ts';
+import { VehicleController, type Position, metersBetween } from './VehicleController.ts';
 
 const METERS_PER_DEGREE = 111319.49;
 const ROAD_CLASSES = new Set(['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'minor', 'service']);
@@ -10,11 +10,6 @@ const SAMPLE_METERS = 10;
 type RoadNode = { id: string; position: Position; edges: Map<string, number> };
 type QueueEntry = { id: string; distance: number };
 export type RoadPickup = { id: string; position: Position };
-
-function distanceMeters(a: Position, b: Position) {
-  const cos = Math.cos(a[1] * Math.PI / 180);
-  return Math.hypot((b[0] - a[0]) * METERS_PER_DEGREE * cos, (b[1] - a[1]) * METERS_PER_DEGREE);
-}
 
 function headingTo(a: Position, b: Position) {
   const cos = Math.cos(a[1] * Math.PI / 180);
@@ -124,12 +119,12 @@ export class TrafficRoadNetwork {
     let best: RoadNode | null = null;
     let bestDistance = maxDistance;
     for (const node of this.nodes.values()) {
-      if (excluded.has(node.id) || distanceMeters(node.position, position) < separation) continue;
-      const distance = distanceMeters(node.position, position);
-      if (distance < bestDistance) {
-        best = node;
-        bestDistance = distance;
-      }
+      if (excluded.has(node.id)) continue;
+      const distance = metersBetween(node.position, position);
+      if (distance < separation || distance >= bestDistance) continue;
+      best = node;
+      bestDistance = distance;
+      if (bestDistance < 8) break; // close enough — don't scan the whole city
     }
     return best;
   }
@@ -137,23 +132,26 @@ export class TrafficRoadNetwork {
   /** Random road node in a distance band — for spreading bots across the city. */
   randomAway(position: Position, excluded: Set<string>, minDistance: number, maxDistance: number, seed: number) {
     this.ensureBuilt();
-    const candidates: RoadNode[] = [];
-    for (const node of this.nodes.values()) {
-      if (excluded.has(node.id)) continue;
-      const distance = distanceMeters(node.position, position);
-      if (distance < minDistance || distance > maxDistance) continue;
-      candidates.push(node);
-    }
-    if (!candidates.length) {
+    // Sample the graph instead of allocating every node in the band (race/arena maps get huge).
+    const stride = Math.max(1, Math.floor(this.nodes.size / 900));
+    const startAt = Math.abs(seed) % Math.max(1, stride);
+    const pick = (minD: number, maxD: number, loose: boolean) => {
+      const hits: RoadNode[] = [];
+      let i = 0;
       for (const node of this.nodes.values()) {
+        if ((i++ - startAt) % stride !== 0) continue;
         if (excluded.has(node.id)) continue;
-        const distance = distanceMeters(node.position, position);
-        if (distance < Math.min(90, minDistance * 0.4)) continue;
-        candidates.push(node);
+        const distance = metersBetween(node.position, position);
+        if (loose) {
+          if (distance < minD) continue;
+        } else if (distance < minD || distance > maxD) continue;
+        hits.push(node);
+        if (hits.length >= 48) break;
       }
-    }
-    if (!candidates.length) return null;
-    return candidates[Math.abs(seed) % candidates.length];
+      return hits.length ? hits[Math.abs(seed) % hits.length] : null;
+    };
+    return pick(minDistance, maxDistance, false)
+      ?? pick(Math.min(90, minDistance * 0.4), maxDistance * 1.5, true);
   }
 
   /** Spots along the roads every ~75 m; `start` shifts the row (coins sit halfway between balls). */
@@ -165,14 +163,14 @@ export class TrafficRoadNetwork {
       for (let index = 1; index < line.length; index++) {
         const from = line[index - 1];
         const to = line[index];
-        const length = distanceMeters(from, to);
+        const length = metersBetween(from, to);
         while (nextPickup <= traveled + length) {
           const fraction = length > 0 ? (nextPickup - traveled) / length : 0;
           const position: Position = [
             from[0] + (to[0] - from[0]) * fraction,
             from[1] + (to[1] - from[1]) * fraction,
           ];
-          if (distanceMeters(center, position) <= radius) {
+          if (metersBetween(center, position) <= radius) {
             const id = `${Math.round(position[0] * this.scaleX / 8)}:${Math.round(position[1] * METERS_PER_DEGREE / 8)}`;
             if (!candidates.has(id)) candidates.set(id, position);
           }
@@ -187,7 +185,7 @@ export class TrafficRoadNetwork {
     const nearby = new Map<string, Position[]>();
     const selected: RoadPickup[] = [];
     const ordered = [...candidates]
-      .map(([id, position]) => ({ id, position, distance: distanceMeters(center, position) }))
+      .map(([id, position]) => ({ id, position, distance: metersBetween(center, position) }))
       .sort((a, b) => a.distance - b.distance || a.id.localeCompare(b.id));
 
     for (const candidate of ordered) {
@@ -231,53 +229,64 @@ export class TrafficRoadNetwork {
     this.ensureBuilt();
     const start = this.nodes.get(startId);
     if (!start) return [];
-    const distances = new Map<string, number>([[startId, 0]]);
+    const gScore = new Map<string, number>([[startId, 0]]);
     const previous = new Map<string, string>();
     const queue = new MinQueue();
-    queue.push({ id: startId, distance: 0 });
-    const candidates: string[] = [];
+    // With a finish line: A* toward goal in ~2 km chunks (full 5 km Dijkstra kills race FPS).
+    // Without: cheap wander Dijkstra.
+    const maxDist = destination ? 2200 : 4200;
+    const maxExpand = destination ? 1400 : 1600;
+    const heuristic = (node: RoadNode) => (destination ? metersBetween(node.position, destination) : 0);
+    queue.push({ id: startId, distance: heuristic(start) });
+    const wander: string[] = [];
+    let bestId: string | null = null;
+    let bestScore = Infinity;
+    let expanded = 0;
+    // a small loaded network (its edge, an island) may have nothing 700 m away:
+    // then the farthest place ahead, so the bot keeps driving instead of standing
+    let farId: string | null = null;
+    let farG = 10;
 
     while (queue.size) {
       const current = queue.pop();
-      if (!current || current.distance !== distances.get(current.id)) continue;
-      if (current.distance > (destination ? 14000 : 5200)) break;
+      if (!current) continue;
       const node = this.nodes.get(current.id);
       if (!node) continue;
+      const g = gScore.get(current.id) ?? Infinity;
+      // Priority is f = g+h; skip stale heap entries.
+      if (current.distance !== g + heuristic(node)) continue;
+      if (g > maxDist || ++expanded > maxExpand) break;
+
       if (destination) {
-        if (current.id !== startId) candidates.push(current.id);
-      } else if (current.id !== startId && current.distance >= 420 && current.distance <= 4800) {
-        // Explore city-wide; allow some backtrack so bots don't only go straight ahead.
+        if (current.id !== startId) {
+          const d = metersBetween(node.position, destination);
+          const score = d + g * 0.04;
+          if (score < bestScore) { bestScore = score; bestId = current.id; }
+          if (d <= 40) break;
+        }
+      } else if (current.id !== startId && (g >= 700 ? g <= 4200 && wander.length < 40 : g > farG)) {
         const firstStep = this.firstStep(startId, current.id, previous);
         const next = firstStep ? this.nodes.get(firstStep) : undefined;
         if (!next || Math.cos(angleDifference(headingTo(start.position, next.position), heading)) > -0.55) {
-          candidates.push(current.id);
+          if (g >= 700) wander.push(current.id);
+          else { farId = current.id; farG = g; }
         }
       }
       for (const [neighbor, cost] of node.edges) {
-        const nextDistance = current.distance + cost;
-        if (nextDistance >= (distances.get(neighbor) ?? Infinity)) continue;
-        distances.set(neighbor, nextDistance);
+        const nextG = g + cost;
+        if (nextG >= (gScore.get(neighbor) ?? Infinity)) continue;
+        const nextNode = this.nodes.get(neighbor);
+        if (!nextNode) continue;
+        gScore.set(neighbor, nextG);
         previous.set(neighbor, current.id);
-        queue.push({ id: neighbor, distance: nextDistance });
+        queue.push({ id: neighbor, distance: nextG + heuristic(nextNode) });
       }
     }
 
-    if (!candidates.length) return [];
     const target = destination
-      ? candidates.reduce((best, id) => {
-          const current = this.nodes.get(id)!;
-          const prior = this.nodes.get(best)!;
-          const currentDistance = distanceMeters(current.position, destination);
-          const priorDistance = distanceMeters(prior.position, destination);
-          const currentScore = currentDistance <= 40
-            ? currentDistance + (distances.get(id) ?? 0) * 0.0001
-            : currentDistance + (distances.get(id) ?? 0) * 0.08;
-          const priorScore = priorDistance <= 40
-            ? priorDistance + (distances.get(best) ?? 0) * 0.0001
-            : priorDistance + (distances.get(best) ?? 0) * 0.08;
-          return currentScore < priorScore ? id : best;
-        })
-      : candidates[Math.abs(seed) % candidates.length];
+      ? bestId
+      : (wander.length ? wander[Math.abs(seed) % wander.length] : farId);
+    if (!target) return [];
     const routeIds = [target];
     while (routeIds[routeIds.length - 1] !== startId) {
       const parent = previous.get(routeIds[routeIds.length - 1]);
@@ -316,7 +325,7 @@ export class TrafficRoadNetwork {
 
   private connect(a: RoadNode, b: RoadNode) {
     if (a.id === b.id) return;
-    const distance = distanceMeters(a.position, b.position);
+    const distance = metersBetween(a.position, b.position);
     if (distance < 0.1) return;
     a.edges.set(b.id, distance);
     b.edges.set(a.id, distance);
@@ -328,7 +337,7 @@ export class TrafficRoadNetwork {
     for (let index = 1; index < line.length; index++) {
       const from = line[index - 1];
       const to = line[index];
-      const length = distanceMeters(from, to);
+      const length = metersBetween(from, to);
       const steps = Math.max(1, Math.ceil(length / SAMPLE_METERS));
       for (let step = index === 1 ? 0 : 1; step <= steps; step++) {
         const fraction = step / steps;
@@ -365,7 +374,7 @@ export class TrafficRoadNetwork {
       for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
         for (const nearby of cells.get(`${x + dx}:${y + dy}`) ?? []) {
           if (nearby.id === endpoint.id || endpoint.edges.has(nearby.id)) continue;
-          if (distanceMeters(endpoint.position, nearby.position) <= 4.5) this.connect(endpoint, nearby);
+          if (metersBetween(endpoint.position, nearby.position) <= 4.5) this.connect(endpoint, nearby);
         }
       }
     }
@@ -387,6 +396,8 @@ export type TrafficBot = {
   routeSeed: number;
   lastRouteRevision: number;
   retryFrames: number;
+  /** ms timestamp — throttle expensive route() calls */
+  repathAt: number;
   goal: Position | null;
   money: number;
   mood: BotMood;
@@ -415,7 +426,9 @@ export function createTrafficBot(
     controller: new VehicleController(position, fallbackHeading * 180 / Math.PI),
     position, heading: fallbackHeading,
     route: [] as Position[], routeIndex: 1, routeSeed: (id.charCodeAt(id.length - 1) || 0) + spawnSeed,
-    lastRouteRevision: network.revision, retryFrames: 0, goal: null, money: 0,
+    lastRouteRevision: network.revision, retryFrames: 0,
+    repathAt: performance.now() + (Math.abs(spawnSeed) % 450), // stagger first paths
+    goal: null, money: 0,
     mood, huntId: null, huntRange: Infinity,
   };
   if (start) {
@@ -430,51 +443,109 @@ export function createTrafficBot(
   return provisional;
 }
 
-export function steerTrafficBot(bot: TrafficBot, _network: TrafficRoadNetwork, peers: TrafficPeer[]) {
-  const engage = bot.mood === 'hunt' ? 170 : 60;
+/** Prefer the player a bit so arena bots come for you, not only each other. */
+function huntScore(peer: TrafficPeer, distance: number) {
+  return peer.id === 'player' ? distance * 0.82 : distance;
+}
+
+export function steerTrafficBot(bot: TrafficBot, network: TrafficRoadNetwork, peers: TrafficPeer[]) {
+  // Arena/bounty: chase across the whole loaded city. Explore: only bump nearby traffic.
+  const engage = bot.mood === 'hunt' ? 16000 : 110;
   let prey: TrafficPeer | null = null;
   let best = engage;
+  let bestScore = engage;
   for (const peer of peers) {
     if (!peer.alive || peer.id === bot.id) continue;
-    const distance = distanceMeters(bot.position, peer.position);
-    if (distance < best) {
+    const distance = metersBetween(bot.position, peer.position);
+    if (distance > engage) continue;
+    const score = bot.mood === 'hunt' ? huntScore(peer, distance) : distance;
+    if (score < bestScore) {
       prey = peer;
       best = distance;
+      bestScore = score;
     }
   }
   if (prey) {
-    const moved = !bot.goal || distanceMeters(bot.goal, prey.position) > 35;
+    // Far targets: update goal, but don't trash the route every few metres (route() is expensive).
+    const slack = best < 220 ? 35 : best < 800 ? 120 : 280;
+    const moved = !bot.goal || metersBetween(bot.goal, prey.position) > slack;
     bot.goal = [...prey.position] as Position;
     bot.huntId = prey.id;
     bot.huntRange = best;
-    if (moved) {
+    if (moved && performance.now() >= bot.repathAt) {
       bot.route = [];
       bot.routeIndex = 1;
     }
-  } else {
-    bot.huntId = null;
-    bot.huntRange = Infinity;
-    // Drop explore destination only after finishing the route so mission goals can persist.
-    if (bot.routeIndex >= bot.route.length) bot.goal = null;
+    return;
+  }
+
+  bot.huntId = null;
+  bot.huntRange = Infinity;
+  const atGoal = Boolean(bot.goal && metersBetween(bot.position, bot.goal) < 60);
+  if (atGoal) bot.goal = null;
+  // Wander far across districts when idle (race finish goals stay until reached).
+  const idle = bot.routeIndex >= bot.route.length || bot.route.length < 2;
+  if (bot.mood === 'explore' && !bot.goal && idle) {
+    const away = network.randomAway(bot.position, new Set(), 1400, 5600, bot.routeSeed)
+      ?? network.randomAway(bot.position, new Set(), 700, 7500, bot.routeSeed + 19);
+    if (away) {
+      bot.goal = [...away.position] as Position;
+      bot.route = [];
+      bot.routeIndex = 1;
+    }
   }
 }
 
+/**
+ * No route yet (roads still loading, nowhere to go): roll on slowly for about a
+ * second, then brake and wait. Driving on blind at full speed took bots off the
+ * road and out of town.
+ */
+function cruiseKeys(bot: TrafficBot) {
+  const keys = new Set<string>();
+  const speed = bot.controller.speed;
+  if (bot.retryFrames < 60 && speed < 6) keys.add('KeyW');
+  else if (speed > 0.3) keys.add('KeyS'); // brake (never into reverse: only while rolling forward)
+  return keys;
+}
+
 export function trafficBotKeys(bot: TrafficBot, network: TrafficRoadNetwork) {
-  if (bot.lastRouteRevision !== network.revision || bot.route.length < 2 || bot.routeIndex >= bot.route.length) {
+  // Keep following the current path when the road graph grows (tile loads).
+  // Repathing all bots on every revision was the race FPS killer.
+  const routeDone = bot.route.length < 2 || bot.routeIndex >= bot.route.length;
+  if (!routeDone) bot.lastRouteRevision = network.revision;
+  else {
+    const now = performance.now();
     if (bot.route.length < 2) {
       bot.retryFrames++;
-      if (bot.retryFrames < 90 && bot.lastRouteRevision === network.revision) return new Set<string>();
+      // Don't freeze — keep rolling while roads/path catch up.
+      if (bot.retryFrames < 18 && now < bot.repathAt) return cruiseKeys(bot);
     }
+    if (now < bot.repathAt) return cruiseKeys(bot);
     bot.routeSeed = (bot.routeSeed * 48271 + 1) % 2147483647;
-    const nearest = network.nearest(bot.position, new Set<string>(), 0, 45);
+    if (!bot.goal && bot.mood === 'explore') {
+      const away = network.randomAway(bot.position, new Set(), 1400, 5600, bot.routeSeed)
+        ?? network.randomAway(bot.position, new Set(), 700, 7500, bot.routeSeed + 7);
+      if (away) bot.goal = [...away.position] as Position;
+    }
+    const nearest = network.nearest(bot.position, new Set<string>(), 0, 220)
+      ?? network.nearest(bot.position, new Set<string>(), 0, 500);
     bot.route = nearest ? network.route(nearest.id, bot.heading, bot.routeSeed, bot.goal ?? undefined) : [];
     bot.routeIndex = 1;
     bot.lastRouteRevision = network.revision;
+    // Stagger bots (~3–5 Hz max) so three racers don't Dijkstra the same frame.
+    bot.repathAt = now + 280 + (Math.abs(bot.routeSeed) % 220);
+    if (bot.route.length < 2) {
+      bot.retryFrames = Math.max(bot.retryFrames, 1);
+      return cruiseKeys(bot);
+    }
     bot.retryFrames = 0;
-    if (bot.route.length < 2) return new Set<string>();
   }
 
-  while (bot.routeIndex < bot.route.length - 1 && distanceMeters(bot.position, bot.route[bot.routeIndex]) < 7) bot.routeIndex++;
+  // the last point counts too: past it the route is done and a new one is found
+  // (circling a missed end point kept bots busy in one spot)
+  while (bot.routeIndex < bot.route.length && metersBetween(bot.position, bot.route[bot.routeIndex]) < 9) bot.routeIndex++;
+  if (bot.routeIndex >= bot.route.length) return cruiseKeys(bot);
   const keys = new Set<string>();
   // Wall/corner escape: keep reversing+turning for a bit so step() doesn't cancel it with KeyW.
   if (bot.retryFrames > 8) {
@@ -492,15 +563,18 @@ export function trafficBotKeys(bot: TrafficBot, network: TrafficRoadNetwork) {
     turnAngle = Math.abs(angleDifference(nextHeading, headingTo(bot.route[bot.routeIndex - 1] ?? bot.position, target)));
   }
   const hunting = Boolean(bot.huntId);
-  const closing = hunting && bot.huntRange < 55;
-  const targetSpeed = hunting
-    ? (closing ? 12 : turnAngle > 0.5 ? 7 : 10)
-    : (turnAngle > 0.45 ? 5 : 8.5);
+  const closing = hunting && bot.huntRange < 70;
+  const farHunt = hunting && bot.huntRange > 250;
+  let targetSpeed = hunting
+    ? (closing ? 15 : farHunt ? 20 : turnAngle > 0.55 ? 10 : 16)
+    : (turnAngle > 0.5 ? 8 : 15);
+  // ease in to the end of the route instead of overshooting it
+  if (bot.routeIndex === bot.route.length - 1 && !hunting) targetSpeed = Math.min(targetSpeed, Math.max(3, metersBetween(bot.position, target) * 0.45));
   if (bot.controller.speed < targetSpeed) keys.add('KeyW');
-  else if (bot.controller.speed > targetSpeed + 1.2) keys.add('KeyS');
-  if (closing && bot.huntRange < 40) keys.add('Space');
-  if (error > 0.05) keys.add('KeyD');
-  else if (error < -0.05) keys.add('KeyA');
+  else if (bot.controller.speed > targetSpeed + 1.4) keys.add('KeyS');
+  if (closing && bot.huntRange < 45) keys.add('Space');
+  if (error > 0.04) keys.add('KeyD');
+  else if (error < -0.04) keys.add('KeyA');
   return keys;
 }
 

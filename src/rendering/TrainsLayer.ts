@@ -6,9 +6,9 @@ import { simpleLit, standaloneUniforms, type SimpleLitUniforms } from '@/world3d
 import type { CarPose } from '@/game/Trains';
 import type { Position } from '@/game/VehicleController';
 
-// Trains and trams in our one scene. Rail cars are the GLB models (a locomotive
-// and passenger / cargo / tank wagons), one InstancedMesh per model part;
-// trams (and every car until the models arrive) are instanced box parts.
+// Trains and trams in our one scene. Rail cars and trams are the GLB models
+// (a locomotive with wagons, or a modern / vintage tram), one InstancedMesh
+// per model part; until a model loads, cars fall back to instanced boxes.
 
 const MAX = 80;
 /** every rail car model is scaled to this height (they keep their proportions; lengths differ) */
@@ -23,6 +23,9 @@ const MODELS = {
   leadOld: '/models/trains/train_old.glb',
   passengerOld: '/models/trains/wagon_old.glb',
   cargoOld: '/models/trains/wagon_cargo_old.glb',
+  // trams (one car = the whole vehicle)
+  tram: '/models/trains/tram.glb',
+  tramOld: '/models/trains/tram_old.glb',
 };
 type ModelName = keyof typeof MODELS;
 /** models drawn facing the other way: turned so their front leads */
@@ -49,11 +52,13 @@ function hash(text: string) {
 }
 
 /**
- * Which model a rail car shows. A train is either modern or vintage (about one
- * in three), and either passenger or freight; the locomotive leads.
+ * Which model a rail / tram car shows. A consist is either modern or vintage
+ * (about one in three). Trains are passenger or freight with a locomotive;
+ * trams use the same car model for every unit in the consist.
  */
 function modelFor(car: CarPose): ModelName {
   const vintage = hash(`${car.trainId}:age`) < 0.33;
+  if (car.kind === 'tram') return vintage ? 'tramOld' : 'tram';
   const passenger = hash(car.trainId) < 0.5;
   if (car.index === 0) return vintage ? 'leadOld' : 'lead';
   if (vintage) return passenger ? 'passengerOld' : 'cargoOld';
@@ -95,6 +100,8 @@ export function trainsLayer(): MapLayer & {
   carLength: (trainId: string, index: number, kind: string) => number | null;
 } {
   let map: ThreeMap | null = null;
+  /** last drawn height of every car end (trainId:index + f/b) */
+  let heights = new Map<string, number>();
   const scene = new THREE.Scene();
   let uniforms = standaloneUniforms();
   const box = new THREE.BoxGeometry(1, 1, 1);
@@ -175,21 +182,34 @@ export function trainsLayer(): MapLayer & {
         0, 0, 0, 1,
       );
       const toLocal = (p: Position) => [(mercatorX01(p[0]) - mercatorX01(origin[0])) / perMeter, (mercatorY01(p[1]) - mercatorY01(origin[1])) / perMeter];
-      const ground = (p: Position) => (terrain ? map?.queryTerrainElevation(p) ?? 0 : 0) + 0.1;
+      // each car end keeps its last height as a hint, like the player's car: on a
+      // bridge it stays on the deck, under an overpass it stays on the ground
+      const seen = new Map<string, number>();
+      let ahead = '';
+      const ground = (p: Position, key: string) => {
+        // a car seen for the first time takes the hint from the car ahead
+        const y = terrain ? map?.groundAt(p, heights.get(key) ?? heights.get(ahead) ?? null) ?? 0 : 0;
+        seen.set(key, y);
+        return y + 0.1;
+      };
       counts.clear();
       let boxCount = 0;
       for (const car of cars) {
         const [fx, fz] = toLocal(car.front);
         const [bx, bz] = toLocal(car.back);
-        const fy = ground(car.front), by = ground(car.back);
+        const id = car.trainId + ':' + car.index;
+        ahead = car.trainId + ':' + (car.index - 1) + 'b';
+        const fy = ground(car.front, id + 'f');
+        ahead = id + 'f';
+        const by = ground(car.back, id + 'b');
         const length = Math.hypot(fx - bx, fz - bz) || 1;
         object.position.set((fx + bx) / 2, (fy + by) / 2, (fz + bz) / 2);
         // +z points from the back to the front; tilt with the slope
         object.rotation.set(-Math.atan2(fy - by, length), Math.atan2(fx - bx, fz - bz), 0);
         object.updateMatrix();
-        const model = car.kind === 'rail' ? models.get(modelFor(car)) : undefined;
+        const name = modelFor(car);
+        const model = models.get(name);
         if (model) {
-          const name = modelFor(car);
           const i = counts.get(name) ?? 0;
           if (i >= MAX) continue;
           counts.set(name, i + 1);
@@ -206,6 +226,7 @@ export function trainsLayer(): MapLayer & {
           if (part.tint) mesh.setColorAt(i, color.set(car.index === 0 ? palette.lead : palette.car).convertSRGBToLinear());
         });
       }
+      heights = seen;
       for (const mesh of boxes) {
         mesh.count = boxCount;
         mesh.instanceMatrix.needsUpdate = true;
@@ -220,8 +241,8 @@ export function trainsLayer(): MapLayer & {
       }
     },
     carLength(trainId, index, kind) {
-      if (kind !== 'rail') return null;
-      return models.get(modelFor({ trainId, index, kind: 'rail', front: [0, 0], back: [0, 0] }))?.length ?? null;
+      if (kind !== 'rail' && kind !== 'tram') return null;
+      return models.get(modelFor({ trainId, index, kind, front: [0, 0], back: [0, 0] }))?.length ?? null;
     },
     onAdd(nextMap) {
       map = nextMap;

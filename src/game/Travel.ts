@@ -1,17 +1,19 @@
 import type { Position } from './VehicleController.ts';
 
-// Ports and airports at real OSM locations. Reach one, buy a ticket to any
-// city in the world and arrive there instantly. Prices are the same rule
-// everywhere: great-circle kilometres × the tariff of the transport.
+// Ports, airports and railway stations at real OSM locations. Reach one, buy a
+// ticket to any city in the world and arrive there instantly. Prices are the
+// same rule everywhere: great-circle kilometres × the tariff of the transport.
 
-export type HubKind = 'airport' | 'port';
+export type HubKind = 'airport' | 'port' | 'station';
 export type Hub = { id: string; kind: HubKind; position: Position };
 
-/** coins per kilometre: 1000 km by sea ≈ 1000 coins, flying costs more */
-export const TARIFF: Record<HubKind, number> = { port: 1, airport: 1.5 };
+/** coins per kilometre: 1000 km by sea ≈ 1000 coins; train mid, flying most */
+export const TARIFF: Record<HubKind, number> = { port: 1, station: 1.2, airport: 1.5 };
 /** how close to the hub point the car has to be, meters (airport labels sit in big areas; ports want the nose at the pier) */
-export const HUB_REACH: Record<HubKind, number> = { airport: 350, port: 28 };
+export const HUB_REACH: Record<HubKind, number> = { airport: 350, port: 28, station: 55 };
 const MIN_FARE = 50;
+/** merge nearby labels of the same kind (km) */
+const MERGE_KM: Record<HubKind, number> = { airport: 1.5, port: 0.3, station: 0.6 };
 
 const R = 6371.0088;
 
@@ -39,13 +41,14 @@ function pointOf(feature: Feature): Position | null {
 
 /**
  * Airports from `aerodrome_label` (public ones: with an IATA code or a
- * public/international/regional class), ports from `poi` ferry terminals and harbours.
+ * public/international/regional class), ports from `poi` ferry terminals and
+ * harbours, railway stations from `poi` class railway / subclass station.
  */
 export function hubsFromFeatures(aerodromes: Feature[], pois: Feature[]): Hub[] {
   const out: Hub[] = [];
   const add = (kind: HubKind, position: Position | null) => {
     if (!position) return;
-    if (out.some((h) => h.kind === kind && kilometres(h.position, position) < (kind === 'airport' ? 1.5 : 0.3))) return;
+    if (out.some((h) => h.kind === kind && kilometres(h.position, position) < MERGE_KM[kind])) return;
     out.push({ id: `${kind}:${position[0].toFixed(4)},${position[1].toFixed(4)}`, kind, position });
   };
   for (const f of aerodromes) {
@@ -57,6 +60,8 @@ export function hubsFromFeatures(aerodromes: Feature[], pois: Feature[]): Hub[] 
     const p = f.properties ?? {};
     const cls = String(p.class ?? ''), sub = String(p.subclass ?? '');
     if (sub === 'ferry_terminal' || cls === 'ferry_terminal' || cls === 'harbor' && /harbour|port/.test(sub)) add('port', pointOf(f));
+    // main railway stations only — skip halts, tram stops, subway, entrances
+    if (cls === 'railway' && sub === 'station') add('station', pointOf(f));
   }
   return out;
 }

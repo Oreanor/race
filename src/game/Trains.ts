@@ -3,7 +3,8 @@ import type { Position } from './VehicleController.ts';
 // Trains and trams on the real tracks. The network is built from the
 // `transportation` features (main lines only, no tunnels); trains are born and
 // retired only where the player can't see them (deep in the haze or behind the
-// camera), never run into each other and turn back at dead ends or stand-offs.
+// camera), pick a random fork at switches, never run into each other, and turn
+// back at dead ends or stand-offs.
 
 type Feature = { geometry: { type: string; coordinates: unknown }; properties?: Record<string, unknown> | null };
 export type TrackKind = 'rail' | 'tram';
@@ -61,23 +62,13 @@ export class RailNetwork {
     }
   }
 
-  /** The next node going straight on from prev → at (sharp turns are not taken). */
+  /** Next node from prev → at: a random fork (never back the way we came; that is a dead end). */
   next(prevId: string, atId: string): string | null {
-    const prev = this.nodes.get(prevId), at = this.nodes.get(atId);
-    if (!prev || !at) return null;
-    const cos = Math.cos(at.position[1] * Math.PI / 180);
-    const ix = (at.position[0] - prev.position[0]) * cos, iy = at.position[1] - prev.position[1];
-    let best: string | null = null;
-    let bestTurn = Infinity;
-    for (const link of at.links) {
-      if (link === prevId) continue;
-      const n = this.nodes.get(link);
-      if (!n) continue;
-      const ox = (n.position[0] - at.position[0]) * cos, oy = n.position[1] - at.position[1];
-      const turn = Math.abs(Math.atan2(ix * oy - iy * ox, ix * ox + iy * oy));
-      if (turn < bestTurn) { bestTurn = turn; best = link; }
-    }
-    return bestTurn < 1.2 ? best : null;
+    const at = this.nodes.get(atId);
+    if (!at) return null;
+    const options = [...at.links].filter((link) => link !== prevId && this.nodes.has(link));
+    if (!options.length) return null;
+    return options[Math.floor(Math.random() * options.length)];
   }
 }
 
@@ -103,7 +94,7 @@ type Train = {
 
 const SPEC: Record<TrackKind, { carLength: number; gap: number; maxSpeed: number; cars: [number, number]; max: number }> = {
   rail: { carLength: 13, gap: 0.35, maxSpeed: 22, cars: [4, 9], max: 1 }, // a locomotive and 3–8 wagons
-  tram: { carLength: 11, gap: 0.8, maxSpeed: 11, cars: [2, 3], max: 3 },
+  tram: { carLength: 14, gap: 0.5, maxSpeed: 14, cars: [1, 2], max: 1 }, // one (sometimes two coupled) tram cars
 };
 const ACCEL = 0.8;
 const BRAKE = 1.3;

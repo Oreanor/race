@@ -20,7 +20,10 @@ function eastNorth(origin: Position, point: Position) {
 /** World offset relative to the car, meters. */
 export type Enu = { e: number; n: number; u: number };
 
-type Kind = 'flash' | 'flame' | 'spark' | 'fire' | 'smoke' | 'dust' | 'ring' | 'ember' | 'tracer';
+type Kind = 'flash' | 'flame' | 'spark' | 'fire' | 'smoke' | 'dust' | 'ring' | 'ember' | 'tracer' | 'tiresmoke' | 'grit';
+
+/** What the rear wheels are on: asphalt and pavements smoke, the rest throws dust and grit. */
+export type Surface = 'paved' | 'dirt' | 'grass' | 'sand';
 
 type Particle = {
   kind: Kind;
@@ -32,10 +35,20 @@ type Particle = {
   drag: number; gravity: number;
   stretch: number;
   seed: number;
+  /** colour of dust, grit and tyre smoke (linear) */
+  tint?: [number, number, number];
 };
 
-const SHAPE: Record<Kind, number> = { flash: 0, flame: 0, spark: 0, ember: 0, fire: 0, smoke: 2, dust: 2, ring: 1, tracer: 0 };
-const ADDITIVE: Record<Kind, boolean> = { flash: true, flame: true, spark: true, ember: true, fire: true, smoke: false, dust: false, ring: true, tracer: true };
+const SHAPE: Record<Kind, number> = { flash: 0, flame: 0, spark: 0, ember: 0, fire: 0, smoke: 2, dust: 2, ring: 1, tracer: 0, tiresmoke: 2, grit: 0 };
+const ADDITIVE: Record<Kind, boolean> = { flash: true, flame: true, spark: true, ember: true, fire: true, smoke: false, dust: false, ring: true, tracer: true, tiresmoke: false, grit: false };
+
+/** dust cloud, grit and tyre-smoke colours per surface (linear) */
+const SURFACE_FX: Record<Surface, { dust: [number, number, number]; grit: [number, number, number] }> = {
+  paved: { dust: [0.68, 0.68, 0.66], grit: [0.2, 0.2, 0.2] },
+  dirt: { dust: [0.42, 0.33, 0.23], grit: [0.24, 0.17, 0.11] },
+  grass: { dust: [0.36, 0.32, 0.22], grit: [0.12, 0.2, 0.06] },
+  sand: { dust: [0.7, 0.6, 0.43], grit: [0.58, 0.48, 0.33] },
+};
 
 function lerp3(a: number[], b: number[], t: number) {
   return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
@@ -62,11 +75,26 @@ function shade(p: Particle, t: number): [number, number, number, number] {
       return [c[0], c[1], c[2], (1 - t) * Math.min(1, t * 12)];
     }
     case 'smoke': {
+      if (p.tint) {
+        // thick black smoke over a fire, greying a little as it thins
+        const c = lerp3(p.tint, [p.tint[0] * 2.2, p.tint[1] * 2.2, p.tint[2] * 2.2], t);
+        return [c[0], c[1], c[2], 0.85 * Math.min(1, t * 5) * (1 - t)];
+      }
       const c = lerp3([0.05, 0.045, 0.04], [0.22, 0.21, 0.2], t);
       return [c[0], c[1], c[2], 0.62 * Math.min(1, t * 6) * (1 - t)];
     }
     case 'dust': {
-      return [0.42, 0.38, 0.32, 0.5 * (1 - t)];
+      const c = p.tint ?? [0.42, 0.38, 0.32];
+      // billows in, then thins out slowly
+      return [c[0], c[1], c[2], 0.55 * Math.min(1, t * 8) * (1 - t) * (1 - t)];
+    }
+    case 'tiresmoke': {
+      const c = p.tint ?? [0.68, 0.68, 0.66];
+      return [c[0], c[1], c[2], 0.42 * Math.min(1, t * 5) * Math.pow(1 - t, 1.6)];
+    }
+    case 'grit': {
+      const c = p.tint ?? [0.3, 0.22, 0.15];
+      return [c[0], c[1], c[2], 1 - t * t];
     }
     case 'ring': return [2.6, 1.5, 0.6, 0.85 * (1 - t) * (1 - t)];
     case 'tracer': return [3, 2.1, 0.8, 1 - t * 0.4];
@@ -221,10 +249,12 @@ export class WorldParticles {
   private soft: Batch;
   /** car altitude (m) right now: spawn heights are relative to it, storage is absolute */
   altitude = 0;
+  /** daylight on smoke and dust (they are not lit by the scene): 1 by day, dim at night */
+  light = 1;
 
   constructor(scene: THREE.Scene) {
     this.glow = new Batch(900, true, this.eye);
-    this.soft = new Batch(260, false, this.eye);
+    this.soft = new Batch(900, false, this.eye);
     scene.add(this.soft.mesh, this.glow.mesh);
   }
 
@@ -232,7 +262,7 @@ export class WorldParticles {
     if (!this.anchor || this.particles.length === 0) this.anchor = [...here];
     const o = eastNorth(this.anchor, here);
     this.particles.push({ ...p, e: o.east + at.e, n: o.north + at.n, u: this.altitude + at.u, born: now, seed: p.seed ?? Math.random() });
-    if (this.particles.length > 1100) this.particles.splice(0, this.particles.length - 1100);
+    if (this.particles.length > 1800) this.particles.splice(0, this.particles.length - 1800);
   }
 
   /** Muzzle flash: a hot core, flame tongues along the shot, a couple of sparks. */
@@ -262,13 +292,67 @@ export class WorldParticles {
     }, now);
   }
 
-  private spark(here: Position, at: Enu, dir: Enu, spread: number, speed: number, now: number, life = 380) {
+  private spark(here: Position, at: Enu, dir: Enu, spread: number, speed: number, now: number, life = 380, snap = false) {
     const ve = dir.e + rand(-spread, spread), vn = dir.n + rand(-spread, spread), vu = dir.u + rand(-spread * 0.5, spread);
     const l = Math.hypot(ve, vn, vu) || 1;
     this.add(here, at, {
       kind: 'spark', ve: ve / l * speed, vn: vn / l * speed, vu: vu / l * speed,
-      life: rand(life * 0.6, life * 1.25), size0: rand(0.05, 0.08), size1: 0.03, drag: 1.6, gravity: 9.8, stretch: 0.035,
+      life: rand(life * 0.6, life * 1.25), size0: rand(0.05, 0.08), size1: 0.03, drag: snap ? 3 : 1.6, gravity: 9.8, stretch: snap ? 0.022 : 0.035,
     }, now);
+  }
+
+  /**
+   * Drifting, from both rear wheels: on asphalt thick tyre smoke that hangs in the
+   * air behind the car; on dirt, grass and sand a low cloud of dust in the surface's
+   * colour plus grit thrown back and out, falling fast. Stronger slip × speed → more.
+   * `slip` is the signed drift angle (rad).
+   */
+  driftDust(here: Position, heading: number, slip: number, speed: number, carLength: number, now: number, surface: Surface = 'paved') {
+    const intensity = Math.min(1, Math.abs(slip) / 1.1) * Math.min(1, Math.abs(speed) / 14);
+    if (intensity < 0.06 || Math.abs(speed) < 2.5) return;
+    const fwdE = Math.sin(heading), fwdN = Math.cos(heading);
+    const rightE = Math.cos(heading), rightN = -Math.sin(heading);
+    const out = Math.sign(slip) || 1; // the side the tail swings out to
+    const colors = SURFACE_FX[surface];
+    const back = -carLength * 0.36;
+    for (const wheel of [-0.8, 0.8]) {
+      const at: Enu = { e: fwdE * back + rightE * wheel, n: fwdN * back + rightN * wheel, u: 0.15 };
+      if (surface === 'paved') {
+        // tyre smoke: big, slow, lingering; drifts out with the tail and a little up
+        if (Math.random() > 0.35 + intensity * 0.65) continue;
+        this.add(here, at, {
+          kind: 'tiresmoke', tint: colors.dust,
+          ve: rightE * out * rand(0.6, 2.2) * intensity - fwdE * rand(0.5, 1.8) + rand(-0.4, 0.4),
+          vn: rightN * out * rand(0.6, 2.2) * intensity - fwdN * rand(0.5, 1.8) + rand(-0.4, 0.4),
+          vu: rand(0.25, 0.8),
+          life: rand(1800, 2900), size0: 0.7, size1: 3.2 + intensity * 2.2,
+          drag: 1.2, gravity: -0.12, stretch: 0,
+        }, now);
+        continue;
+      }
+      // a dust cloud, low and wide
+      this.add(here, at, {
+        kind: 'dust', tint: colors.dust,
+        ve: rightE * out * rand(1, 3.2) * (0.5 + intensity) - fwdE * rand(0.5, 2) + rand(-0.4, 0.4),
+        vn: rightN * out * rand(1, 3.2) * (0.5 + intensity) - fwdN * rand(0.5, 2) + rand(-0.4, 0.4),
+        vu: rand(0.3, 1.1) * (0.5 + intensity),
+        life: rand(1100, 1900), size0: 0.5, size1: 2.4 + intensity * 2,
+        drag: 1.8, gravity: -0.18, stretch: 0,
+      }, now);
+      // grit: a few small heavy bits thrown back and out
+      const bits = Math.round(1 + intensity * 4);
+      for (let i = 0; i < bits; i++) {
+        const kick = rand(3, 7) * (0.5 + intensity);
+        this.add(here, at, {
+          kind: 'grit', tint: colors.grit,
+          ve: rightE * out * kick * rand(0.4, 1) - fwdE * kick * rand(0.3, 0.9) + rand(-0.6, 0.6),
+          vn: rightN * out * kick * rand(0.4, 1) - fwdN * kick * rand(0.3, 0.9) + rand(-0.6, 0.6),
+          vu: rand(1.5, 4.2),
+          life: rand(450, 850), size0: rand(0.05, 0.11), size1: rand(0.04, 0.09),
+          drag: 0.4, gravity: 9.8, stretch: 0,
+        }, now);
+      }
+    }
   }
 
   /** Bullet impact: a spray of sparks bouncing back from the surface, a flash, dust on walls and ground. */
@@ -276,7 +360,8 @@ export class WorldParticles {
     const s = options.scale ?? 1;
     this.add(here, at, { kind: 'flash', ve: 0, vn: 0, vu: 0, life: 70, size0: 0.35 * s, size1: 0.6 * s, drag: 0, gravity: 0, stretch: 0 }, now);
     const count = Math.round(rand(7, 12) * s);
-    for (let i = 0; i < count; i++) this.spark(here, at, normal, 0.85, rand(4, 11) * Math.sqrt(s), now);
+    // bullet sparks: fast, short, snapping off the hit
+    for (let i = 0; i < count; i++) this.spark(here, at, normal, 0.85, rand(9, 20) * Math.sqrt(s), now, 250, true);
     if (options.dust) {
       for (let i = 0; i < 2; i++) {
         this.add(here, at, {
@@ -320,6 +405,29 @@ export class WorldParticles {
   }
 
   /**
+   * A wreck on fire, one puff of it (call a few dozen times a second): now and
+   * then a spark and a column of black smoke (the flames are WreckFire). strength goes 1 → 0 as the fire dies down.
+   */
+  burning(here: Position, at: Enu, strength: number, now: number) {
+    if (strength <= 0.02) return;
+    if (Math.random() < 0.08 * strength) {
+      this.add(here, { e: at.e + rand(-0.8, 0.8), n: at.n + rand(-0.8, 0.8), u: at.u + 0.6 }, {
+        kind: 'ember', ve: rand(-1.2, 1.2), vn: rand(-1.2, 1.2), vu: rand(2, 4.5),
+        life: rand(600, 1100), size0: rand(0.04, 0.07), size1: 0.025, drag: 0.6, gravity: 2.5, stretch: 0.02,
+      }, now);
+    }
+    // a column of thick black smoke: narrow puffs, close together, rising fast and
+    // straight, widening only slowly as they climb
+    for (let i = 0; i < 2; i++) {
+      if (Math.random() > 0.55 + strength * 0.4) continue;
+      this.add(here, { e: at.e + rand(-0.35, 0.35), n: at.n + rand(-0.35, 0.35), u: at.u + rand(0.9, 1.3) }, {
+        kind: 'smoke', tint: [0.02, 0.018, 0.016], ve: rand(-0.15, 0.15), vn: rand(-0.15, 0.15), vu: rand(3.2, 4.4) * (0.6 + strength * 0.4),
+        life: rand(3200, 4600), size0: rand(0.7, 1.0), size1: rand(2.0, 2.8), drag: 0.25, gravity: -0.5, stretch: 0,
+      }, now);
+    }
+  }
+
+  /**
    * Advance and draw. `heading` and `here` define the vehicle layer's local frame;
    * `eye` is the camera position in that frame.
    */
@@ -343,11 +451,14 @@ export class WorldParticles {
       p.e += p.ve * dt; p.n += p.vn * dt; p.u += p.vu * dt;
       const floor = this.altitude + 0.03;
       if (p.u < floor && (p.kind === 'spark' || p.kind === 'ember')) { p.u = floor; p.vu = Math.abs(p.vu) * 0.35; p.ve *= 0.6; p.vn *= 0.6; }
+      // grit lands and skids to a stop
+      if (p.u < floor && p.kind === 'grit') { p.u = floor; p.vu = 0; p.ve *= 0.5; p.vn *= 0.5; }
       // world → local frame of the layer (same mapping as scenePoint)
       const e = p.e - o.east, n = p.n - o.north;
       const x = n * sin - e * cos, z = n * cos + e * sin;
       const size = p.size0 + (p.size1 - p.size0) * Math.sqrt(t);
       const c = shade(p, t);
+      if (!ADDITIVE[p.kind]) { c[0] *= this.light; c[1] *= this.light; c[2] *= this.light; }
       let ax = 0, ay = 0, az = 0;
       if (p.stretch > 0) {
         ax = p.vn * sin - p.ve * cos; ay = p.vu; az = p.vn * cos + p.ve * sin;

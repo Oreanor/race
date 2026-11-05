@@ -3,11 +3,17 @@ import { MapCamera, mercatorPerMeter, mercatorX01, mercatorY01 } from './camera'
 import { WorldTiles, defaultWorldOptions } from './WorldTiles';
 import { baseUniforms, facadeMask, type BaseUniforms } from './materials';
 import type { GeoFeature } from '../tiles/worldTile';
-import { seasonWeights, worldTime, type SimpleLitUniforms } from './simpleLit';
+import { seasonWeights, snowCover, worldTime, type SimpleLitUniforms } from './simpleLit';
 import { computeLighting, timeFor, TIME_MODES, type Lighting, type TimeMode } from './lighting';
-import { placeClock, placeMoment } from '../placeTime';
-import { seasonAt, SEASON_MODES, SEASONS, type Season, type SeasonMode } from '../seasons';
+import { placeClock, placeMoment, placeZone } from '../placeTime';
+import { seasonAt, snowCoverAt, SEASON_MODES, SEASONS, type Season, type SeasonMode } from '../seasons';
 import { SkyBodies } from './sky';
+import { SKIN_DATA, type SkinId } from '../buildings/skins';
+
+/** bullet hole decals; the oldest one goes when a new one comes */
+const MAX_HOLES = 1024;
+/** broken window panes remembered while they stay within the drawn area */
+const MAX_PANES = 4096;
 
 // A small stand-in for maplibregl.Map, backed by our own Three.js world.
 // It implements only what City Rider calls, with the same semantics, so the
@@ -48,19 +54,12 @@ export type ThreeMapOptions = {
 };
 
 const SKY = '#dfe6e6';
-export const SOURCE_ID = 'openmaptiles';
 const REBASE_METERS = 1500;
 
 function toLngLat(p: LngLatLike): [number, number] {
   return Array.isArray(p) ? [p[0], p[1]] : [p.lng, p.lat];
 }
 
-class Handler {
-  enabled = false;
-  enable() { this.enabled = true; }
-  disable() { this.enabled = false; }
-  isEnabled() { return this.enabled; }
-}
 
 export class ThreeMarker {
   private element: HTMLElement;
@@ -88,10 +87,8 @@ export class ThreeMap {
   readonly camera = new MapCamera();
   readonly world: WorldTiles;
   readonly uniforms: BaseUniforms;
-  readonly dragPan = new Handler();
-  readonly scrollZoom = new Handler();
-  readonly dragRotate = new Handler();
-  readonly touchPitch = new Handler();
+  /** what the mouse may do to the camera: pan + zoom, and right-drag rotate */
+  private interactive = { pan: false, rotate: false };
   private container: HTMLElement;
   private canvas: HTMLCanvasElement;
   private markerLayer: HTMLDivElement;
@@ -103,8 +100,8 @@ export class ThreeMap {
   private fused: CustomLayer[] = [];
   private listeners = new Map<string, Set<Listener>>();
   private layers: CustomLayer[] = [];
-  private sources = new Map<string, unknown>();
-  private terrain: { source: string; exaggeration: number } | null = null;
+  /** relief on: heights × 1; off: a flat world */
+  private relief = true;
   private frame = 0;
   private origin = { x01: 0, y01: 0, lat: 0 };
   private resizeObserver: ResizeObserver;
@@ -127,6 +124,12 @@ export class ThreeMap {
   private lightClock = 0;
   /** bullet holes on walls, roofs and ground; world positions, oldest replaced first */
   private holes: { at: [number, number]; altitude: number; normal: [number, number, number] }[] = [];
+  /**
+   * Bullet hits on walls, kept apart from the hole decals: the pane a hit broke
+   * stays broken until it leaves the drawn area (past the fog), not when its hole
+   * gives way to newer ones.
+   */
+  private panes: { at: [number, number]; altitude: number; seed: number }[] = [];
   private holeMesh: THREE.InstancedMesh;
   private holesDirty = false;
   private holesOrigin = '';
@@ -161,9 +164,9 @@ export class ThreeMap {
     this.uniforms = baseUniforms(SKY);
     this.mask = facadeMask();
     this.world = new WorldTiles(this.uniforms, this.mask, { ...defaultWorldOptions, demTemplate: options.dem ?? null, region: options.region ?? '' });
-    this.world.onTile = () => {
-      this.emit('sourcedata', { sourceId: SOURCE_ID, sourceDataType: 'content', isSourceLoaded: true });
-      this.emit('sourcedata', { sourceId: 'elevation', sourceDataType: 'content', isSourceLoaded: true });
+    this.world.onTile = (key) => {
+      // `tile` ("z/x/y") lets listeners skip tiles far from what they care about
+      this.emit('tile', { tile: key });
       this.triggerRepaint();
     };
     this.scene.add(this.world.root);
@@ -171,7 +174,7 @@ export class ThreeMap {
     this.holeMesh = new THREE.InstancedMesh(
       new THREE.CircleGeometry(0.075, 12),
       new THREE.MeshBasicMaterial({ color: '#151210', transparent: true, opacity: 0.92, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -8, polygonOffsetUnits: -16, side: THREE.DoubleSide }),
-      512,
+      MAX_HOLES,
     );
     this.holeMesh.count = 0;
     this.holeMesh.frustumCulled = false;
@@ -216,10 +219,7 @@ export class ThreeMap {
     for (const fn of this.listeners.get(type) ?? []) fn({ type, target: this, ...event });
   }
 
-  // ---- style / sources / layers (only what the game touches) ----------------
-  getStyle() { return { version: 8, layers: [] as { id: string; type: string }[], sources: { [SOURCE_ID]: { type: 'vector' } } }; }
-  addSource(id: string, spec: unknown) { this.sources.set(id, spec); return this; }
-  getSource(id: string) { return id === SOURCE_ID ? { type: 'vector' } : this.sources.get(id); }
+  // ---- layers ---------------------------------------------------------------
   addLayer(layer: CustomLayer) {
     if (layer.type !== 'custom') return this; // basemap styling layers have no meaning here
     if (layer.scene && layer.placement && layer.fuse) {
@@ -246,40 +246,46 @@ export class ThreeMap {
     layer.onRemove?.(this, this.renderer.getContext() as WebGL2RenderingContext);
     return this;
   }
-  setLayoutProperty() { return this; }
-  getLayoutProperty() { return undefined; }
-  setPaintProperty() { return this; }
-  getPaintProperty() { return undefined; }
-  setCenterClampedToGround() { return this; }
 
-  // ---- terrain ------------------------------------------------------------
-  setTerrain(spec: { source: string; exaggeration?: number } | null) {
-    this.terrain = spec ? { source: spec.source, exaggeration: spec.exaggeration ?? 1 } : null;
-    this.uniforms.uExag.value = this.terrain?.exaggeration ?? 0;
+  // ---- ground -------------------------------------------------------------
+  /** Relief on (real heights) or off (a flat world at 0). */
+  setRelief(on: boolean) {
+    this.relief = on;
+    this.uniforms.uExag.value = on ? 1 : 0;
     this.triggerRepaint();
-    return this;
   }
-  getTerrain() { return this.terrain; }
-  /** Same contract as MapLibre: exaggerated meters, null without terrain or data. */
-  queryTerrainElevation(p: LngLatLike): number | null {
-    if (!this.terrain) return null;
+  /** How tall heights are drawn: 1 with relief, 0 flat. */
+  get exaggeration() { return this.relief ? 1 : 0; }
+  /**
+   * The drive surface under a point (m, as drawn): 0 on a flat world, null where no
+   * tile is in yet. Under a bridge the deck or the way below is picked by
+   * atAltitude (the player's car when left out; null: no hint, the ground).
+   */
+  groundAt(p: LngLatLike, atAltitude?: number | null): number | null {
+    if (!this.relief) return 0;
     const [lng, lat] = toLngLat(p);
-    const raw = this.world.groundAt(lng, lat);
-    return raw == null ? null : raw * this.terrain.exaggeration;
+    return this.world.groundAt(lng, lat, atAltitude === undefined ? this.focusCar?.altitude : atAltitude ?? undefined);
   }
   getCenterElevation() { return this.camera.state.elevation; }
-  isSourceLoaded(id: string) {
-    const [lng, lat] = this.camera.state.center;
-    if (id === 'elevation') return this.world.hasDemAt(lng, lat);
-    return this.world.loadedAround([lng, lat], 300);
+  /** What the wheels are on at a point: paved, grass (and earth) or sand. */
+  surfaceAt(p: LngLatLike) {
+    const [lng, lat] = toLngLat(p);
+    return this.world.surfaceAt(lng, lat);
   }
+
+  /** The ground under the view centre has arrived. */
+  hasGround() {
+    const [lng, lat] = this.camera.state.center;
+    return this.world.hasDemAt(lng, lat);
+  }
+  /** What the mouse may do to the camera (the map view, the intro): pan + wheel zoom, right-drag rotate. */
+  setInteractive(on: { pan: boolean; rotate: boolean }) { this.interactive = { ...on }; }
   /** Everything inside the fog is in: the world can be shown without anything popping in later. */
   areTilesLoaded() { return this.world.loadedAround(this.camera.state.center, this.uniforms.uFogFar.value); }
 
-  /** GeoJSON features of a layer near the view, like MapLibre (all loaded layers, incl. poi…). */
-  querySourceFeatures(_source: string, options: { sourceLayer?: string } = {}): GeoFeature[] {
-    if (!options.sourceLayer) return [];
-    return this.world.features(options.sourceLayer, this.camera.state.center);
+  /** GeoJSON features of a tile layer near the view (all loaded layers, incl. poi…). */
+  features(layer: string): GeoFeature[] {
+    return this.world.features(layer, this.camera.state.center);
   }
 
   /** Layer names present in loaded tiles: everything we can visualise later. */
@@ -308,13 +314,24 @@ export class ThreeMap {
   project(p: LngLatLike) {
     this.camera.update();
     const [lng, lat] = toLngLat(p);
-    const altitude = this.queryTerrainElevation([lng, lat]) ?? 0;
+    const altitude = this.groundAt([lng, lat]) ?? 0;
     return this.camera.project(lng, lat, altitude);
   }
   unproject(point: { x: number; y: number } | [number, number]) {
     this.camera.update();
     const [x, y] = Array.isArray(point) ? point : [point.x, point.y];
-    const hit = this.camera.unproject(x, y) ?? this.camera.state.center;
+    let hit = this.camera.unproject(x, y) ?? this.camera.state.center;
+    // the plane at the centre's height misses on hills: walk the hit onto the terrain
+    for (let i = 0; i < 8; i++) {
+      const ground = this.groundAt(hit);
+      if (ground == null) break;
+      const next = this.camera.unproject(x, y, ground);
+      if (!next) break;
+      const moved = Math.hypot(next[0] - hit[0], next[1] - hit[1]);
+      // damped, so steep views settle instead of bouncing between two slopes
+      hit = [hit[0] + (next[0] - hit[0]) * 0.7, hit[1] + (next[1] - hit[1]) * 0.7];
+      if (moved < 1e-7) break; // ≈ 1 cm
+    }
     return { lng: hit[0], lat: hit[1] };
   }
 
@@ -341,19 +358,75 @@ export class ThreeMap {
 
   /** First building hit along a shot (like CityBuildings.shoot); `mark` leaves a bullet hole. */
   raycastBuildings(from: [number, number], fromAlt: number, to: [number, number], toAlt: number, mark = false) {
-    const hit = this.world.raycastBuildings(from, fromAlt, to, toAlt, this.terrain?.exaggeration ?? 0);
+    const exaggeration = this.exaggeration;
+    const hit = this.world.raycastBuildings(from, fromAlt, to, toAlt, exaggeration);
+    // a tree or street lamp in front of the wall takes the bullet and goes down
+    const prop = this.world.raycastProps(from, fromAlt, to, toAlt, exaggeration);
+    if (prop) {
+      const dx = to[0] - from[0], dy = to[1] - from[1];
+      const wallT = hit ? ((hit.point[0] - from[0]) * dx + (hit.point[1] - from[1]) * dy) / (dx * dx + dy * dy || 1) : Infinity;
+      if (prop.t < wallT) {
+        if (mark) { this.world.topple(prop, performance.now()); this.triggerRepaint(); }
+        return { point: prop.point, altitude: prop.altitude };
+      }
+    }
     if (hit && mark) this.addHole(hit.point, hit.altitude, hit.normal);
     return hit ? { point: hit.point, altitude: hit.altitude } : null;
   }
 
-  /** A bullet mark on the ground (roads sit up to 0.15 m above it). */
+  /**
+   * A car moving from → to at `altitude` (exaggerated, like the car's) knocks
+   * over the first tree or street lamp in its way. True if something went down.
+   */
+  knockDown(from: [number, number], to: [number, number], altitude: number, halfWidth = 0.9) {
+    const prop = this.world.raycastProps(from, altitude + 0.6, to, altitude + 0.6, this.exaggeration, halfWidth);
+    if (!prop) return false;
+    this.world.topple(prop, performance.now());
+    this.triggerRepaint();
+    return true;
+  }
+
+  /** Repaint every building in an architecture skin (or the city's own look); instant, nothing reloads. */
+  setSkin(id: SkinId) {
+    const u = this.uniforms;
+    this.world.setSpires(id === 'futuristic');
+    if (id === 'original') { u.uSkin.value = 0; this.triggerRepaint(); return; }
+    const skin = SKIN_DATA[id];
+    const lin = (hex: string) => new THREE.Color().setStyle(hex, THREE.SRGBColorSpace); // three keeps colours linear
+    const weighted = (list: [string, number][], into: THREE.Vector4[]) => {
+      const total = list.reduce((sum, [, w]) => sum + w, 0);
+      let acc = 0;
+      into.forEach((slot, i) => {
+        const [hex, w] = list[Math.min(i, list.length - 1)];
+        if (i < list.length) acc += w / total;
+        const c = lin(hex);
+        slot.set(c.r, c.g, c.b, i < list.length - 1 ? acc : 1);
+      });
+    };
+    weighted(skin.wall, u.uSkinWall.value);
+    weighted(skin.roof, u.uSkinRoof.value);
+    [skin.secondary, skin.glass, skin.frame, skin.trim, skin.accent, skin.glow].forEach((list, k) => {
+      for (let i = 0; i < 4; i++) { const c = lin(list[i % list.length]); u.uSkinColors.value[k * 4 + i].set(c.r, c.g, c.b); }
+    });
+    u.uSkinOpt.value.set(skin.lit, skin.accentChance, skin.featureChance, skin.wallRange);
+    u.uSkinRoofRange.value = skin.roofRange;
+    u.uSkin.value = skin.index;
+    this.triggerRepaint();
+  }
+
+  /** A bullet mark on the ground; the drive height is already the top of the pavement. */
   markGround(point: [number, number], altitude: number) {
-    this.addHole(point, altitude + 0.18, [0, 1, 0]);
+    this.addHole(point, altitude + 0.06, [0, 1, 0]);
   }
 
   private addHole(at: [number, number], altitude: number, normal: [number, number, number]) {
     this.holes.push({ at: [...at], altitude, normal });
-    if (this.holes.length > 512) this.holes.shift();
+    if (this.holes.length > MAX_HOLES) this.holes.shift(); // the oldest hole goes
+    if (Math.abs(normal[1]) < 0.5) {
+      // roofs and ground have no glass
+      this.panes.push({ at: [...at], altitude, seed: Math.abs(Math.sin(at[0] * 12.9898 + at[1] * 78.233) * 43758.5453) % 1 });
+      if (this.panes.length > MAX_PANES) this.panes.shift();
+    }
     this.holesDirty = true;
     this.triggerRepaint();
   }
@@ -375,6 +448,40 @@ export class ThreeMap {
     });
     this.holeMesh.count = this.holes.length;
     this.holeMesh.instanceMatrix.needsUpdate = true;
+  }
+
+  /**
+   * Street lamps at night. Their light is baked per tile (every lamp at once, see
+   * tiles/vegetationTile lampLight), so here is only how lit (night) and the colour:
+   * warm heads, or the futuristic glass posts' blue.
+   */
+  private placeLamps() {
+    const u = this.uniforms;
+    const night = this.lighting?.night ?? 0;
+    const futuristic = u.uSkin.value > 1.5 && u.uSkin.value < 2.5;
+    u.uLampOn.value = Math.min(1, Math.max(0, (night - 0.05) * 1.5));
+    u.uLampOmni.value = futuristic ? 1 : 0;
+    u.uLampColor.value.setRGB(...(futuristic ? [0.35, 0.8, 1.15] : [1, 0.8, 0.52]) as [number, number, number]);
+  }
+
+  /** Broken panes: forget those past the drawn area, hand the nearest ones to the facade shader. */
+  private placePanes(perMeter: number) {
+    const shots = this.uniforms.uShots.value;
+    if (!this.panes.length) { this.uniforms.uShotCount.value = 0; return; }
+    const eye = this.uniforms.uCameraPos.value;
+    const reach = this.uniforms.uFogFar.value;
+    const near: { d: number; x: number; y: number; z: number; seed: number }[] = [];
+    this.panes = this.panes.filter((pane) => {
+      const x = (mercatorX01(pane.at[0]) - this.origin.x01) / perMeter, z = (mercatorY01(pane.at[1]) - this.origin.y01) / perMeter;
+      const d = Math.hypot(x - eye.x, z - eye.z);
+      if (d > reach) return false; // out of the drawn area: the glass is whole again next time
+      near.push({ d, x, y: pane.altitude, z, seed: pane.seed });
+      return true;
+    });
+    if (near.length > shots.length) near.sort((a, b) => a.d - b.d);
+    const count = Math.min(shots.length, near.length);
+    for (let i = 0; i < count; i++) shots[i].set(near[i].x, near[i].y, near[i].z, near[i].seed);
+    this.uniforms.uShotCount.value = count;
   }
 
   setPixelRatio(ratio: number) {
@@ -461,12 +568,16 @@ export class ThreeMap {
     if (side !== this.side) { this.side = side; this.world.setMaterialSide(side); }
     this.sceneCamera.projectionMatrix.copy(clip);
     this.sceneCamera.projectionMatrixInverse.copy(clip).invert();
+    this.world.updateFallen(performance.now(), clip);
 
     const perMeter = mercatorPerMeter(this.origin.lat);
     const eye = cam.cameraMercator;
     this.uniforms.uCameraPos.value.set((eye.x - this.origin.x01) / perMeter, eye.z / perMeter, (eye.y - this.origin.y01) / perMeter);
+    this.world.updateFloraDetail(this.uniforms.uCameraPos.value, above);
+    this.placeLamps();
     this.updateLighting(eye, perMeter);
     this.placeHoles(perMeter);
+    this.placePanes(perMeter);
     this.uniforms.uXray.value = this.focusCar ? 1 : 0;
     this.uniforms.uHeadOn.value = this.focusCar ? Math.min(1, (this.lighting?.night ?? 0) * 1.4) : 0;
     for (const layer of this.fused) (layer as { setHeadlights?: (on: number) => void }).setHeadlights?.(this.uniforms.uHeadOn.value);
@@ -533,8 +644,27 @@ export class ThreeMap {
       if (next !== value) moving = true;
       w.setComponent(i, next);
     }
+    // lying snow follows the view latitude (~42° N/S), same soft blend
+    const [, lat] = this.camera.state.center;
+    const snowGoal = snowCoverAt(lat);
+    const snowNext = snowGoal > snowCover.value
+      ? Math.min(snowGoal, snowCover.value + step)
+      : Math.max(snowGoal, snowCover.value - step);
+    if (snowNext !== snowCover.value) moving = true;
+    snowCover.value = snowNext;
     if (moving) this.triggerRepaint();
   }
+  /** the time zone of the last ~10 km cell asked about */
+  private clockZone: { cell: string; timeZone: string } | null = null;
+
+  /** The moment the sky shows where the car is (or the view centre), and that place's time zone. */
+  localTime(): { at: Date; timeZone: string } {
+    const [lng, lat] = this.focusCar?.at ?? this.camera.state.center;
+    const cell = `${Math.round(lng * 10)}:${Math.round(lat * 10)}`;
+    if (this.clockZone?.cell !== cell) this.clockZone = { cell, timeZone: placeZone(lat, lng) };
+    return { at: this.shownTime(lat, lng), timeZone: this.clockZone.timeZone };
+  }
+
   /** The moment the world is lit for: the place's real time unless T or ?time= says otherwise. */
   private shownTime(lat: number, lng: number) {
     if (this.modeDate) return this.modeDate;
@@ -612,12 +742,12 @@ export class ThreeMap {
       if (Math.hypot(dx, dy) > 3) drag.moved = true;
       if (!drag.moved) return;
       const s = this.camera.state;
-      if (drag.button === 0 && this.dragPan.enabled) {
+      if (drag.button === 0 && this.interactive.pan) {
         const rect = this.canvas.getBoundingClientRect();
         const a = this.unproject([drag.x - rect.left, drag.y - rect.top]);
         const b = this.unproject([e.clientX - rect.left, e.clientY - rect.top]);
         this.jumpTo({ center: [s.center[0] - (b.lng - a.lng), s.center[1] - (b.lat - a.lat)] });
-      } else if (drag.button === 2 && this.dragRotate.enabled) {
+      } else if (drag.button === 2 && this.interactive.rotate) {
         this.jumpTo({ bearing: s.bearing + dx * 0.4, pitch: s.pitch - dy * 0.3 });
       }
       drag.x = e.clientX;
@@ -632,9 +762,19 @@ export class ThreeMap {
       this.emit('click', { point, lngLat: this.unproject(point), originalEvent: e });
     }) as EventListener);
     listen(this.canvas, 'wheel', ((e: WheelEvent) => {
-      if (!this.scrollZoom.enabled) return;
+      if (!this.interactive.pan) return;
       e.preventDefault();
-      this.jumpTo({ zoom: Math.min(22, Math.max(12, this.camera.state.zoom - e.deltaY * 0.0022)) });
+      // pixels; Firefox may send lines. A touchpad pinch arrives as a wheel with ctrlKey and small steps.
+      const delta = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1);
+      const zoom = Math.min(22, Math.max(12, this.camera.state.zoom - delta * (e.ctrlKey ? 0.012 : 0.0022)));
+      // zoom toward the point under the cursor, like any map
+      const rect = this.canvas.getBoundingClientRect();
+      const at = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      const before = this.unproject(at);
+      this.jumpTo({ zoom });
+      const after = this.unproject(at);
+      const [lng, lat] = this.camera.state.center;
+      this.jumpTo({ center: [lng + before.lng - after.lng, lat + before.lat - after.lat] });
     }) as EventListener, { passive: false });
     listen(this.canvas, 'contextmenu', (e) => e.preventDefault());
     listen(window, 'keydown', ((e: KeyboardEvent) => {

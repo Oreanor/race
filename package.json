@@ -7,7 +7,9 @@
     "build": "next build --webpack",
     "start": "next start --hostname 0.0.0.0",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test tests/physics.test.ts tests/buildings.test.ts tests/water.test.ts tests/vegetation.test.ts tests/world3d.test.ts tests/fuel.test.ts tests/travel.test.ts tests/astro.test.ts tests/places.test.ts tests/trains.test.ts"
+    "test": "node --experimental-strip-types --test tests/physics.test.ts tests/buildings.test.ts tests/water.test.ts tests/vegetation.test.ts tests/world3d.test.ts tests/fuel.test.ts tests/travel.test.ts tests/astro.test.ts tests/places.test.ts tests/trains.test.ts",
+    "server": "node --experimental-strip-types server/multiplayer.ts",
+    "server:tunnel": "node --env-file-if-exists=.env.tunnel --experimental-strip-types server/multiplayer.ts --tunnel"
   },
   "dependencies": {
     "@mapbox/vector-tile": "^3.0.0",
@@ -17,7 +19,8 @@
     "pbf": "^5.1.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "three": "^0.180.0"
+    "three": "^0.180.0",
+    "ws": "^8.22.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.0.0",
@@ -25,6 +28,7 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@types/three": "^0.180.0",
+    "@types/ws": "^8.18.2",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.9.0"
   },

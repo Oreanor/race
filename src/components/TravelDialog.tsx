@@ -8,9 +8,10 @@ import Dialog from './ui/Dialog';
 import { formatNumber, t } from '@/i18n';
 import { useLang } from '@/i18n/react';
 
-const COPY: Record<HubKind, { title: 'travel.airport' | 'travel.port'; go: 'travel.fly' | 'travel.sail'; icon: string }> = {
+const COPY: Record<HubKind, { title: 'travel.airport' | 'travel.port' | 'travel.station'; go: 'travel.fly' | 'travel.sail' | 'travel.ride'; icon: string }> = {
   airport: { title: 'travel.airport', go: 'travel.fly', icon: '✈' },
   port: { title: 'travel.port', go: 'travel.sail', icon: '⚓' },
+  station: { title: 'travel.station', go: 'travel.ride', icon: '🚂' },
 };
 
 const key = (c: City) => `${c.name}|${c.coords[0].toFixed(3)}|${c.coords[1].toFixed(3)}`;
@@ -61,7 +62,7 @@ export default function TravelDialog({ offer, current, onBuy, onStay }: {
       title={<>{copy.icon} {t(copy.title)}</>}
       actions={<button type="button" className="ui-btn is-ghost" onClick={onStay}>{t('travel.stay')}</button>}
     >
-      <p className="ui-text">{t('travel.question')}{offer.kind === 'airport' ? ` ${t('travel.planeMore')}` : ''}</p>
+      <p className="ui-text">{t('travel.question')}{offer.kind === 'airport' ? ` ${t('travel.planeMore')}` : offer.kind === 'station' ? ` ${t('travel.trainMore')}` : ''}</p>
       <div className="ui-row ui-wallet"><span>{t('travel.wallet')}</span><strong>{t('travel.coins', { n: formatNumber(offer.money) })}</strong></div>
       <input
         className="ui-input"

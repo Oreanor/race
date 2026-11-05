@@ -3,3 +3,4 @@ node_modules/
 *.tsbuildinfo
 .browser-render-check/
 render-check*.png
+.env*

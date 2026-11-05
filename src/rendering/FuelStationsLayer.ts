@@ -66,7 +66,7 @@ export function fuelStationsLayer(map0: () => ThreeMap | null = () => null): Map
         const s = stations[i].position;
         const x = (mercatorX01(s[0]) - mercatorX01(origin![0])) / perMeter;
         const z = (mercatorY01(s[1]) - mercatorY01(origin![1])) / perMeter;
-        const ground = useTerrain ? map?.queryTerrainElevation(s) ?? 0 : 0;
+        const ground = useTerrain ? map?.groundAt(s) ?? 0 : 0;
         // stable but varied orientation per station
         const yaw = (Math.abs(Math.sin(s[0] * 1e4 + s[1] * 7e3)) * Math.PI);
         object.position.set(x, ground, z);

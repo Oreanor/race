@@ -1,13 +1,14 @@
 export const cameraConfig = {
   distance: 15,
   minDistance: 8,
-  maxDistance: 56,
+  /** zoom out far enough to spot bots a few blocks ahead */
+  maxDistance: 110,
   pitch: 73,
-  minPitch: 38,
+  minPitch: 28,
   maxPitch: 74,
   lookAheadFactor: 1.32,
   maxZoom: 20.85,
-  minZoom: 17.4,
+  minZoom: 15.6,
   zoomAtDefault: 20.55,
 };
 

@@ -227,11 +227,19 @@ function signedArea(ring: Pt[]) {
   return sum / 2;
 }
 
-/** Edge lies on the tile border: it belongs to the clip, not to a real wall. */
-function onBorder(a: Pt, b: Pt, extent: number) {
+/**
+ * True for an edge that sits on a tile border the neighbour already seals.
+ *
+ * Buildings clipped across a tile (by us or by the vector source) get a fake
+ * edge along the cut. Skipping that edge on *both* tiles left a hole into the
+ * hollow shell — visible on large footprints that barely spill over a boundary
+ * (Forum Coimbra, etc.). Own the min edges (x=0, y=0); the neighbour owns the
+ * shared line via those, so we drop only the max edges (x=extent, y=extent).
+ */
+export function omitBorderWall(a: Pt, b: Pt, extent: number) {
   const e = 0.5;
-  return (a[0] <= e && b[0] <= e) || (a[0] >= extent - e && b[0] >= extent - e)
-    || (a[1] <= e && b[1] <= e) || (a[1] >= extent - e && b[1] >= extent - e);
+  return (a[0] >= extent - e && b[0] >= extent - e)
+    || (a[1] >= extent - e && b[1] >= extent - e);
 }
 
 function prepareRing(points: { x: number; y: number }[], extent: number): Pt[] {
@@ -378,7 +386,7 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
 
     // Pass 1. OSM often has a building outline plus its parts (building:part) with
     // the same or overlapping footprints. Identical footprints keep only the
-    // tallest copy (as keepVisibleParts did); buildings that contain or sit
+    // tallest copy; buildings that contain or sit
     // inside another one get no pitched roof, so roofs never cut through walls.
     type Candidate = { id: string; fp: string; height: number; ring: { x: number; y: number }[]; cx: number; cy: number; box: number[] };
     const parsed: (ReturnType<typeof classifyRings> | null)[] = [];
@@ -531,7 +539,7 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
           for (let i = 0; i < ring.length; i++) {
             const a = ring[i];
             const b = ring[(i + 1) % ring.length];
-            if (onBorder(source[i], source[(i + 1) % source.length], extent)) continue;
+            if (omitBorderWall(source[i], source[(i + 1) % source.length], extent)) continue;
             const g: [number, number, number, number] = [groundAt(a), groundAt(b), crest, crest];
             const ax = a[0] * k, az = a[1] * k, bx = b[0] * k, bz = b[1] * k;
             const dx = bx - ax;
@@ -543,7 +551,7 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
             const length = lengthMerc * metersScale;
             if (recipe) {
               faces.push({
-                owner: key, ax, az, bx, bz, y0: base, y1: top, order: faces.length,
+                owner: key, ax, az, bx, bz, y0: crest + base, y1: crest + top, order: faces.length,
                 chunk, cx: chunk.cx, cz: chunk.cz, nx, nz, length, ground: [g[0], g[1]],
                 crest, base, top, wall, roof, glass: glassIndex, recipe,
               });

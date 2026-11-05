@@ -1,11 +1,15 @@
-// The airport or port nearest to a place, from OpenStreetMap (Nominatim search
-// in a box around it). Travel lands there instead of in the city centre.
+// The airport, port or railway station nearest to a place, from OpenStreetMap
+// (Nominatim search in a box around it). Travel lands there instead of in the
+// city centre.
 
-type Row = { category: string; type: string; name?: string; lat: string; lon: string; extratags?: Record<string, string> | null };
+type HubKind = 'airport' | 'port' | 'station';
+type Row = { category: string; type: string; name?: string; lat: string; lon: string; extratags?: Record<string, string> | null; class?: string };
 
 const cache = new Map<string, [number, number] | null>();
 const AIRPORT = /international|airport|aeroporto|aéroport|aeropuerto|flughafen|lotnisko|letiště|аэропорт|空港|机场|공항/i;
 const NOT_AIRPORT = /base|military|militar|heliport|héliport|airfield|aérodrome|aeródromo|flugplatz|club|glid/i;
+const STATION = /station|bahnhof|hauptbahnhof|gare|вокзал|estaci[oó]n|stazione|estação|駅/i;
+const NOT_STATION = /bus|metro|subway|tram|underground|halt|stop|platform|entrance/i;
 
 async function search(q: string, lat: number, lng: number, box: number, extratags: boolean, signal: AbortSignal) {
   const url = new URL('https://nominatim.openstreetmap.org/search');
@@ -32,9 +36,14 @@ function nearest(rows: Row[], lat: number, lng: number) {
   return best;
 }
 
+function parseKind(raw: string | null): HubKind {
+  if (raw === 'port' || raw === 'station') return raw;
+  return 'airport';
+}
+
 export async function GET(request: Request) {
   const params = new URL(request.url).searchParams;
-  const kind = params.get('kind') === 'port' ? 'port' : 'airport';
+  const kind = parseKind(params.get('kind'));
   const lat = Number(params.get('lat'));
   const lng = Number(params.get('lng'));
   if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return Response.json(null);
@@ -48,6 +57,16 @@ export async function GET(request: Request) {
       // real airports first: an IATA code, or a name that says so (not an airbase or airfield)
       const real = rows.filter((r) => r.extratags?.iata || (AIRPORT.test(r.name ?? '') && !NOT_AIRPORT.test(r.name ?? '')));
       found = nearest(real.length ? real : rows, lat, lng);
+    } else if (kind === 'station') {
+      const rows = (await search('railway station', lat, lng, 0.9, false, signal))
+        .filter((r) => (r.category === 'railway' || r.class === 'railway') && r.type === 'station');
+      const named = rows.filter((r) => STATION.test(r.name ?? '') && !NOT_STATION.test(r.name ?? ''));
+      found = nearest(named.length ? named : rows, lat, lng);
+      if (!found) {
+        const fallback = (await search('train station', lat, lng, 0.9, false, signal))
+          .filter((r) => r.type === 'station' && !NOT_STATION.test(r.name ?? ''));
+        found = nearest(fallback, lat, lng);
+      }
     } else {
       const ferries = (await search('ferry terminal', lat, lng, 0.6, false, signal)).filter((r) => r.type === 'ferry_terminal');
       found = nearest(ferries, lat, lng);

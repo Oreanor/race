@@ -1,0 +1,2471 @@
+{
+  "schema_version": "1.0.0",
+  "project": "global_city_sim_lowpoly_vegetation",
+  "language": "ru",
+  "objective_ru": "Создать 12 базовых low-poly GLB деревьев + 4 GLB кустов/покрова, затем применять наборы вариантов в городах мира по климату, региону и условиям места.",
+  "engine_hint": "Three.js / MapLibre vector data / city simulator",
+  "assets_directory": "public/assets/vegetation",
+  "asset_count": {
+    "tree": 12,
+    "shrub_or_groundcover": 4,
+    "total": 16
+  },
+  "important_rules_ru": [
+    "Нельзя выбирать деревья только по широте: климат Кёппена, биом и география имеют приоритет.",
+    "Вечнозелёность задаётся variant.leaf_habit, НЕ model.id: та же геометрия может иметь вечнозелёный и листопадный пресеты.",
+    "Для лиственных листопадных видов осень и голая крона зимой; для вечнозелёных сезонная окраска минимальна.",
+    "Тропические drought_deciduous теряют листву в сухой сезон, а не обязательно зимой.",
+    "Для Южного полушария сезоны сдвигать примерно на 6 месяцев.",
+    "Кустарниковое покрытие и плотность деревьев различаются по биому, не расставлять деревья равномерно.",
+    "Пресеты — художественные приближения для игры, не точная карта ареалов и посадок.",
+    "В городской застройке допускаются неместные виды как landscaping override, но в природной зоне не использовать случайные интродуценты."
+  ],
+  "leaf_habit_values": {
+    "evergreen": "Крона остаётся зелёной круглый год (листья обновляются, но не опадают все разом)",
+    "deciduous": "Листопадное; в холодный сезон почти/полностью без листьев",
+    "semi_deciduous": "Частично листопадное; степень зависит от засухи/температуры",
+    "drought_deciduous": "Опадает листва в сухой сезон, часто восстанавливается с дождями",
+    "seasonal": "Травянистый покров: зеленеет и отмирает/желтеет по сезону"
+  },
+  "technical_spec": {
+    "format": "glb",
+    "up_axis": "Y",
+    "origin": "ground_center",
+    "positive_forward_axis": "Z",
+    "one_model_per_base_shape": true,
+    "variants_as_materials_or_procedural_parameters": true,
+    "style": "clean_stylized_lowpoly",
+    "no_photo_textures": true,
+    "white_background_only_for_reference_renders": true,
+    "reference_renders": [
+      "3/4 view",
+      "front",
+      "side"
+    ],
+    "target_triangles_per_lod": {
+      "lod0": [
+        250,
+        750
+      ],
+      "lod1": [
+        60,
+        200
+      ],
+      "lod2": [
+        8,
+        40
+      ]
+    },
+    "modeling_rules_ru": [
+      "Не делать идеально симметричные шары и конусы",
+      "Крона из 3–7 фасеточных объемов, каждый со слабой деформацией",
+      "Небольшие видимые ветви и разветвления ствола",
+      "Не более 2–4 материалов на базовую модель",
+      "Плавно варьировать hue и brightness для каждого экземпляра",
+      "Делать instancing-friendly меши, без отдельных объектов на каждый лист",
+      "Ствол до 2–5 условных сегментов по высоте",
+      "Детализированные листья только для пальм/суккулентов; остальные лиственные массы стилизованы"
+    ],
+    "runtime_instance_variation": {
+      "scale_range": [
+        0.75,
+        1.3
+      ],
+      "yaw_degrees": [
+        0,
+        360
+      ],
+      "lean_degrees": [
+        -5,
+        5
+      ],
+      "foliage_hue_offset_degrees": [
+        -9,
+        9
+      ],
+      "foliage_lightness_offset": [
+        -0.08,
+        0.08
+      ]
+    },
+    "season_rules": {
+      "evergreen": "не опадать; приглушить цвет зимой в холодных регионах",
+      "deciduous": "summer_leaf,autumn_color,winter_bare,spring_leaf",
+      "semi_deciduous": "сезонно снижать coverage на 30–70%",
+      "drought_deciduous": "снижать coverage в drySeason на 60–95%",
+      "seasonal": "зеленый в влажный/теплый сезон, охристый в сухой/холодный"
+    },
+    "optimization_ru": [
+      "Видимость и выбор пресета — по чанкам; seed от координат для стабильного размещения",
+      "GPU instancing по модели и material/variant, минимизировать draw calls",
+      "Проверять пешеходные дорожки и дороги, чтобы деревья не росли в геометрии",
+      "В районах с множеством зданий разрешать уличные посадки рядами",
+      "LOD по экранному размеру или дистанции; far billboard/низкополигональный proxy"
+    ]
+  },
+  "models": [
+    {
+      "id": "tree_round",
+      "file": "tree_round.glb",
+      "kind": "tree",
+      "name_ru": "Округлая густая крона",
+      "geometry_brief_ru": "Прямой ствол, 3–7 неровных пересекающихся масс листвы, слегка асимметричная крона",
+      "default_height_m": [
+        5,
+        17
+      ],
+      "variants": [
+        {
+          "id": "maple",
+          "label_ru": "Клён",
+          "leaf_habit": "deciduous",
+          "evergreen": false,
+          "natural_or_common_regions": [
+            "Europe",
+            "East Asia",
+            "Eastern North America"
+          ],
+          "typical_koppen": [
+            "Cfa",
+            "Cfb",
+            "Dfa",
+            "Dfb"
+          ],
+          "season_effect": "yellow_orange_red"
+        },
+        {
+          "id": "linden",
+          "label_ru": "Липа",
+          "leaf_habit": "deciduous",
+          "evergreen": false,
+          "natural_or_common_regions": [
+            "Europe",
+            "temperate Asia"
+          ],
+          "typical_koppen": [
+            "Cfb",
+            "Dfa",
+            "Dfb"
+          ],
+          "season_effect": "yellow"
+        },
+        {
+          "id": "plane_tree",
+          "label_ru": "Платан городской",
+          "leaf_habit": "deciduous",
+          "evergreen": false,
+          "natural_or_common_regions": [
+            "Mediterranean cities",
+            "Europe urban",
+            "North America urban"
+          ],
+          "typical_koppen": [
+            "Csa",
+            "Csb",
+            "Cfa",
+            "Cfb"
+          ],
+          "season_effect": "yellow_brown"
+        },
+        {
+          "id": "tropical_street_tree",
+          "label_ru": "Широколиственное городское субтропическое",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "tropical and subtropical cities"
+          ],
+          "typical_koppen": [
+            "Af",
+            "Am",
+            "Aw",
+            "Cfa"
+          ],
+          "season_effect": "none"
+        },
+        {
+          "id": "south_america_subtropical",
+          "label_ru": "Широколиственное дерево Атлантического леса (упрощённо)",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "Southern Brazil",
+            "Atlantic Forest"
+          ],
+          "typical_koppen": [
+            "Cfa"
+          ],
+          "season_effect": "none"
+        }
+      ]
+    },
+    {
+      "id": "tree_spreading",
+      "file": "tree_spreading.glb",
+      "kind": "tree",
+      "name_ru": "Широкая раскидистая крона",
+      "geometry_brief_ru": "Толстый ствол с развилкой, низкие скелетные ветви, широкая нерегулярная крона",
+      "default_height_m": [
+        5,
+        17
+      ],
+      "variants": [
+        {
+          "id": "oak",
+          "label_ru": "Дуб листопадный",
+          "leaf_habit": "deciduous",
+          "evergreen": false,
+          "natural_or_common_regions": [
+            "Europe",
+            "Eastern North America",
+            "temperate East Asia"
+          ],
+          "typical_koppen": [
+            "Cfb",
+            "Cfa",
+            "Dfa",
+            "Dfb"
+          ],
+          "season_effect": "yellow_brown"
+        },
+        {
+          "id": "beech",
+          "label_ru": "Бук европейский",
+          "leaf_habit": "deciduous",
+          "evergreen": false,
+          "natural_or_common_regions": [
+            "Europe"
+          ],
+          "typical_koppen": [
+            "Cfb",
+            "Dfb"
+          ],
+          "season_effect": "copper_brown"
+        },
+        {
+          "id": "cork_oak",
+          "label_ru": "Дуб пробковый",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "Portugal",
+            "Spain",
+            "Western Mediterranean"
+          ],
+          "typical_koppen": [
+            "Csa",
+            "Csb"
+          ],
+          "season_effect": "none"
+        },
+        {
+          "id": "live_oak",
+          "label_ru": "Дуб вечнозелёный",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "Mediterranean",
+            "southeastern USA"
+          ],
+          "typical_koppen": [
+            "Csa",
+            "Csb",
+            "Cfa"
+          ],
+          "season_effect": "none"
+        },
+        {
+          "id": "southern_beech",
+          "label_ru": "Южный бук нотофагус (листопадный тип)",
+          "leaf_habit": "deciduous",
+          "evergreen": false,
+          "natural_or_common_regions": [
+            "Southern Chile",
+            "Southern Argentina"
+          ],
+          "typical_koppen": [
+            "Cfb",
+            "Cfc",
+            "Dfc"
+          ],
+          "season_effect": "yellow_orange"
+        },
+        {
+          "id": "ficus",
+          "label_ru": "Фикус крупный",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "Tropical Asia",
+            "tropical cities"
+          ],
+          "typical_koppen": [
+            "Af",
+            "Am",
+            "Aw"
+          ],
+          "season_effect": "none"
+        },
+        {
+          "id": "southern_beech_evergreen",
+          "label_ru": "Нотофагус вечнозелёный",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "Southern Chile",
+            "Southern Argentina",
+            "Tasmania"
+          ],
+          "typical_koppen": [
+            "Cfb",
+            "Cfc"
+          ],
+          "season_effect": "none"
+        },
+        {
+          "id": "nz_beech",
+          "label_ru": "Бук Новой Зеландии, вечнозелёный",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "New Zealand"
+          ],
+          "typical_koppen": [
+            "Cfb",
+            "Cfc"
+          ],
+          "season_effect": "none"
+        },
+        {
+          "id": "california_live_oak",
+          "label_ru": "Дуб калифорнийский вечнозелёный",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "California"
+          ],
+          "typical_koppen": [
+            "Csa",
+            "Csb"
+          ],
+          "season_effect": "none"
+        },
+        {
+          "id": "nz_evergreen_broadleaf",
+          "label_ru": "Широколиственное вечнозелёное дерево Новой Зеландии",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "New Zealand"
+          ],
+          "typical_koppen": [
+            "Cfb",
+            "Cfc"
+          ],
+          "season_effect": "none"
+        }
+      ]
+    },
+    {
+      "id": "tree_columnar",
+      "file": "tree_columnar.glb",
+      "kind": "tree",
+      "name_ru": "Узкая вертикальная крона",
+      "geometry_brief_ru": "Узкий высокий профиль, 2 настройки ширины: колонна листвы и плотный кипарис",
+      "default_height_m": [
+        5,
+        17
+      ],
+      "variants": [
+        {
+          "id": "lombardy_poplar",
+          "label_ru": "Тополь пирамидальный",
+          "leaf_habit": "deciduous",
+          "evergreen": false,
+          "natural_or_common_regions": [
+            "Eurasian steppe",
+            "Europe urban",
+            "temperate cities"
+          ],
+          "typical_koppen": [
+            "BSk",
+            "Cfa",
+            "Cfb",
+            "Dfa"
+          ],
+          "season_effect": "yellow"
+        },
+        {
+          "id": "med_cypress",
+          "label_ru": "Кипарис средиземноморский",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "Mediterranean",
+            "urban warm temperate"
+          ],
+          "typical_koppen": [
+            "Csa",
+            "Csb"
+          ],
+          "season_effect": "none"
+        }
+      ]
+    },
+    {
+      "id": "tree_birch_airy",
+      "file": "tree_birch_airy.glb",
+      "kind": "tree",
+      "name_ru": "Ажурная листопадная крона",
+      "geometry_brief_ru": "Тонкий ствол, несколько просветов между массами, опционально светлая кора и поникающие ветви",
+      "default_height_m": [
+        5,
+        17
+      ],
+      "variants": [
+        {
+          "id": "birch",
+          "label_ru": "Берёза",
+          "leaf_habit": "deciduous",
+          "evergreen": false,
+          "natural_or_common_regions": [
+            "Northern Europe",
+            "Russia",
+            "Canada",
+            "Northeast Asia"
+          ],
+          "typical_koppen": [
+            "Dfb",
+            "Dfc",
+            "Cfb"
+          ],
+          "season_effect": "yellow"
+        },
+        {
+          "id": "alder",
+          "label_ru": "Ольха",
+          "leaf_habit": "deciduous",
+          "evergreen": false,
+          "natural_or_common_regions": [
+            "temperate riverbanks",
+            "Northern Europe",
+            "North America"
+          ],
+          "typical_koppen": [
+            "Cfb",
+            "Dfb",
+            "Dfc"
+          ],
+          "season_effect": "yellow_brown"
+        },
+        {
+          "id": "willow",
+          "label_ru": "Ива",
+          "leaf_habit": "deciduous",
+          "evergreen": false,
+          "natural_or_common_regions": [
+            "temperate riverbanks",
+            "Eurasia",
+            "North America"
+          ],
+          "typical_koppen": [
+            "Cfa",
+            "Cfb",
+            "Dfa",
+            "Dfb"
+          ],
+          "season_effect": "yellow"
+        },
+        {
+          "id": "cottonwood",
+          "label_ru": "Тополь дельтовидный / cottonwood",
+          "leaf_habit": "deciduous",
+          "evergreen": false,
+          "natural_or_common_regions": [
+            "North American riverbanks",
+            "Great Plains"
+          ],
+          "typical_koppen": [
+            "BSk",
+            "Dfa",
+            "Cfa"
+          ],
+          "season_effect": "yellow"
+        }
+      ]
+    },
+    {
+      "id": "tree_spruce",
+      "file": "tree_spruce.glb",
+      "kind": "tree",
+      "name_ru": "Плотное коническое хвойное",
+      "geometry_brief_ru": "Несимметричный конус с несколькими ярусами ветвей, не идеальная пирамида",
+      "default_height_m": [
+        5,
+        17
+      ],
+      "variants": [
+        {
+          "id": "spruce",
+          "label_ru": "Ель",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "Boreal Eurasia",
+            "Canada",
+            "Northern mountains"
+          ],
+          "typical_koppen": [
+            "Dfb",
+            "Dfc",
+            "Dwc",
+            "ET"
+          ],
+          "season_effect": "none"
+        },
+        {
+          "id": "fir",
+          "label_ru": "Пихта",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "mountains Europe",
+            "East Asia",
+            "North America"
+          ],
+          "typical_koppen": [
+            "Cfb",
+            "Dfb",
+            "Dfc"
+          ],
+          "season_effect": "none"
+        },
+        {
+          "id": "larch",
+          "label_ru": "Лиственница",
+          "leaf_habit": "deciduous",
+          "evergreen": false,
+          "natural_or_common_regions": [
+            "Siberia",
+            "Alps",
+            "boreal mountain zones"
+          ],
+          "typical_koppen": [
+            "Dfc",
+            "Dfd",
+            "Dwc",
+            "Dwd"
+          ],
+          "season_effect": "golden_yellow"
+        }
+      ]
+    },
+    {
+      "id": "tree_pine",
+      "file": "tree_pine.glb",
+      "kind": "tree",
+      "name_ru": "Высокоствольная сосна",
+      "geometry_brief_ru": "Высокий оголённый ствол, несколько отдельных хвойных облаков, неровная верхушка",
+      "default_height_m": [
+        5,
+        17
+      ],
+      "variants": [
+        {
+          "id": "scots_pine",
+          "label_ru": "Сосна обыкновенная",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "Europe",
+            "Russia",
+            "temperate Asia"
+          ],
+          "typical_koppen": [
+            "Cfb",
+            "Dfb",
+            "Dfc"
+          ],
+          "season_effect": "none"
+        },
+        {
+          "id": "maritime_pine",
+          "label_ru": "Сосна приморская",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "Portugal",
+            "Western Mediterranean"
+          ],
+          "typical_koppen": [
+            "Csa",
+            "Csb"
+          ],
+          "season_effect": "none"
+        },
+        {
+          "id": "ponderosa_pine",
+          "label_ru": "Сосна пондероза",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "Western North America"
+          ],
+          "typical_koppen": [
+            "BSk",
+            "Dsb",
+            "Dfb"
+          ],
+          "season_effect": "none"
+        },
+        {
+          "id": "east_asian_pine",
+          "label_ru": "Сосна восточноазиатская (напр. японская красная)",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "Japan",
+            "Korea",
+            "China"
+          ],
+          "typical_koppen": [
+            "Cfa",
+            "Cwa",
+            "Dwa"
+          ],
+          "season_effect": "none"
+        },
+        {
+          "id": "loblolly_pine",
+          "label_ru": "Сосна ладанная / юго-востока США",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "Southeastern USA"
+          ],
+          "typical_koppen": [
+            "Cfa"
+          ],
+          "season_effect": "none"
+        },
+        {
+          "id": "jack_pine",
+          "label_ru": "Сосна Банкса",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "Canada",
+            "Northern USA"
+          ],
+          "typical_koppen": [
+            "Dfc",
+            "Dfb"
+          ],
+          "season_effect": "none"
+        },
+        {
+          "id": "nz_podocarp",
+          "label_ru": "Подокарп Новой Зеландии (упрощённый силуэт)",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "New Zealand"
+          ],
+          "typical_koppen": [
+            "Cfb",
+            "Cfc"
+          ],
+          "season_effect": "none"
+        }
+      ]
+    },
+    {
+      "id": "tree_pine_umbrella",
+      "file": "tree_pine_umbrella.glb",
+      "kind": "tree",
+      "name_ru": "Зонтичная пиния",
+      "geometry_brief_ru": "Длинный ствол, плоско-выпуклая раскинутая шапка, различимые ветви снизу",
+      "default_height_m": [
+        5,
+        17
+      ],
+      "variants": [
+        {
+          "id": "stone_pine",
+          "label_ru": "Сосна-пиния",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "Mediterranean",
+            "Portugal",
+            "Italy"
+          ],
+          "typical_koppen": [
+            "Csa",
+            "Csb"
+          ],
+          "season_effect": "none"
+        }
+      ]
+    },
+    {
+      "id": "tree_gnarled",
+      "file": "tree_gnarled.glb",
+      "kind": "tree",
+      "name_ru": "Невысокое корявое дерево",
+      "geometry_brief_ru": "Короткий искривлённый ствол, серо-зелёные небольшие массы листвы, широкая развилка",
+      "default_height_m": [
+        5,
+        17
+      ],
+      "variants": [
+        {
+          "id": "olive",
+          "label_ru": "Олива",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "Mediterranean",
+            "cultivated warm dry regions"
+          ],
+          "typical_koppen": [
+            "Csa",
+            "Csb"
+          ],
+          "season_effect": "none"
+        },
+        {
+          "id": "argan",
+          "label_ru": "Аргания",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "Southwest Morocco"
+          ],
+          "typical_koppen": [
+            "BSh",
+            "Csa"
+          ],
+          "season_effect": "none"
+        },
+        {
+          "id": "mesquite",
+          "label_ru": "Мескит",
+          "leaf_habit": "drought_deciduous",
+          "evergreen": false,
+          "natural_or_common_regions": [
+            "Southwest USA",
+            "Northern Mexico",
+            "dry Americas"
+          ],
+          "typical_koppen": [
+            "BWh",
+            "BSh",
+            "BSk"
+          ],
+          "season_effect": "dry_season_thinning"
+        },
+        {
+          "id": "australian_mallee",
+          "label_ru": "Малле-эвкалипт низкий многоствольный",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "Southern Australia"
+          ],
+          "typical_koppen": [
+            "BSh",
+            "Csa",
+            "Csb"
+          ],
+          "season_effect": "none"
+        },
+        {
+          "id": "tamarisk",
+          "label_ru": "Тамариск вечнозелёного типа",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "Sahara margins",
+            "Middle East arid zones"
+          ],
+          "typical_koppen": [
+            "BWh",
+            "BSh"
+          ],
+          "season_effect": "none"
+        },
+        {
+          "id": "cerrado_tree",
+          "label_ru": "Невысокое корявое дерево серрадо",
+          "leaf_habit": "drought_deciduous",
+          "evergreen": false,
+          "natural_or_common_regions": [
+            "Brazilian cerrado"
+          ],
+          "typical_koppen": [
+            "Aw",
+            "As"
+          ],
+          "season_effect": "dry_season_thinning"
+        }
+      ]
+    },
+    {
+      "id": "tree_acacia",
+      "file": "tree_acacia.glb",
+      "kind": "tree",
+      "name_ru": "Акация с плоской кроной",
+      "geometry_brief_ru": "Несколько извилистых развилок, горизонтально растянутая плоская крона, ажурная листва",
+      "default_height_m": [
+        5,
+        17
+      ],
+      "variants": [
+        {
+          "id": "savanna_acacia",
+          "label_ru": "Акация/вейхеллия саванны",
+          "leaf_habit": "drought_deciduous",
+          "evergreen": false,
+          "natural_or_common_regions": [
+            "East Africa",
+            "Southern Africa",
+            "African savanna"
+          ],
+          "typical_koppen": [
+            "Aw",
+            "BSh"
+          ],
+          "season_effect": "dry_season_thinning"
+        },
+        {
+          "id": "thorn_tree",
+          "label_ru": "Колючее дерево засушливых зон",
+          "leaf_habit": "semi_deciduous",
+          "evergreen": false,
+          "natural_or_common_regions": [
+            "African savanna",
+            "South Asia savanna",
+            "dry tropics"
+          ],
+          "typical_koppen": [
+            "Aw",
+            "BSh"
+          ],
+          "season_effect": "dry_season_thinning"
+        },
+        {
+          "id": "australian_acacia",
+          "label_ru": "Австралийская акация",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "Australia"
+          ],
+          "typical_koppen": [
+            "Aw",
+            "BSh",
+            "Csa",
+            "Csb"
+          ],
+          "season_effect": "none"
+        }
+      ]
+    },
+    {
+      "id": "tree_palm",
+      "file": "tree_palm.glb",
+      "kind": "tree",
+      "name_ru": "Пальма",
+      "geometry_brief_ru": "Высокий слегка изогнутый ствол, отдельные веерные или перистые листья с умеренным low-poly сегментированием",
+      "default_height_m": [
+        5,
+        17
+      ],
+      "variants": [
+        {
+          "id": "date_palm",
+          "label_ru": "Финиковая пальма",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "North Africa oases",
+            "Arabian Peninsula",
+            "Middle East"
+          ],
+          "typical_koppen": [
+            "BWh",
+            "BSh",
+            "Csa"
+          ],
+          "season_effect": "none"
+        },
+        {
+          "id": "coconut_palm",
+          "label_ru": "Кокосовая пальма",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "Tropical coasts",
+            "Caribbean",
+            "South and Southeast Asia"
+          ],
+          "typical_koppen": [
+            "Af",
+            "Am",
+            "Aw"
+          ],
+          "season_effect": "none"
+        },
+        {
+          "id": "fan_palm",
+          "label_ru": "Веерная пальма",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "Mediterranean cities",
+            "California",
+            "Southwestern USA"
+          ],
+          "typical_koppen": [
+            "Csa",
+            "Csb",
+            "BSh"
+          ],
+          "season_effect": "none"
+        },
+        {
+          "id": "oil_palm",
+          "label_ru": "Масличная/тропическая пальма",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "humid tropical Africa",
+            "Southeast Asia plantations"
+          ],
+          "typical_koppen": [
+            "Af",
+            "Am"
+          ],
+          "season_effect": "none"
+        }
+      ]
+    },
+    {
+      "id": "tree_tropical",
+      "file": "tree_tropical.glb",
+      "kind": "tree",
+      "name_ru": "Крупное тропическое дерево",
+      "geometry_brief_ru": "Высокий прямой ствол, ярусная крупная крона, опциональные досковидные корни",
+      "default_height_m": [
+        5,
+        17
+      ],
+      "variants": [
+        {
+          "id": "rainforest_canopy",
+          "label_ru": "Высокое дерево дождевого леса",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "Amazon",
+            "Congo",
+            "Southeast Asian rainforest"
+          ],
+          "typical_koppen": [
+            "Af",
+            "Am"
+          ],
+          "season_effect": "none"
+        },
+        {
+          "id": "tropical_dry_tree",
+          "label_ru": "Тропическое сезонно-листопадное дерево",
+          "leaf_habit": "drought_deciduous",
+          "evergreen": false,
+          "natural_or_common_regions": [
+            "tropical dry forests Africa",
+            "India",
+            "Central America"
+          ],
+          "typical_koppen": [
+            "Aw",
+            "As"
+          ],
+          "season_effect": "dry_season_loss"
+        },
+        {
+          "id": "rainforest_ficus",
+          "label_ru": "Тропическое дерево типа фикуса",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "humid tropics",
+            "monsoon tropics"
+          ],
+          "typical_koppen": [
+            "Af",
+            "Am"
+          ],
+          "season_effect": "none"
+        }
+      ]
+    },
+    {
+      "id": "tree_eucalyptus",
+      "file": "tree_eucalyptus.glb",
+      "kind": "tree",
+      "name_ru": "Эвкалипт",
+      "geometry_brief_ru": "Светлая пятнистая кора, высокие кривые ветви, вытянутая полупрозрачная крона",
+      "default_height_m": [
+        5,
+        17
+      ],
+      "variants": [
+        {
+          "id": "eucalyptus",
+          "label_ru": "Эвкалипт",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "Australia",
+            "Portugal introduced",
+            "Mediterranean plantations",
+            "South America introduced"
+          ],
+          "typical_koppen": [
+            "Cfa",
+            "Cfb",
+            "Csa",
+            "Csb",
+            "Aw",
+            "BSh"
+          ],
+          "season_effect": "none"
+        }
+      ]
+    },
+    {
+      "id": "bush_round",
+      "file": "bush_round.glb",
+      "kind": "shrub",
+      "name_ru": "Округлый куст",
+      "geometry_brief_ru": "3–5 несимметричных масс листвы, низкий объём, без длинного ствола",
+      "default_height_m": [
+        0.4,
+        2.0
+      ],
+      "variants": [
+        {
+          "id": "boxwood",
+          "label_ru": "Самшит",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "temperate Europe cities",
+            "Mediterranean cities"
+          ],
+          "typical_koppen": [
+            "Cfa",
+            "Cfb",
+            "Csa"
+          ],
+          "season_effect": "none"
+        },
+        {
+          "id": "hazel_shrub",
+          "label_ru": "Лещина",
+          "leaf_habit": "deciduous",
+          "evergreen": false,
+          "natural_or_common_regions": [
+            "European temperate forests",
+            "forest edges"
+          ],
+          "typical_koppen": [
+            "Cfb",
+            "Dfb"
+          ],
+          "season_effect": "yellow"
+        },
+        {
+          "id": "rhododendron",
+          "label_ru": "Рододендрон",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "humid temperate Asia",
+            "temperate ornamental plantings"
+          ],
+          "typical_koppen": [
+            "Cfa",
+            "Cfb"
+          ],
+          "season_effect": "none"
+        },
+        {
+          "id": "tropical_shrub",
+          "label_ru": "Густой тропический куст",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "humid tropical cities",
+            "rainforest understorey"
+          ],
+          "typical_koppen": [
+            "Af",
+            "Am",
+            "Aw"
+          ],
+          "season_effect": "none"
+        },
+        {
+          "id": "tundra_dwarf_willow",
+          "label_ru": "Карликовая ива",
+          "leaf_habit": "deciduous",
+          "evergreen": false,
+          "natural_or_common_regions": [
+            "Arctic tundra",
+            "subarctic"
+          ],
+          "typical_koppen": [
+            "ET"
+          ],
+          "season_effect": "yellow"
+        }
+      ]
+    },
+    {
+      "id": "bush_dry",
+      "file": "bush_dry.glb",
+      "kind": "shrub",
+      "name_ru": "Разреженный сухолюбивый куст",
+      "geometry_brief_ru": "Небольшие ветвистые объёмы с просветами, сероватая/сизая листва",
+      "default_height_m": [
+        0.4,
+        2.0
+      ],
+      "variants": [
+        {
+          "id": "rosemary",
+          "label_ru": "Розмарин",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "Mediterranean"
+          ],
+          "typical_koppen": [
+            "Csa",
+            "Csb"
+          ],
+          "season_effect": "none"
+        },
+        {
+          "id": "cistus",
+          "label_ru": "Ладанник",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "Mediterranean"
+          ],
+          "typical_koppen": [
+            "Csa",
+            "Csb"
+          ],
+          "season_effect": "none"
+        },
+        {
+          "id": "sagebrush",
+          "label_ru": "Полынь кустарниковая",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "Western North America steppe"
+          ],
+          "typical_koppen": [
+            "BSk",
+            "BWk"
+          ],
+          "season_effect": "none"
+        },
+        {
+          "id": "saltbush",
+          "label_ru": "Солянка/атриплекс",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "dry deserts and semi-deserts"
+          ],
+          "typical_koppen": [
+            "BWh",
+            "BWk",
+            "BSh",
+            "BSk"
+          ],
+          "season_effect": "none"
+        },
+        {
+          "id": "desert_creosote",
+          "label_ru": "Креозотовый куст",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "Sonoran/Mojave deserts"
+          ],
+          "typical_koppen": [
+            "BWh",
+            "BWk"
+          ],
+          "season_effect": "none"
+        },
+        {
+          "id": "australian_heath",
+          "label_ru": "Австралийский склерофильный куст",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "Australia"
+          ],
+          "typical_koppen": [
+            "Csa",
+            "Csb",
+            "BSh"
+          ],
+          "season_effect": "none"
+        },
+        {
+          "id": "chaparral_shrub",
+          "label_ru": "Чапарраль, плотный сухолюбивый куст",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "California chaparral"
+          ],
+          "typical_koppen": [
+            "Csa",
+            "Csb"
+          ],
+          "season_effect": "none"
+        }
+      ]
+    },
+    {
+      "id": "grass_tuft",
+      "file": "grass_tuft.glb",
+      "kind": "groundcover",
+      "name_ru": "Кустик травы/осоки",
+      "geometry_brief_ru": "8–18 клиновидных листьев/плоскостей на один пучок, без визуально плоских крестовин",
+      "default_height_m": [
+        0.2,
+        1.1
+      ],
+      "variants": [
+        {
+          "id": "temperate_grass",
+          "label_ru": "Умеренные злаки",
+          "leaf_habit": "seasonal",
+          "evergreen": false,
+          "natural_or_common_regions": [
+            "temperate meadows",
+            "steppe",
+            "prairie"
+          ],
+          "typical_koppen": [
+            "BSk",
+            "Cfb",
+            "Dfa",
+            "Dfb"
+          ],
+          "season_effect": "winter_dormant"
+        },
+        {
+          "id": "savanna_grass",
+          "label_ru": "Саванновые злаки",
+          "leaf_habit": "seasonal",
+          "evergreen": false,
+          "natural_or_common_regions": [
+            "African savanna",
+            "South American savanna",
+            "Northern Australia"
+          ],
+          "typical_koppen": [
+            "Aw",
+            "As",
+            "BSh"
+          ],
+          "season_effect": "dry_season_gold"
+        },
+        {
+          "id": "tundra_sedge",
+          "label_ru": "Тундровая осока",
+          "leaf_habit": "seasonal",
+          "evergreen": false,
+          "natural_or_common_regions": [
+            "Arctic tundra"
+          ],
+          "typical_koppen": [
+            "ET"
+          ],
+          "season_effect": "winter_dormant"
+        },
+        {
+          "id": "tropical_fern",
+          "label_ru": "Тропический папоротник, упрощённая модель",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "Tropical rainforest understorey"
+          ],
+          "typical_koppen": [
+            "Af",
+            "Am"
+          ],
+          "season_effect": "none"
+        }
+      ]
+    },
+    {
+      "id": "succulent",
+      "file": "succulent.glb",
+      "kind": "shrub",
+      "name_ru": "Суккулент/кактус",
+      "geometry_brief_ru": "Один базовый центр и модульные толстые листья или подушечки; агаву и опунцию делать вариантами разных листовых модулей",
+      "default_height_m": [
+        0.4,
+        2.0
+      ],
+      "variants": [
+        {
+          "id": "agave",
+          "label_ru": "Агава",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "Mexico",
+            "Southwestern USA",
+            "Mediterranean ornamental"
+          ],
+          "typical_koppen": [
+            "BWh",
+            "BSh",
+            "Csa"
+          ],
+          "season_effect": "none"
+        },
+        {
+          "id": "prickly_pear",
+          "label_ru": "Опунция",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "Americas deserts",
+            "Mediterranean introduced"
+          ],
+          "typical_koppen": [
+            "BWh",
+            "BSh",
+            "Csa"
+          ],
+          "season_effect": "none"
+        },
+        {
+          "id": "aloe",
+          "label_ru": "Алоэ",
+          "leaf_habit": "evergreen",
+          "evergreen": true,
+          "natural_or_common_regions": [
+            "Southern Africa",
+            "arid subtropics"
+          ],
+          "typical_koppen": [
+            "BSh",
+            "BWh"
+          ],
+          "season_effect": "none"
+        }
+      ]
+    }
+  ],
+  "climate_presets": [
+    {
+      "id": "equatorial_rainforest",
+      "name_ru": "Влажный экваториальный лес",
+      "koppen": [
+        "Af",
+        "Am"
+      ],
+      "latitude_absolute_hint": [
+        0,
+        15
+      ],
+      "geography_ru": "Амазония, Конго, Индонезия; пальмы — выборочно и с региональной коррекцией",
+      "tree_mix": [
+        {
+          "variant": "rainforest_canopy",
+          "weight": 45
+        },
+        {
+          "variant": "rainforest_ficus",
+          "weight": 25
+        },
+        {
+          "variant": "coconut_palm",
+          "weight": 15
+        },
+        {
+          "variant": "oil_palm",
+          "weight": 15
+        }
+      ],
+      "understory_mix": [
+        {
+          "variant": "tropical_shrub",
+          "weight": 60
+        },
+        {
+          "variant": "tropical_fern",
+          "weight": 40
+        }
+      ],
+      "notes_ru": "Близ рек и на заболоченных местах нужны отдельные пресеты; не размещать крупные кроны на дорогах."
+    },
+    {
+      "id": "tropical_savanna_africa",
+      "name_ru": "Африканская саванна",
+      "koppen": [
+        "Aw",
+        "BSh"
+      ],
+      "latitude_absolute_hint": [
+        5,
+        25
+      ],
+      "geography_ru": "Восточная и южная Африка",
+      "tree_mix": [
+        {
+          "variant": "savanna_acacia",
+          "weight": 65
+        },
+        {
+          "variant": "thorn_tree",
+          "weight": 20
+        },
+        {
+          "variant": "tropical_dry_tree",
+          "weight": 15
+        }
+      ],
+      "understory_mix": [
+        {
+          "variant": "savanna_grass",
+          "weight": 75
+        },
+        {
+          "variant": "saltbush",
+          "weight": 25
+        }
+      ],
+      "notes_ru": "Редкие деревья, доминируют высокие травы; листва может редеть в сухой сезон."
+    },
+    {
+      "id": "tropical_savanna_americas",
+      "name_ru": "Американская саванна",
+      "koppen": [
+        "Aw",
+        "As"
+      ],
+      "latitude_absolute_hint": [
+        0,
+        25
+      ],
+      "geography_ru": "Льянос, серрадо (визуально упрощённый пресет), часть Центральной Америки",
+      "tree_mix": [
+        {
+          "variant": "cerrado_tree",
+          "weight": 45
+        },
+        {
+          "variant": "tropical_dry_tree",
+          "weight": 35
+        },
+        {
+          "variant": "rainforest_ficus",
+          "weight": 20
+        }
+      ],
+      "understory_mix": [
+        {
+          "variant": "savanna_grass",
+          "weight": 70
+        },
+        {
+          "variant": "tropical_shrub",
+          "weight": 30
+        }
+      ],
+      "notes_ru": "Не вставлять африканские баобабы или восточноафриканские акации по умолчанию."
+    },
+    {
+      "id": "tropical_savanna_australia",
+      "name_ru": "Австралийская саванна",
+      "koppen": [
+        "Aw",
+        "BSh"
+      ],
+      "latitude_absolute_hint": [
+        10,
+        25
+      ],
+      "geography_ru": "Север Австралии",
+      "tree_mix": [
+        {
+          "variant": "eucalyptus",
+          "weight": 70
+        },
+        {
+          "variant": "australian_acacia",
+          "weight": 20
+        },
+        {
+          "variant": "fan_palm",
+          "weight": 10
+        }
+      ],
+      "understory_mix": [
+        {
+          "variant": "savanna_grass",
+          "weight": 75
+        },
+        {
+          "variant": "saltbush",
+          "weight": 25
+        }
+      ],
+      "notes_ru": "Эвкалипты доминируют; пальмы в подходящих влажных участках."
+    },
+    {
+      "id": "hot_desert_africa_arabia",
+      "name_ru": "Пустыня Северной Африки и Аравии",
+      "koppen": [
+        "BWh",
+        "BSh"
+      ],
+      "latitude_absolute_hint": [
+        15,
+        35
+      ],
+      "geography_ru": "Сахара, Аравийский полуостров; аргания только для юго-запада Марокко",
+      "tree_mix": [
+        {
+          "variant": "thorn_tree",
+          "weight": 50
+        },
+        {
+          "variant": "date_palm",
+          "weight": 30
+        },
+        {
+          "variant": "tamarisk",
+          "weight": 20
+        }
+      ],
+      "understory_mix": [
+        {
+          "variant": "saltbush",
+          "weight": 75
+        },
+        {
+          "variant": "savanna_grass",
+          "weight": 25
+        }
+      ],
+      "notes_ru": "Очень низкая плотность; финиковые пальмы только у воды/посадок; голый песок преобладает."
+    },
+    {
+      "id": "hot_desert_american",
+      "name_ru": "Пустыни Америки",
+      "koppen": [
+        "BWh",
+        "BWk",
+        "BSh"
+      ],
+      "latitude_absolute_hint": [
+        18,
+        40
+      ],
+      "geography_ru": "Юго-запад США, север Мексики",
+      "tree_mix": [
+        {
+          "variant": "mesquite",
+          "weight": 75
+        },
+        {
+          "variant": "cottonwood",
+          "weight": 15
+        },
+        {
+          "variant": "fan_palm",
+          "weight": 10
+        }
+      ],
+      "understory_mix": [
+        {
+          "variant": "agave",
+          "weight": 30
+        },
+        {
+          "variant": "prickly_pear",
+          "weight": 30
+        },
+        {
+          "variant": "desert_creosote",
+          "weight": 40
+        }
+      ],
+      "notes_ru": "Мескит и кусты; кактусы только в Америке и в декоративных посадках. Cottonwood — лишь вдоль рек/в оазисах, веерная пальма — оазисы/городские посадки."
+    },
+    {
+      "id": "mediterranean_europe",
+      "name_ru": "Средиземноморье Европа",
+      "koppen": [
+        "Csa",
+        "Csb"
+      ],
+      "latitude_absolute_hint": [
+        30,
+        46
+      ],
+      "geography_ru": "Португалия, Испания, Италия, Греция, побережья Средиземноморья",
+      "tree_mix": [
+        {
+          "variant": "olive",
+          "weight": 30
+        },
+        {
+          "variant": "stone_pine",
+          "weight": 30
+        },
+        {
+          "variant": "cork_oak",
+          "weight": 25
+        },
+        {
+          "variant": "med_cypress",
+          "weight": 15
+        }
+      ],
+      "understory_mix": [
+        {
+          "variant": "rosemary",
+          "weight": 60
+        },
+        {
+          "variant": "cistus",
+          "weight": 40
+        }
+      ],
+      "notes_ru": "Низкая плотность, отдельные рощи олив, пиний и пробковых дубов."
+    },
+    {
+      "id": "mediterranean_california",
+      "name_ru": "Калифорнийское Средиземноморье",
+      "koppen": [
+        "Csa",
+        "Csb"
+      ],
+      "latitude_absolute_hint": [
+        30,
+        43
+      ],
+      "geography_ru": "Побережье и внутренние долины Калифорнии; сосна пондероза ближе к горам",
+      "tree_mix": [
+        {
+          "variant": "california_live_oak",
+          "weight": 55
+        },
+        {
+          "variant": "ponderosa_pine",
+          "weight": 25
+        },
+        {
+          "variant": "fan_palm",
+          "weight": 20
+        }
+      ],
+      "understory_mix": [
+        {
+          "variant": "chaparral_shrub",
+          "weight": 75
+        },
+        {
+          "variant": "sagebrush",
+          "weight": 25
+        }
+      ],
+      "notes_ru": "Местные дубы/чапарраль, пальмы преимущественно городские посадки."
+    },
+    {
+      "id": "mediterranean_south_australia",
+      "name_ru": "Сухой юг и запад Австралии",
+      "koppen": [
+        "Csa",
+        "Csb"
+      ],
+      "latitude_absolute_hint": [
+        28,
+        39
+      ],
+      "geography_ru": "Юго-запад и юг Австралии; не считать розмарин аборигенным",
+      "tree_mix": [
+        {
+          "variant": "eucalyptus",
+          "weight": 75
+        },
+        {
+          "variant": "australian_mallee",
+          "weight": 25
+        }
+      ],
+      "understory_mix": [
+        {
+          "variant": "australian_heath",
+          "weight": 70
+        },
+        {
+          "variant": "saltbush",
+          "weight": 30
+        }
+      ],
+      "notes_ru": "Малле-эвкалипты, высокие эвкалипты и местный склерофильный кустарник; без средиземноморских европейских пород."
+    },
+    {
+      "id": "humid_subtropical_east_asia",
+      "name_ru": "Влажные субтропики Восточной Азии",
+      "koppen": [
+        "Cfa",
+        "Cwa"
+      ],
+      "latitude_absolute_hint": [
+        20,
+        38
+      ],
+      "geography_ru": "Южный Китай, Япония, Корея (локально), Тайвань",
+      "tree_mix": [
+        {
+          "variant": "ficus",
+          "weight": 25
+        },
+        {
+          "variant": "oak",
+          "weight": 25
+        },
+        {
+          "variant": "east_asian_pine",
+          "weight": 30
+        },
+        {
+          "variant": "fan_palm",
+          "weight": 20
+        }
+      ],
+      "understory_mix": [
+        {
+          "variant": "rhododendron",
+          "weight": 60
+        },
+        {
+          "variant": "tropical_shrub",
+          "weight": 40
+        }
+      ],
+      "notes_ru": "Сочетание широколиственных вечнозелёных и листопадных; пальмы чаще в более тёплой части."
+    },
+    {
+      "id": "humid_subtropical_southeast_us",
+      "name_ru": "Влажные субтропики юго-востока США",
+      "koppen": [
+        "Cfa"
+      ],
+      "latitude_absolute_hint": [
+        25,
+        38
+      ],
+      "geography_ru": "Юго-восток США; пондерозу заменять местной сосной при расширении ассетов",
+      "tree_mix": [
+        {
+          "variant": "live_oak",
+          "weight": 35
+        },
+        {
+          "variant": "oak",
+          "weight": 25
+        },
+        {
+          "variant": "maple",
+          "weight": 15
+        },
+        {
+          "variant": "loblolly_pine",
+          "weight": 25
+        }
+      ],
+      "understory_mix": [
+        {
+          "variant": "boxwood",
+          "weight": 45
+        },
+        {
+          "variant": "rhododendron",
+          "weight": 55
+        }
+      ],
+      "notes_ru": "Вечнозелёные живые дубы и сосна ладанная, рядом листопадные дубы/клёны; точные пропорции зависят от локации."
+    },
+    {
+      "id": "humid_subtropical_south_america",
+      "name_ru": "Влажные субтропики Южной Америки",
+      "koppen": [
+        "Cfa"
+      ],
+      "latitude_absolute_hint": [
+        20,
+        38
+      ],
+      "geography_ru": "Южная Бразилия, Уругвай, северо-восток Аргентины; эвкалипт часто интродуцент",
+      "tree_mix": [
+        {
+          "variant": "south_america_subtropical",
+          "weight": 40
+        },
+        {
+          "variant": "rainforest_ficus",
+          "weight": 20
+        },
+        {
+          "variant": "tropical_dry_tree",
+          "weight": 25
+        },
+        {
+          "variant": "eucalyptus",
+          "weight": 15
+        }
+      ],
+      "understory_mix": [
+        {
+          "variant": "tropical_shrub",
+          "weight": 70
+        },
+        {
+          "variant": "temperate_grass",
+          "weight": 30
+        }
+      ],
+      "notes_ru": "Эвкалипт только в посадках и интродукции, не как доминирующая естественная флора."
+    },
+    {
+      "id": "temperate_oceanic_europe",
+      "name_ru": "Мягкий умеренный климат Европы",
+      "koppen": [
+        "Cfb",
+        "Cfc"
+      ],
+      "latitude_absolute_hint": [
+        40,
+        62
+      ],
+      "geography_ru": "Западная и центральная Европа",
+      "tree_mix": [
+        {
+          "variant": "oak",
+          "weight": 30
+        },
+        {
+          "variant": "beech",
+          "weight": 30
+        },
+        {
+          "variant": "linden",
+          "weight": 20
+        },
+        {
+          "variant": "birch",
+          "weight": 20
+        }
+      ],
+      "understory_mix": [
+        {
+          "variant": "hazel_shrub",
+          "weight": 60
+        },
+        {
+          "variant": "temperate_grass",
+          "weight": 40
+        }
+      ],
+      "notes_ru": "В городах платаны и липы, вне города более естественные дубы, буки, берёзы."
+    },
+    {
+      "id": "temperate_continental_eurasia",
+      "name_ru": "Умеренный континентальный лес Евразии",
+      "koppen": [
+        "Dfa",
+        "Dfb",
+        "Dwa",
+        "Dwb"
+      ],
+      "latitude_absolute_hint": [
+        42,
+        60
+      ],
+      "geography_ru": "Восточная Европа, Россия, северная Азия",
+      "tree_mix": [
+        {
+          "variant": "birch",
+          "weight": 30
+        },
+        {
+          "variant": "scots_pine",
+          "weight": 25
+        },
+        {
+          "variant": "oak",
+          "weight": 25
+        },
+        {
+          "variant": "spruce",
+          "weight": 20
+        }
+      ],
+      "understory_mix": [
+        {
+          "variant": "hazel_shrub",
+          "weight": 40
+        },
+        {
+          "variant": "temperate_grass",
+          "weight": 60
+        }
+      ],
+      "notes_ru": "Различать естественный смешанный лес и регулярные городские посадки."
+    },
+    {
+      "id": "temperate_continental_n_america",
+      "name_ru": "Умеренные леса Северной Америки",
+      "koppen": [
+        "Dfa",
+        "Dfb",
+        "Cfa"
+      ],
+      "latitude_absolute_hint": [
+        38,
+        55
+      ],
+      "geography_ru": "Восток США, южная Канада",
+      "tree_mix": [
+        {
+          "variant": "maple",
+          "weight": 35
+        },
+        {
+          "variant": "oak",
+          "weight": 30
+        },
+        {
+          "variant": "birch",
+          "weight": 20
+        },
+        {
+          "variant": "spruce",
+          "weight": 15
+        }
+      ],
+      "understory_mix": [
+        {
+          "variant": "hazel_shrub",
+          "weight": 30
+        },
+        {
+          "variant": "temperate_grass",
+          "weight": 70
+        }
+      ],
+      "notes_ru": "Осенний клён — узнаваемый акцент."
+    },
+    {
+      "id": "continental_steppe_eurasia",
+      "name_ru": "Степь Евразии",
+      "koppen": [
+        "BSk"
+      ],
+      "latitude_absolute_hint": [
+        35,
+        55
+      ],
+      "geography_ru": "Казахстан, юг России, степная Украина, Монголия",
+      "tree_mix": [
+        {
+          "variant": "lombardy_poplar",
+          "weight": 45
+        },
+        {
+          "variant": "willow",
+          "weight": 30
+        },
+        {
+          "variant": "scots_pine",
+          "weight": 25
+        }
+      ],
+      "understory_mix": [
+        {
+          "variant": "temperate_grass",
+          "weight": 70
+        },
+        {
+          "variant": "saltbush",
+          "weight": 30
+        }
+      ],
+      "notes_ru": "Деревья преимущественно вдоль рек, оврагов и населённых пунктов."
+    },
+    {
+      "id": "continental_prairie_n_america",
+      "name_ru": "Прерии Северной Америки",
+      "koppen": [
+        "BSk",
+        "Dfa"
+      ],
+      "latitude_absolute_hint": [
+        32,
+        53
+      ],
+      "geography_ru": "Великие равнины США и Канады; тополь использовать как форму для местных видов",
+      "tree_mix": [
+        {
+          "variant": "oak",
+          "weight": 35
+        },
+        {
+          "variant": "cottonwood",
+          "weight": 45
+        },
+        {
+          "variant": "willow",
+          "weight": 20
+        }
+      ],
+      "understory_mix": [
+        {
+          "variant": "temperate_grass",
+          "weight": 70
+        },
+        {
+          "variant": "sagebrush",
+          "weight": 30
+        }
+      ],
+      "notes_ru": "Открытая травяная местность; деревья у воды и в городских посадках."
+    },
+    {
+      "id": "boreal_eurasia",
+      "name_ru": "Тайга Евразии",
+      "koppen": [
+        "Dfc",
+        "Dfd",
+        "Dwc",
+        "Dwd"
+      ],
+      "latitude_absolute_hint": [
+        50,
+        72
+      ],
+      "geography_ru": "Северная Европа, Сибирь",
+      "tree_mix": [
+        {
+          "variant": "spruce",
+          "weight": 35
+        },
+        {
+          "variant": "scots_pine",
+          "weight": 25
+        },
+        {
+          "variant": "larch",
+          "weight": 25
+        },
+        {
+          "variant": "birch",
+          "weight": 15
+        }
+      ],
+      "understory_mix": [
+        {
+          "variant": "tundra_dwarf_willow",
+          "weight": 30
+        },
+        {
+          "variant": "tundra_sedge",
+          "weight": 70
+        }
+      ],
+      "notes_ru": "Зимой хвоя елей/сосен остаётся, лиственница становится голой."
+    },
+    {
+      "id": "boreal_n_america",
+      "name_ru": "Тайга Северной Америки",
+      "koppen": [
+        "Dfc",
+        "Dsc"
+      ],
+      "latitude_absolute_hint": [
+        50,
+        70
+      ],
+      "geography_ru": "Канада, Аляска; сосна — визуальный заменитель местных хвойных",
+      "tree_mix": [
+        {
+          "variant": "spruce",
+          "weight": 50
+        },
+        {
+          "variant": "fir",
+          "weight": 25
+        },
+        {
+          "variant": "birch",
+          "weight": 15
+        },
+        {
+          "variant": "jack_pine",
+          "weight": 10
+        }
+      ],
+      "understory_mix": [
+        {
+          "variant": "tundra_dwarf_willow",
+          "weight": 30
+        },
+        {
+          "variant": "tundra_sedge",
+          "weight": 70
+        }
+      ],
+      "notes_ru": "Ель, пихта, берёза, сосна Банкса; хвойные evergreen, берёза deciduous."
+    },
+    {
+      "id": "southern_temperate_chile_argentina",
+      "name_ru": "Умеренные южные леса Чили/Аргентины",
+      "koppen": [
+        "Cfb",
+        "Cfc"
+      ],
+      "latitude_absolute_hint": [
+        35,
+        57
+      ],
+      "geography_ru": "Юг Чили и Аргентины, включая районы Вальдивийских лесов",
+      "tree_mix": [
+        {
+          "variant": "southern_beech",
+          "weight": 40
+        },
+        {
+          "variant": "southern_beech_evergreen",
+          "weight": 60
+        }
+      ],
+      "understory_mix": [
+        {
+          "variant": "tropical_shrub",
+          "weight": 35
+        },
+        {
+          "variant": "temperate_grass",
+          "weight": 65
+        }
+      ],
+      "notes_ru": "Есть вечнозелёные и листопадные нотофагусы; не подмешивать североамериканские ели или австралийские эвкалипты."
+    },
+    {
+      "id": "tundra",
+      "name_ru": "Тундра",
+      "koppen": [
+        "ET"
+      ],
+      "latitude_absolute_hint": [
+        60,
+        85
+      ],
+      "geography_ru": "Арктические территории; широта сильно зависит от океана и высоты",
+      "tree_mix": [],
+      "understory_mix": [
+        {
+          "variant": "tundra_dwarf_willow",
+          "weight": 45
+        },
+        {
+          "variant": "tundra_sedge",
+          "weight": 55
+        }
+      ],
+      "notes_ru": "НЕТ полноразмерных деревьев; карликовые кусты и травы, очень редкая растительность."
+    },
+    {
+      "id": "polar_ice",
+      "name_ru": "Полярные льды",
+      "koppen": [
+        "EF"
+      ],
+      "latitude_absolute_hint": [
+        65,
+        90
+      ],
+      "geography_ru": "Антарктический щит, Гренландский ледниковый щит",
+      "tree_mix": [],
+      "understory_mix": [],
+      "notes_ru": "По умолчанию vegetationDensity=0."
+    },
+    {
+      "id": "southern_temperate_new_zealand",
+      "name_ru": "Умеренные леса Новой Зеландии",
+      "koppen": [
+        "Cfb",
+        "Cfc"
+      ],
+      "latitude_absolute_hint": [
+        34,
+        48
+      ],
+      "geography_ru": "Новая Зеландия",
+      "tree_mix": [
+        {
+          "variant": "nz_beech",
+          "weight": 45
+        },
+        {
+          "variant": "nz_podocarp",
+          "weight": 30
+        },
+        {
+          "variant": "nz_evergreen_broadleaf",
+          "weight": 25
+        }
+      ],
+      "understory_mix": [
+        {
+          "variant": "tropical_fern",
+          "weight": 35
+        },
+        {
+          "variant": "tropical_shrub",
+          "weight": 65
+        }
+      ],
+      "notes_ru": "Многие местные деревья вечнозелёные; эвкалипты — только интродукция/посадки."
+    },
+    {
+      "id": "southern_temperate_tasmania",
+      "name_ru": "Умеренные леса Тасмании",
+      "koppen": [
+        "Cfb",
+        "Cfc"
+      ],
+      "latitude_absolute_hint": [
+        40,
+        44
+      ],
+      "geography_ru": "Тасмания, Австралия",
+      "tree_mix": [
+        {
+          "variant": "eucalyptus",
+          "weight": 60
+        },
+        {
+          "variant": "southern_beech_evergreen",
+          "weight": 25
+        },
+        {
+          "variant": "southern_beech",
+          "weight": 15
+        }
+      ],
+      "understory_mix": [
+        {
+          "variant": "australian_heath",
+          "weight": 45
+        },
+        {
+          "variant": "tropical_fern",
+          "weight": 55
+        }
+      ],
+      "notes_ru": "Эвкалипты и нотофагусы, в том числе вечнозелёные и листопадные."
+    }
+  ],
+  "latitude_fallback": [
+    {
+      "abs_lat": [
+        0,
+        12
+      ],
+      "pick_climate_then": [
+        "equatorial_rainforest",
+        "tropical_savanna_africa",
+        "tropical_savanna_americas"
+      ]
+    },
+    {
+      "abs_lat": [
+        12,
+        25
+      ],
+      "pick_climate_then": [
+        "tropical_savanna_africa",
+        "hot_desert_africa_arabia",
+        "tropical_savanna_australia"
+      ]
+    },
+    {
+      "abs_lat": [
+        25,
+        35
+      ],
+      "pick_climate_then": [
+        "mediterranean_europe",
+        "hot_desert_american",
+        "humid_subtropical_east_asia"
+      ]
+    },
+    {
+      "abs_lat": [
+        35,
+        45
+      ],
+      "pick_climate_then": [
+        "temperate_oceanic_europe",
+        "mediterranean_europe",
+        "continental_steppe_eurasia",
+        "southern_temperate_chile_argentina"
+      ]
+    },
+    {
+      "abs_lat": [
+        45,
+        60
+      ],
+      "pick_climate_then": [
+        "temperate_continental_eurasia",
+        "temperate_continental_n_america",
+        "southern_temperate_chile_argentina",
+        "southern_temperate_chile_argentina"
+      ]
+    },
+    {
+      "abs_lat": [
+        60,
+        72
+      ],
+      "pick_climate_then": [
+        "boreal_eurasia",
+        "boreal_n_america",
+        "tundra"
+      ]
+    },
+    {
+      "abs_lat": [
+        72,
+        90
+      ],
+      "pick_climate_then": [
+        "tundra",
+        "polar_ice"
+      ]
+    }
+  ],
+  "site_modifiers": {
+    "near_river": [
+      "willow",
+      "alder",
+      "cottonwood",
+      "lombardy_poplar"
+    ],
+    "dry_exposed": [
+      "olive",
+      "savanna_acacia",
+      "mesquite",
+      "saltbush"
+    ],
+    "urban_streets": [
+      "plane_tree",
+      "linden",
+      "maple",
+      "boxwood"
+    ],
+    "mediterranean_urban": [
+      "plane_tree",
+      "med_cypress",
+      "fan_palm",
+      "stone_pine"
+    ],
+    "wet_tropical_urban": [
+      "ficus",
+      "coconut_palm",
+      "tropical_shrub"
+    ],
+    "wetland_note_ru": "Мангровые заросли нужны как отдельная дополнительная модель с опорными корнями, если игра детально показывает тропические побережья.",
+    "warm_urban_introduced": [
+      "fan_palm",
+      "eucalyptus",
+      "plane_tree"
+    ]
+  },
+  "optional_future_models": [
+    {
+      "id": "tree_baobab",
+      "why_ru": "Очень узнаваемый силуэт: раздутый ствол и маленькая крона; акация плохо его заменяет",
+      "leaf_habit": "drought_deciduous",
+      "region": "Madagascar, mainland African savannas (different species)"
+    },
+    {
+      "id": "tree_mangrove",
+      "why_ru": "Ходульные/воздушные корни принципиально не воспроизводятся обычным тропическим деревом",
+      "leaf_habit": "evergreen",
+      "region": "Tropical tidal coasts"
+    },
+    {
+      "id": "tree_weeping_willow",
+      "why_ru": "Поникающие ветви узнаваемее, чем базовая берёза",
+      "leaf_habit": "deciduous",
+      "region": "Temperate riverbanks and parks"
+    },
+    {
+      "id": "tree_cactus_saguaro",
+      "why_ru": "Узнаваемые гигантские столбовидные кактусы пустыни Сонора",
+      "leaf_habit": "evergreen",
+      "region": "Sonoran Desert"
+    }
+  ],
+  "recommended_build_order": [
+    "tree_round",
+    "tree_spreading",
+    "tree_spruce",
+    "tree_pine",
+    "tree_palm",
+    "tree_columnar",
+    "bush_round",
+    "bush_dry",
+    "tree_birch_airy",
+    "tree_pine_umbrella",
+    "tree_gnarled",
+    "tree_acacia",
+    "tree_tropical",
+    "tree_eucalyptus",
+    "grass_tuft",
+    "succulent"
+  ],
+  "source_urls": [
+    "https://www.nature.com/articles/s41597-023-02549-6",
+    "https://www.fs.usda.gov/rm/pubs/rmrs_gtr346.pdf",
+    "https://libanswers.nybg.org/faq/222759"
+  ],
+  "implementation_brief_for_claude_ru": "Создай базовые 16 GLB, затем таблицу материалов/модификаторов формы для variants. Не создавай отдельный GLB для каждого variant, если силуэт можно получить параметрами. Реализуй selectVegetationPreset(latitude,longitude,koppen,region,biome,altitude,nearWater,landUse) и сезонные состояния. Для каждого климато-регионального пресета размещай не более 4 вариантов деревьев в случайной взвешенной смеси. Если география противоречит региону, географию считать приоритетной: например, Новая Зеландия ≠ Чили даже при одинаковом Cfb."
+}

@@ -1,0 +1,468 @@
+{
+  "schemaVersion": "1.0",
+  "project": "World city simulator — architecture skins",
+  "purpose": "Применять архитектурный стиль к одной и той же процедурной геометрии зданий, без перестройки мешей",
+  "baseGeometryPolicy": {
+    "keepUnchanged": [
+      "building footprint",
+      "height",
+      "number of floors",
+      "roof pitch and outline",
+      "door/window positions",
+      "road geometry"
+    ],
+    "styleChangesAllowed": [
+      "material/color by semantic surface",
+      "low-cost repeating facade patterns",
+      "flat facade decals",
+      "very shallow facade trims",
+      "roof overlay decals",
+      "emissive detail masks",
+      "window patterns inside existing openings"
+    ],
+    "styleChangesOptional": [
+      "minor facade trim planes or cornices as merged geometry",
+      "street props like lamps/fences"
+    ],
+    "avoid": [
+      "new overhanging roofs",
+      "fake balconies if their silhouette would be broken",
+      "per-window meshes at far LOD",
+      "unreadable fine-grain textures",
+      "one random color per polygon",
+      "large emissive fields"
+    ],
+    "semanticSlots": [
+      "wall_main",
+      "wall_secondary",
+      "roof",
+      "window_glass",
+      "window_frame",
+      "trim",
+      "plinth",
+      "door",
+      "accent",
+      "night_emission"
+    ],
+    "paletteRule": "Выбирать 1 основной тон стен на здание, 1 совместимый вторичный, 1 тон крыши; соседние здания могут отличаться, но не должно быть случайной раскраски каждой стены",
+    "rendering": {
+      "strategy": "Reuse meshes, use texture atlases, vertex colors, material parameters and deterministic building seed",
+      "zoomedOutPriority": [
+        "roof color",
+        "wall color",
+        "roof-to-wall contrast",
+        "window rhythm"
+      ],
+      "closeViewPriority": [
+        "plinth",
+        "trim",
+        "window frames",
+        "subtle roughness",
+        "decals"
+      ],
+      "textureBudget": "Один небольшой atlas на стиль + общие маски окон/дверей; либо полностью процедурные шейдеры",
+      "distantLOD": "No tiny details or transparent panes; simplified dark window tiles and roof materials",
+      "nightLOD": "Only a small seeded subset of windows emits warm/cool light; no fully lit facades",
+      "sceneConsistency": "Preserve current low-poly/stylized photoreal look; favor readable large shapes over noisy microtextures"
+    }
+  },
+  "presets": [
+    {
+      "id": "modern",
+      "displayName": "Современный европейский район",
+      "englishName": "Modern / Contemporary",
+      "story": "Европейская городская застройка 2000–2020-х: белая штукатурка, бетон, холодный металл, графитовые крыши, тёмные окна, иногда дерево",
+      "readAtDistance": "Светлые стены + графитовые крыши + ровный тёмный оконный ритм",
+      "colors": {
+        "wall_main": [
+          {
+            "hex": "#F0F0EA",
+            "weight": 35
+          },
+          {
+            "hex": "#D3D6D7",
+            "weight": 25
+          },
+          {
+            "hex": "#E7DFD3",
+            "weight": 20
+          },
+          {
+            "hex": "#C6CED1",
+            "weight": 12
+          },
+          {
+            "hex": "#B6B7B2",
+            "weight": 8
+          }
+        ],
+        "wall_secondary": [
+          "#A8B1B6",
+          "#B4A38D",
+          "#AA8061",
+          "#7F8C92"
+        ],
+        "roof": [
+          {
+            "hex": "#353E48",
+            "weight": 45
+          },
+          {
+            "hex": "#5E6872",
+            "weight": 30
+          },
+          {
+            "hex": "#777F81",
+            "weight": 15
+          },
+          {
+            "hex": "#464B50",
+            "weight": 10
+          }
+        ],
+        "window_glass": [
+          "#3D5867",
+          "#668DA2",
+          "#516C7A"
+        ],
+        "window_frame": [
+          "#333B42",
+          "#657077",
+          "#F0F0E8"
+        ],
+        "trim": [
+          "#E7E7E1",
+          "#BBC0BE",
+          "#747D80"
+        ],
+        "plinth": [
+          "#899396",
+          "#6B7275"
+        ],
+        "door": [
+          "#475A62",
+          "#AA8061"
+        ],
+        "accent": [
+          "#AA8061",
+          "#607F8A",
+          "#BEB2A0"
+        ],
+        "night_emission": [
+          "#F4D7AD",
+          "#E8E7D9"
+        ]
+      },
+      "decor": [
+        "Штукатурка или крупные бетонные панели с почти незаметными швами",
+        "Плоские контрастные прямоугольные вставки, занимающие часть фасада",
+        "Графитовые или белые тонкие оконные рамы",
+        "Деревянные панели только на 10–20% зданий, не везде",
+        "На крыше допустимы маленькие вентиляционные короба, но не на каждом доме"
+      ],
+      "roofPolicy": "Не менять форму: существующая скатная крыша становится графитовой металлической, плиточной или матово-серой",
+      "windows": {
+        "appearance": "simple dark rectangles, selective broad glass",
+        "frameThickness": "thin",
+        "lightProbabilityNight": 0.23
+      },
+      "variation": {
+        "wallLightnessRange": 0.09,
+        "roofLightnessRange": 0.07,
+        "woodAccentChance": 0.14,
+        "panelSeamChance": 0.42
+      },
+      "suggestedStreetProps": [
+        "простые серые фонари",
+        "низкие бетонные бордюры",
+        "минималистичные остановки",
+        "простые зелёные газоны"
+      ],
+      "vegetation": [
+        "круглолиственные уличные деревья",
+        "берёза",
+        "низкие декоративные кусты"
+      ],
+      "avoid": [
+        "красные черепичные крыши большинства домов",
+        "кирпич под XIX век",
+        "чрезмерно зеркальные стены"
+      ]
+    },
+    {
+      "id": "futuristic",
+      "displayName": "Футуристичный район",
+      "englishName": "Futuristic / Clean neo-futurism",
+      "story": "Светлый оптимистичный город близкого будущего: белые композиты, светлая сталь, небо-стекло и чистые бирюзовые акценты",
+      "readAtDistance": "Белые корпуса + светло-стальные крыши + яркие ледяные окна и бирюзовые полосы",
+      "colors": {
+        "wall_main": [
+          {
+            "hex": "#F7FCFD",
+            "weight": 42
+          },
+          {
+            "hex": "#EAF4F8",
+            "weight": 30
+          },
+          {
+            "hex": "#E0EEF4",
+            "weight": 18
+          },
+          {
+            "hex": "#D2E4EC",
+            "weight": 10
+          }
+        ],
+        "wall_secondary": [
+          "#A8BCC8",
+          "#C2D4DE",
+          "#B4C6D0"
+        ],
+        "roof": [
+          {
+            "hex": "#5A7588",
+            "weight": 42
+          },
+          {
+            "hex": "#7A93A4",
+            "weight": 33
+          },
+          {
+            "hex": "#A8BBC8",
+            "weight": 25
+          }
+        ],
+        "window_glass": [
+          "#8FD0F8",
+          "#B6E4FF",
+          "#6EB8E8"
+        ],
+        "window_frame": [
+          "#7A94A4",
+          "#F4FBFC"
+        ],
+        "trim": [
+          "#FFFFFF",
+          "#D0E2EC",
+          "#A8BCC8"
+        ],
+        "plinth": [
+          "#A0B4C0",
+          "#7A94A4"
+        ],
+        "door": [
+          "#5A8498",
+          "#A8C4D4"
+        ],
+        "accent": [
+          "#4DE8DC",
+          "#7ECFFF",
+          "#9AF0F4"
+        ],
+        "night_emission": [
+          "#70F0E4",
+          "#C4F0FF",
+          "#F2FFFC"
+        ]
+      },
+      "decor": [
+        "Крупные гладкие панели с редкими аккуратными технологическими швами",
+        "Ленты окон группируются по этажам при помощи темных фоновых полос или UV масок",
+        "Очень тонкие бирюзовые полосы по некоторым углам или между этажами (около 5–10% площади отделки)",
+        "Солнечные панели как плоский узор на существующем скате, без изменения крыши",
+        "На отдельных зданиях крупные вертикальные панели-акценты вместо случайной мелкой неоновой сетки"
+      ],
+      "roofPolicy": "Исходный скат сохраняется; материал графитовая матовая панель / тёмное солнечное стекло; не делать все крыши плоскими визуально",
+      "windows": {
+        "appearance": "blue steel glass, some continuous visual glazing across existing openings",
+        "frameThickness": "very thin",
+        "lightProbabilityNight": 0.14
+      },
+      "variation": {
+        "wallLightnessRange": 0.07,
+        "roofLightnessRange": 0.04,
+        "tealAccentBuildingChance": 0.38,
+        "solarRoofChance": 0.53
+      },
+      "suggestedStreetProps": [
+        "тонкие геометричные фонари",
+        "чистые тёмные дорожные покрытия",
+        "аккуратные велополосы",
+        "небольшие геометрические клумбы"
+      ],
+      "vegetation": [
+        "декоративные круглолиственные",
+        "колонновидные деревья",
+        "формованные кусты"
+      ],
+      "avoid": [
+        "кислотный неон на каждом доме",
+        "полностью зеркальные фасады",
+        "сайберпанк-грязь",
+        "огромные голограммы",
+        "много мелкого светящегося мусора"
+      ]
+    },
+    {
+      "id": "victorian",
+      "displayName": "Викторианский район",
+      "englishName": "Victorian / 19th-century urban",
+      "story": "Английский и североамериканский промышленный город конца XIX века: кирпич, шиферные крыши, каменные наличники и тёмная металлическая отделка",
+      "readAtDistance": "Красно-коричневые кирпичные стены + почти чёрные крыши + светлые оконные обрамления",
+      "colors": {
+        "wall_main": [
+          {
+            "hex": "#A64E3B",
+            "weight": 35
+          },
+          {
+            "hex": "#754638",
+            "weight": 23
+          },
+          {
+            "hex": "#9A5D46",
+            "weight": 19
+          },
+          {
+            "hex": "#BE7658",
+            "weight": 15
+          },
+          {
+            "hex": "#C39C74",
+            "weight": 8
+          }
+        ],
+        "wall_secondary": [
+          "#76503F",
+          "#A78062",
+          "#E2CAA5"
+        ],
+        "roof": [
+          {
+            "hex": "#3E4147",
+            "weight": 48
+          },
+          {
+            "hex": "#55565C",
+            "weight": 25
+          },
+          {
+            "hex": "#454344",
+            "weight": 20
+          },
+          {
+            "hex": "#596066",
+            "weight": 7
+          }
+        ],
+        "window_glass": [
+          "#647986",
+          "#4A5D68",
+          "#657F70"
+        ],
+        "window_frame": [
+          "#E9D9BC",
+          "#D5C4A5",
+          "#3F473F"
+        ],
+        "trim": [
+          "#E9D9BC",
+          "#C39C74",
+          "#B7A590"
+        ],
+        "plinth": [
+          "#5B5857",
+          "#766F68"
+        ],
+        "door": [
+          "#354E40",
+          "#5C3D2F",
+          "#2E393E"
+        ],
+        "accent": [
+          "#667F70",
+          "#7F5E47",
+          "#4A453E"
+        ],
+        "night_emission": [
+          "#E9BF82",
+          "#FFD8A7"
+        ]
+      },
+      "decor": [
+        "Крупная стилизованная кирпичная кладка с невысоким контрастом затирки",
+        "Кремовые наличники вокруг существующих окон: плоская рамка или shallow decal",
+        "Горизонтальная светлая полоса между этажами только на части домов",
+        "Небольшой тёмный цоколь и подчёркнутый карниз у линии крыши",
+        "Тёмно-зелёные или бордовые входные двери",
+        "На приближении — декоративные плоские металлические вставки и дымоходы только там, где возможно без смены силуэта"
+      ],
+      "roofPolicy": "Существующая крыша получает тёмный матовый шифер или сланцевую черепицу; геометрию не менять",
+      "windows": {
+        "appearance": "narrow visually divided panes inside existing window rectangles",
+        "frameThickness": "medium light trim",
+        "lightProbabilityNight": 0.21
+      },
+      "variation": {
+        "wallLightnessRange": 0.12,
+        "roofLightnessRange": 0.06,
+        "stoneTrimChance": 0.83,
+        "greenDoorChance": 0.24
+      },
+      "suggestedStreetProps": [
+        "тёмные фонари старого образца",
+        "короткие чёрные ограды",
+        "булыжная текстура лишь на отдельных улицах",
+        "простые деревья в ряд"
+      ],
+      "vegetation": [
+        "платан или крупнолиственное дерево",
+        "липа",
+        "живые изгороди"
+      ],
+      "avoid": [
+        "массовые оранжевые черепичные крыши",
+        "очень яркие разноцветные стены",
+        "стеклянные фасады",
+        "неоновая подсветка"
+      ]
+    }
+  ],
+  "selectionAndVariation": {
+    "applyStylePer": "neighborhood, district or polygon zone; not per face",
+    "districtStyleMixRule": "Для узнаваемого квартала держать 75–90% зданий в одном стиле; остальные — нейтральные переходы/соседний район",
+    "buildingVariation": "Hash(cityId, buildingId, styleId) => reproducible palette, roof, trim and accent choices",
+    "buildingSizeRules": [
+      "low-rise: visibly pitched roofs, distinctive roof color; avoid facade full glazing",
+      "mid-rise: rhythmic vertical/horizontal windows, tasteful secondary wall panels",
+      "high-rise: simplified repeated windows, stronger window contrast, no expensive small roof props"
+    ],
+    "weightedColorSelection": "Use weight for wall_main/roof; do not pick uniformly from an arbitrarily large palette",
+    "exampleVisualMixPerStyle": {
+      "modern": "70% white/gray + 20% warm neutral + 10% wood accents",
+      "futuristic": "80% near-white/silver + 15% dark glass + 5% cyan detail",
+      "victorian": "70% brick + 20% slate + 10% pale stone trim"
+    },
+    "performance": [
+      "Instanced meshes for repeated roofs/windows where applicable",
+      "window pattern in texture/shader, not separate distant meshes",
+      "at far camera distances suppress brick lines, panel seams, thin neon and trims"
+    ],
+    "acceptance": [
+      "At aerial map zoom each district is visually distinguishable",
+      "No building geometry changes required",
+      "Modern and futuristic are distinct in color and window pattern",
+      "Victorian reads as brick/slate, not Mediterranean terra-cotta",
+      "FPS close to current scene budget"
+    ]
+  },
+  "implementationOrder": [
+    "Expose semantic surface color/material slots on existing building generation",
+    "Implement weighted palette selection with stable building seeds",
+    "Implement roof/window facade shaders or atlases",
+    "Add affordable shallow trim decals only at close LOD",
+    "Implement district palette blending and night window emission",
+    "A/B test at current overhead camera scale before investing in detailed textures"
+  ]
+}

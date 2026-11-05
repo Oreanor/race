@@ -7,7 +7,6 @@ const DRIVABLE_ROADS = new Set(['motorway', 'trunk', 'primary', 'secondary', 'te
 // Project the configured start onto a nearby drivable road once, never while driving.
 export function roadStart(
   map: ThreeMap,
-  source: string,
   origin: Position,
   blocked: (position: Position, heading: number) => boolean,
   maxDistance = 350,
@@ -16,9 +15,11 @@ export function roadStart(
   const scaleY = METERS_PER_DEGREE;
   let best: { position: Position; heading: number; distance: number } | undefined;
 
-  for (const feature of map.querySourceFeatures(source, { sourceLayer: 'transportation' })) {
+  for (const feature of map.features('transportation')) {
     const roadClass = String(feature.properties?.class ?? '');
-    if (!DRIVABLE_ROADS.has(roadClass)) continue;
+    // paved pedestrian streets and plazas look like streets and the car drives them fine
+    const pedestrian = roadClass === 'path' && /^(pedestrian|living_street)$/.test(String(feature.properties?.subclass ?? ''));
+    if (!DRIVABLE_ROADS.has(roadClass) && !pedestrian && roadClass !== 'track') continue;
     const lines = (feature.geometry.type === 'LineString'
       ? [feature.geometry.coordinates]
       : feature.geometry.type === 'MultiLineString'

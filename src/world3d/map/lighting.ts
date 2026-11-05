@@ -6,7 +6,8 @@ import { moonIllumination, moonPosition, skyDirection, sunPosition, type SkyPosi
 // (by phase and height) takes over and windows light up.
 
 export type TimeMode = 'real' | 'morning' | 'day' | 'evening' | 'night';
-export const TIME_MODES: TimeMode[] = ['real', 'morning', 'day', 'evening', 'night'];
+/** T cycles presets first; local time is the last step. */
+export const TIME_MODES: TimeMode[] = ['morning', 'day', 'evening', 'night', 'real'];
 
 export type Lighting = {
   /** direction toward the main light (sun, or moon at night), scene axes */

@@ -32,11 +32,18 @@ test('time of the place, not of the player', async () => {
 });
 
 test('season of the place: hemisphere and tropics', async () => {
-  const { seasonAt } = await import('../src/world3d/seasons.ts');
+  const { seasonAt, snowCoverAt } = await import('../src/world3d/seasons.ts');
   const nov = new Date('2026-11-04T12:00:00Z');
   assert.equal(seasonAt(nov, 40.2), 'autumn'); // Coimbra
   assert.equal(seasonAt(nov, -33.9), 'spring'); // Sydney
   assert.equal(seasonAt(nov, 1.3), 'summer'); // Singapore: always green
   assert.equal(seasonAt(new Date('2026-01-20T12:00:00Z'), 55.75), 'winter');
   assert.equal(seasonAt(new Date('2026-04-15T12:00:00Z'), 48.85), 'spring');
+  assert.equal(snowCoverAt(40.2), 0); // Coimbra: no lying snow
+  assert.equal(snowCoverAt(42), 0);
+  assert.ok(snowCoverAt(45) > 0.4 && snowCoverAt(45) < 0.7, `45N ${snowCoverAt(45)}`);
+  assert.equal(snowCoverAt(48), 1);
+  assert.equal(snowCoverAt(-42), 0);
+  assert.ok(snowCoverAt(-45) > 0.4 && snowCoverAt(-45) < 0.7, `45S ${snowCoverAt(-45)}`);
+  assert.equal(snowCoverAt(-48), 1);
 });

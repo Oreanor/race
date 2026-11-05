@@ -1,5 +1,5 @@
 import { circleHitsPolygon, type Polygon } from './BuildingCollisions.ts';
-import type { Position } from './VehicleController.ts';
+import { type Position, metersBetween } from './VehicleController.ts';
 
 type Point = [number, number];
 type LocalPolygon = { rings: Polygon; bounds: number[] };
@@ -34,11 +34,6 @@ function distanceToSegment(point: Point, a: Point, b: Point) {
   const dy = b[1] - a[1];
   const t = Math.max(0, Math.min(1, ((point[0] - a[0]) * dx + (point[1] - a[1]) * dy) / (dx * dx + dy * dy || 1)));
   return Math.hypot(point[0] - a[0] - t * dx, point[1] - a[1] - t * dy);
-}
-
-function metersBetween(a: Position, b: Position) {
-  const cos = Math.cos(a[1] * Math.PI / 180);
-  return Math.hypot((b[0] - a[0]) * METERS * cos, (b[1] - a[1]) * METERS);
 }
 
 function bboxNear(origin: Position, ring: Point[], meters: number) {

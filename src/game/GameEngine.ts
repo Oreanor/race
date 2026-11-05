@@ -1,20 +1,30 @@
 import { roadStart } from './roadStart';
 import { VehiclePose } from './VehiclePose';
 import { supportAltitude, type GroundSample } from './groundSupport';
-import { BuildingCollisions, type Polygon } from './BuildingCollisions';
+import { BuildingCollisions } from './BuildingCollisions';
 import { ThicketCollision } from './Vegetation';
 import { WaterCollisionController, type MapFeature } from './WaterCollisionController';
-import { mapConfig, cars as carsConfig, type City, type Car, vehicleConfig } from '@/config/vehicle.config';
+import { mapConfig, cars as carsConfig, carPrice, tradeInPrice, type City, type Car, vehicleConfig } from '@/config/vehicle.config';
 import { cameraConfig, zoomForDistance } from '@/config/camera.config';
-import { HOUSE_PALETTE } from './buildings/BuildingStyles';
-import { VehicleController, offsetPosition, resolveVehicleCollision } from './VehicleController';
-import { vehicleLayer, type VehicleSceneLayer } from '@/rendering/VehicleLayer';
+import { VehicleController, offsetPosition, resolveVehicleCollision, type Position } from './VehicleController';
+import { vehicleLayer, type TargetVehicle, type VehicleSceneLayer } from '@/rendering/VehicleLayer';
 import type { ArchitectureSetting, BuildingDetail } from './buildings/BuildingStyles';
+import type { SkinId } from '@/world3d/buildings/skins';
+import type { ChatLine, NetNotice } from '@/net/NetClient';
+import { distanceToTile } from '@/world3d/tiles/tilePlan';
+import { mercatorX, mercatorY } from '@/world3d/mercator';
+
+/** tiles this close to the car feed gameplay (the world's feature radius, plus slack) */
+const NEAR_TILE_METERS = 2600;
+import { NetPlayers, type OnlinePlayer } from './net/NetPlayers';
+import { SharedTraffic } from './net/SharedTraffic';
+import { PLAYER_HP } from '@/net/protocol';
+import { MARKER_PIN_METERS, nameIndicator, placeIndicator } from './hud/indicators';
 import { advanceTrafficBot, createTrafficBot, TrafficRoadNetwork, type TrafficBot } from './TrafficBots';
 import { healthColor } from './health';
 import { formatNumber, t } from '@/i18n';
-import { SOURCE_ID, ThreeMap, ThreeMarker } from '@/world3d/map/ThreeMap';
-import { atStation, EVACUATION_COST, EVACUATION_RESERVE, FuelTank, FUEL_PRICE, metersBetween, nearestStation, repairShopsFromFeatures, REPAIR_PRICE, stationsFromFeatures, type Station } from './Fuel';
+import { ThreeMap, ThreeMarker } from '@/world3d/map/ThreeMap';
+import { atStation, dealershipsFromFeatures, EVACUATION_COST, EVACUATION_RESERVE, FuelTank, FUEL_PRICE, metersBetween, nearestStation, repairShopsFromFeatures, REPAIR_PRICE, stationsFromFeatures, type Station } from './Fuel';
 import { fuelStationsLayer } from '@/rendering/FuelStationsLayer';
 import { trainsLayer } from '@/rendering/TrainsLayer';
 import { RailNetwork, TrainTraffic } from './Trains';
@@ -27,10 +37,14 @@ export type PlayerCarry = { money: number; fuel: number };
 export type TravelOffer = { kind: HubKind; from: [number, number]; money: number; target?: { name: string; country: string; coords: [number, number] } };
 /** A wanted driver somewhere in the world, offered as a job. */
 export type BountyOffer = { name: string; car: string; place: string; country: string; km: number; reward: number };
+/** Arena/race finished — UI shows a result dialog. */
+export type EventResult = { kind: 'arena' | 'race'; won: boolean; name?: string };
 /** Arrived at a fuel station or a car service: what the dialog needs to show. */
 export type ServiceOffer =
   | { kind: 'fuel'; level: number; tank: number; money: number; price: number }
   | { kind: 'repair'; hp: number; maxHp: number; money: number; price: number };
+/** Car dealership lot: shelf prices and the trade-in for the car you drove in. */
+export type DealerOffer = { money: number; currentId: string; tradeIn: number };
 const NO_FUEL_KEYS = new Set(['KeyW', 'Space']);
 
 type MapMarker = {
@@ -41,6 +55,9 @@ type MapMarker = {
 };
 
 export type Quality = 'low' | 'medium' | 'high';
+/** One line of the "who is online" list. Distance in meters from our car. */
+export type { OnlinePlayer };
+
 /** Interface look only — not the sun in the world. */
 export type Theme = 'light' | 'night';
 export type Settings = {
@@ -50,6 +67,8 @@ export type Settings = {
   quality: Quality;
   buildingDetail: BuildingDetail;
   architecture: ArchitectureSetting;
+  /** architecture skin painted over any city (buildings/skins) */
+  skin: SkinId;
   theme: Theme;
 };
 
@@ -58,16 +77,21 @@ const PICKUP_COLORS = ['#ff4f79', '#ffc837', '#45d8ef', '#a96aff', '#69e286', '#
 const TRAFFIC_MARKER_COLORS = ['#ff3b30', '#00e5ff', '#ffe600'];
 const METERS_PER_DEGREE = 111319.49;
 const GRAVITY = 9.81;
-/** key J: a kicker ramp, metres */
-export const RAMP = { length: 3.2, width: 3.2, height: 1.0 };
+/** key J: hold to grow, release to place. Grade is rise/run (30%). */
+export const RAMP = {
+  grade: 0.3,
+  width: 3.2,
+  minLength: 2.4,
+  maxLength: 16,
+  growPerSec: 7,
+  /** base mesh size in VehicleLayer — keep in sync for scaling */
+  mesh: { length: 3.2, width: 3.2, height: 1.0 },
+};
 
 export type HudParticipant = { id: string; name: string; color: string; hp: number; maxHp: number; money: number; wins: number };
 type ActivePickup = { position: [number, number]; color: string; kind: 'ball' | 'coin' };
 
-function distanceMeters(a: [number, number], b: [number, number]) {
-  const cos = Math.cos(a[1] * Math.PI / 180);
-  return Math.hypot((b[0] - a[0]) * METERS_PER_DEGREE * cos, (b[1] - a[1]) * METERS_PER_DEGREE);
-}
+
 
 function randomDriverNames(count: number) {
   const names = [...DRIVER_NAMES];
@@ -78,6 +102,17 @@ function randomDriverNames(count: number) {
   return names.slice(0, count);
 }
 
+/** other players' name tags and roster lines (as their pointers on screen) */
+const PLAYER_MARKER_COLOR = '#7cf0b0';
+
+/** Parked test cars to shoot at: none unless asked for, ?testcars=N in the address. */
+function testCarCount() {
+  if (typeof location === 'undefined') return 0;
+  const asked = new URLSearchParams(location.search).get('testcars');
+  if (asked != null) return Math.max(0, Math.min(20, Number(asked) || 0));
+  return 0;
+}
+
 export class GameEngine {
   collisions = new BuildingCollisions();
   thicket = new ThicketCollision();
@@ -86,7 +121,8 @@ export class GameEngine {
   collisionTime = 0;
   spawnResolved = false;
   private spawnWaits = 0;
-  sourceId = '';
+  /** the map's first frame is in: layers added, features can be read */
+  private mapLoaded = false;
   map: ThreeMap;
   vehicle: VehicleController;
   renderVehicle = new VehiclePose();
@@ -108,7 +144,6 @@ export class GameEngine {
   accumulator = 0;
   hudTime = 0;
   dragging = false;
-  private introCameraKey = '';
   private spawnMarker: MapMarker | null = null;
   private defaultSpawn: { position: [number, number]; heading: number } | null = null;
   private customSpawn: { position: [number, number]; heading: number } | null = null;
@@ -132,7 +167,6 @@ export class GameEngine {
   fps = 0;
   private fpsFrames = 0;
   private fpsStamp = 0;
-  private worldFresh = false;
   private worldWork: Generator<null, void> | null = null;
   private featureReadFailures = new Set<string>();
   private cachedWater: MapFeature[] = [];
@@ -149,17 +183,19 @@ export class GameEngine {
   private airborne = false;
   private wasOnRamp = false;
   /** the ramp put down with J (one at a time; gone shortly after the jump) */
-  private ramp: { start: [number, number]; heading: number; usedAt: number } | null = null;
-  private region: string;
+  private ramp: { start: [number, number]; heading: number; usedAt: number; length: number; height: number; width: number } | null = null;
+  /** holding J: ramp preview grows until release */
+  private rampCharge: { start: [number, number]; heading: number; ground: number; length: number } | null = null;
   private aimScreen: [number, number] | null = null;
   private trafficBots: TrafficBot[] = [];
   private trafficNetwork = new TrafficRoadNetwork();
+  /** light traffic shared with the players around */
+  private sharedTraffic!: SharedTraffic;
   private vehicleContactTimes = new Map<string, number>();
   private trafficMarkerLayer: HTMLElement | null = null;
-  private trafficMarkers = new Map<string, { element: HTMLElement; arrow: HTMLElement }>();
+  private trafficMarkers = new Map<string, { element: HTMLElement; arrow: HTMLElement; distance: HTMLElement }>();
   private healthMarkerLayer: HTMLElement | null = null;
   private healthMarkers = new Map<string, { element: HTMLElement; fill: HTMLElement }>();
-  private readonly cityName: string;
   private mode: 'roam' | 'arena' | 'race' = 'roam';
   private missions: { id: string; kind: 'arena' | 'race'; label: string; position: [number, number] }[] = [];
   private missionFocus = 0;
@@ -173,9 +209,15 @@ export class GameEngine {
   /** bounty hunt: the active job (kept across trips), the offer on screen, the fight */
   private bounty: Bounty | null = loadBounty();
   private bountyPending: Bounty | null = null;
+  /** local pin where you drive to take a pending wanted job */
+  private bountyPickup: [number, number] | null = null;
   private bountyOfferAt = performance.now() + 45000;
   private bountyRetryAt = 0;
+  private bountyApproachCooldown = 0;
+  private bountyOfferShown = false;
   private bountyFight = false;
+  // ---- multiplayer: other players in the same world (net/NetPlayers)
+  private players!: NetPlayers;
   private bountyIndicator: { element: HTMLElement; arrow: HTMLElement; title: HTMLElement; distance: HTMLElement } | null = null;
   private bountyMarker: MapMarker | null = null;
   onBountyOffer: (offer: BountyOffer | null) => void = () => {};
@@ -193,8 +235,13 @@ export class GameEngine {
   private focusIndicator: { element: HTMLElement; arrow: HTMLElement; title: HTMLElement; distance: HTMLElement } | null = null;
   private raceGoalIndicator: { element: HTMLElement; arrow: HTMLElement; distance: HTMLElement } | null = null;
   onEventOffer: (kind: 'arena' | 'race' | null) => void = () => {};
+  onEventResult: (result: EventResult | null) => void = () => {};
   /** fuel gauge data, ~10 times a second */
   onFuel: (fuel: FuelHud) => void = () => {};
+  /** multiplayer: who is online (twice a second), chat lines, the connection's state */
+  onOnline: (players: OnlinePlayer[]) => void = () => {};
+  onChat: (line: ChatLine) => void = () => {};
+  onNetNotice: (notice: NetNotice) => void = () => {};
   /** the tank ran dry and the car stopped: show the tow-truck dialog */
   onFuelOut: (out: boolean) => void = () => {};
   fuel!: FuelTank;
@@ -202,18 +249,27 @@ export class GameEngine {
   private fuelLayer: ReturnType<typeof fuelStationsLayer> | null = null;
   private fuelOut = false;
   private refuelling = false;
-  /** ports and airports: reaching one offers a ticket to any city */
+  /** ports, airports and railway stations: reaching one offers a ticket to any city */
   onTravelOffer: (offer: TravelOffer | null) => void = () => {};
   private hubs = new Map<string, Hub>();
   /** fuel station or car service dialogs (shown on arrival, re-armed after leaving) */
   onServiceOffer: (offer: ServiceOffer | null) => void = () => {};
+  /** car dealership dialog (Tab when on the lot, or arriving slowly) */
+  onDealerOffer: (offer: DealerOffer | null) => void = () => {};
+  /** after a purchase: React keeps the menu car index in sync */
+  onCarBought: (car: Car) => void = () => {};
   private repairShops = new Map<string, Station>();
+  private dealerships = new Map<string, Station>();
   private serviceMarkers = new Map<string, MapMarker>();
   private offeredService: string | null = null;
   private serviceOpen: ServiceOffer['kind'] | null = null;
+  private dealerOpen = false;
   /** key M: camera rises straight up for a ~2 × 2 km view from above (0 chase … 1 overview) */
   private overview = 0;
   private overviewTarget = 0;
+  /** once overview is open: pan/zoom freely; blend back from here when closing */
+  private overviewFree = false;
+  private overviewLeave: { center: [number, number]; zoom: number } | null = null;
   /** the menu camera to return to after the view from above */
   private menuView: { center: [number, number]; zoom: number; pitch: number; bearing: number } | null = null;
 
@@ -222,6 +278,36 @@ export class GameEngine {
     const height = this.map.getCanvas().clientHeight || 800;
     const mercPerMeter = 1 / (2 * Math.PI * 6371008.8 * Math.cos(lat * Math.PI / 180));
     return Math.log2((height / 2000) / mercPerMeter / 512);
+  }
+
+  /** Driving map mode (M): inspect the city, no gun. */
+  private mapInspecting() {
+    return this.driving && (this.overviewTarget > 0 || this.overview > 0.4);
+  }
+
+  private setOverviewMapNav(on: boolean) {
+    if (on) this.map.setInteractive({ pan: true, rotate: false });
+    else if (this.driving) this.map.setInteractive({ pan: false, rotate: false });
+  }
+
+  private toggleOverview() {
+    if (this.overviewTarget) {
+      // closing — remember where the player was looking
+      const c = this.map.getCenter();
+      this.overviewLeave = { center: [c.lng, c.lat], zoom: this.map.getZoom() };
+      this.overviewTarget = 0;
+      this.overviewFree = false;
+      this.setOverviewMapNav(false);
+    } else {
+      this.overviewLeave = null;
+      this.overviewTarget = 1;
+      this.overviewFree = false;
+      this.stopGun();
+      this.lookPointer = null;
+      this.lookOrigin = null;
+      this.lookDragging = false;
+      this.dragging = false;
+    }
   }
   private hubMarkers = new Map<string, MapMarker>();
   private offeredHub: string | null = null;
@@ -235,6 +321,10 @@ export class GameEngine {
   private playerMoney = 0;
   get booted() { return this.mapShown; }
   private aimingFire = false;
+  /** LMB: drag to look around; hold still to aim/fire (no permanent reticle). */
+  private lookPointer: number | null = null;
+  private lookOrigin: { x: number; y: number } | null = null;
+  private lookDragging = false;
   constructor(el: HTMLElement, city: City, car: Car, settings: Settings, private hud: (speed: number, distance: number, fps: number, participants: HudParticipant[]) => void, private status: (s: string, toast?: boolean) => void, private aimHud: (x: number, y: number, visible: boolean, firing?: boolean) => void, carry: PlayerCarry | null = null) {
     this.fuel = new FuelTank(car.fuel);
     this.carry = carry;
@@ -244,9 +334,39 @@ export class GameEngine {
     this.bootAt = performance.now();
     this.settings = settings;
     this.car = car;
-    this.region = city.country;
-    this.cityName = city.name;
     this.vehicle = new VehicleController(city.coords, city.heading);
+    const engine = this;
+    this.players = new NetPlayers({
+      host: el,
+      view: { getCanvas: () => this.map.getCanvas(), project: (point) => this.map.project(point), getBearing: () => this.map.getBearing() },
+      get vehicle() { return engine.vehicle; },
+      layer: () => this.combatLayer ?? null,
+      car: () => this.car,
+      altitude: () => this.altitude,
+      lean: () => ({ pitch: this.modelPitch, roll: this.modelRoll }),
+      driving: () => this.driving,
+      mapView: () => this.mapInspecting(),
+      busy: () => this.mode !== 'roam' || this.bountyFight,
+      canMove: (from, to, heading) => !this.collisions.blocked(from, to, heading, 1, this.altitude) && !this.water.resolve(from, to, heading).stopped,
+      online: (list) => this.onOnline(list),
+      chat: (line) => this.onChat(line),
+      notice: (notice) => this.onNetNotice(notice),
+      hitBy: (name, damage) => this.hitByPlayer(name, damage),
+      hp: () => this.playerHp,
+      news: (text) => this.say(text, true),
+      traffic: (from, cars) => this.sharedTraffic.receive(from, cars),
+      trafficHit: (id) => this.sharedTraffic.hitByOther(id),
+    });
+    this.sharedTraffic = new SharedTraffic({
+      network: this.trafficNetwork,
+      vehicle: { get position() { return engine.vehicle.position; }, get heading() { return engine.vehicle.heading; } },
+      driving: () => this.driving && !this.paused,
+      layer: () => this.combatLayer,
+      myId: () => this.players.id(),
+      others: () => this.players.others(),
+      send: (cars) => this.players.sendTraffic(cars),
+      hit: (id) => this.players.hitTraffic(id),
+    });
     this.renderVehicle.reset(this.vehicle);
     this.bearing = city.heading;
     // our own Three.js world: one fixed DEM level, buildings never need re-settling
@@ -260,10 +380,11 @@ export class GameEngine {
       dem: mapConfig.dem.tiles[0],
       region: city.country,
     });
-    this.map.on('sourcedata', event => {
-      if ((event.sourceId === this.sourceId || event.sourceId === 'elevation') && event.sourceDataType === 'content') {
-        this.collisionDirty = true;
-      }
+    this.map.on('tile', event => {
+      // gameplay data (roads, water, stations…) is read around the car: a tile arriving far
+      // away (the map view streams many) is no reason to read it all again
+      if (typeof event.tile === 'string' && !this.nearCar(event.tile)) return;
+      this.collisionDirty = true;
     });
     this.map.on('error', () => this.say(t('status.mapError')));
     // key T cycles the time of day in our world; tell the player which one
@@ -273,14 +394,13 @@ export class GameEngine {
       const name = t(`seasonName.${season}`);
       this.say(event.mode === 'real' ? t('season.real', { name }) : t('season.set', { name }), true);
     });
-    this.threeMap?.on('timemode', (event) => {
+    this.map.on('timemode', (event) => {
       const mode = event.mode as 'real' | 'morning' | 'day' | 'evening' | 'night' | undefined;
       if (mode) this.say(t(`time.${mode}`, { clock: String(event.clock ?? '') }), true);
     });
     this.map.on('load', () => {
       if (this.disposed) return;
-      this.decorate();
-      this.map.addSource('elevation', { type: 'raster-dem', ...mapConfig.dem });
+      this.mapLoaded = true;
       this.fuelLayer = fuelStationsLayer();
       this.map.addLayer(this.fuelLayer);
       this.trainLayer = trainsLayer();
@@ -297,6 +417,8 @@ export class GameEngine {
         (cam, camAlt, ground, groundAlt, mark) => this.map.raycastBuildings(cam, camAlt, ground, groundAlt, mark),
         (point, altitude) => this.map.markGround(point, altitude),
       );
+      this.combatLayer.onRemoteHit = (id) => this.players.shot(id);
+      this.combatLayer.onTargetHit = (id) => this.sharedTraffic.ourHit(id);
       this.map.addLayer(this.combatLayer);
       this.applySettings(this.settings);
       this.ready = true;
@@ -306,9 +428,6 @@ export class GameEngine {
       this.map.on('click', (e) => {
         if (!this.driving && this.mapShown) this.setSpawnFromClick(e.lngLat as { lng: number; lat: number });
       });
-      this.map.on('move', () => {
-        if (!this.driving && this.mapShown) this.collisionDirty = true;
-      });
     });
     const listen = (target: EventTarget, event: string, fn: EventListener, options?: AddEventListenerOptions) => {
       target.addEventListener(event, fn, options);
@@ -316,7 +435,7 @@ export class GameEngine {
     };
     listen(window, 'keydown', ((e: KeyboardEvent) => {
       // M in the menu: rise above the map too (and come back)
-      if (e.code === 'KeyM' && !e.repeat && !this.driving && this.threeMap && this.mapShown
+      if (e.code === 'KeyM' && !e.repeat && !this.driving && this.mapShown
         && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement)) {
         if (!this.overviewTarget) {
           const c = this.map.getCenter();
@@ -330,47 +449,93 @@ export class GameEngine {
       if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'ShiftLeft', 'ShiftRight', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyR', 'Tab', 'KeyM', 'KeyJ'].includes(e.code)) e.preventDefault();
       if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'ShiftLeft', 'ShiftRight', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) this.keys.add(e.code);
       if (e.code === 'KeyR') this.resetCamera();
-      if (e.code === 'Tab' && !e.repeat) this.cycleMissionFocus();
-      if (e.code === 'KeyJ' && !e.repeat) this.placeRamp();
-      if (e.code === 'KeyM' && !e.repeat && this.threeMap) this.overviewTarget = this.overviewTarget ? 0 : 1;
+      if (e.code === 'Tab' && !e.repeat) {
+        if (this.tryOpenDealer()) { /* showroom takes Tab on the lot */ }
+        else this.cycleMissionFocus();
+      }
+      if (e.code === 'KeyJ' && !e.repeat) this.beginRampCharge();
+      if (e.code === 'KeyM' && !e.repeat) this.toggleOverview();
     }) as EventListener);
-    listen(window, 'keyup', ((e: KeyboardEvent) => { this.keys.delete(e.code); }) as EventListener);
+    listen(window, 'keyup', ((e: KeyboardEvent) => {
+      this.keys.delete(e.code);
+      if (e.code === 'KeyJ') this.commitRamp();
+    }) as EventListener);
     const clear = () => {
       this.keys.clear();
+      if (this.rampCharge) this.commitRamp();
       this.vehicle.speed = 0;
       this.vehicle.throttle = 0;
       this.last = 0;
       this.accumulator = 0;
       this.renderVehicle.reset(this.vehicle);
       this.dragging = false;
+      this.lookPointer = null;
+      this.lookOrigin = null;
+      this.lookDragging = false;
       this.aimingFire = false;
       this.combatLayer?.setFiring(false);
+      this.combatLayer?.setAim(null);
+      this.aimHud(0, 0, false, false);
     };
     listen(window, 'blur', clear);
     listen(document, 'visibilitychange', clear);
     listen(el, 'contextmenu', (e) => e.preventDefault());
     listen(el, 'pointerdown', ((e: PointerEvent) => {
       if (this.paused) return;
-      if (e.button === 2 && this.driving) { this.dragging = true; el.setPointerCapture(e.pointerId); }
-      if (e.button === 0 && this.driving && !this.approachFrom) {
-        const bounds = el.getBoundingClientRect();
-        this.aimScreen = [e.clientX - bounds.left, e.clientY - bounds.top];
-        this.updateAim();
-        this.aimingFire = true;
-        this.aimHud(this.aimScreen[0], this.aimScreen[1], true, true);
-        this.combatLayer?.setFiring(true);
+      if (!this.driving || this.approachFrom) return;
+      // M-map: leave the pointer to ThreeMap pan/zoom — no reticle, no orbit.
+      if (this.mapInspecting()) return;
+      if (e.button === 2) {
+        this.dragging = true;
+        el.setPointerCapture(e.pointerId);
+        return;
       }
+      if (e.button !== 0) return;
+      const bounds = el.getBoundingClientRect();
+      const x = e.clientX - bounds.left;
+      const y = e.clientY - bounds.top;
+      this.lookPointer = e.pointerId;
+      // a mouse keeps firing wherever it moves (the right button looks around);
+      // a finger that slides turns to looking around instead
+      this.lookOrigin = e.pointerType === 'mouse' ? null : { x, y };
+      this.lookDragging = false;
+      // hold to shoot; if the pointer moves, we switch to looking around
+      this.aimScreen = [x, y];
+      this.updateAim();
+      this.aimingFire = true;
+      this.combatLayer?.setFiring(true);
+      this.aimHud(x, y, true, true);
+      el.setPointerCapture(e.pointerId);
     }) as EventListener);
-    listen(el, 'pointerup', () => { this.dragging = false; });
+    listen(el, 'pointerup', ((e: PointerEvent) => {
+      if (e.button === 2) this.dragging = false;
+      if (e.pointerId === this.lookPointer) this.endLookPointer(false);
+    }) as EventListener);
     listen(window, 'pointermove', ((e: PointerEvent) => {
-      if (this.paused) return;
-      if (this.driving && !this.approachFrom) {
-        const bounds = this.host.getBoundingClientRect();
-        const x = e.clientX - bounds.left;
-        const y = e.clientY - bounds.top;
-        this.aimScreen = [x, y];
-        this.updateAim();
-        this.aimHud(x, y, true, this.aimingFire);
+      if (this.paused || !this.driving || this.approachFrom || this.mapInspecting()) return;
+      const bounds = this.host.getBoundingClientRect();
+      const x = e.clientX - bounds.left;
+      const y = e.clientY - bounds.top;
+      if (this.lookPointer === e.pointerId) {
+        const moved = this.lookOrigin ? Math.hypot(x - this.lookOrigin.x, y - this.lookOrigin.y) : 0;
+        if (!this.lookDragging && moved > 7) {
+          // drag = look around; cancel gun so the map is free to pan
+          this.lookDragging = true;
+          this.stopGun();
+        }
+        if (this.lookDragging) {
+          this.orbit += e.movementX * 0.22 * this.settings.sensitivity;
+          this.pitch = Math.max(cameraConfig.minPitch, Math.min(cameraConfig.maxPitch, this.pitch - e.movementY * 0.12 * this.settings.sensitivity));
+        } else {
+          // held still: aim and fire
+          this.aimScreen = [x, y];
+          this.updateAim();
+          if (!this.aimingFire) {
+            this.aimingFire = true;
+            this.combatLayer?.setFiring(true);
+          }
+          this.aimHud(x, y, true, true);
+        }
       }
       if (this.dragging) {
         this.orbit += e.movementX * 0.22 * this.settings.sensitivity;
@@ -378,20 +543,17 @@ export class GameEngine {
       }
     }) as EventListener);
     listen(el, 'pointerleave', () => {
-      this.aimScreen = null;
-      this.aimingFire = false;
-      this.combatLayer?.setAim(null);
-      this.aimHud(0, 0, false, false);
+      if (this.lookPointer != null) return; // capture keeps look/fire going
+      this.stopGun();
     });
-    const stopFiring = () => {
-      this.aimingFire = false;
-      this.combatLayer?.setFiring(false);
-      if (this.aimScreen) this.aimHud(this.aimScreen[0], this.aimScreen[1], true, false);
-    };
-    listen(window, 'pointerup', stopFiring);
-    listen(window, 'pointercancel', stopFiring);
+    listen(window, 'pointercancel', ((e: PointerEvent) => {
+      if (e.pointerId === this.lookPointer) this.endLookPointer(true);
+      this.dragging = false;
+    }) as EventListener);
     listen(el, 'wheel', ((e: WheelEvent) => {
       if (!this.driving || this.paused) return;
+      // M-map: ThreeMap scrollZoom owns the wheel (pan/zoom the city).
+      if (this.mapInspecting()) return;
       e.preventDefault();
       this.distance = Math.max(cameraConfig.minDistance, Math.min(cameraConfig.maxDistance, this.distance * Math.exp(e.deltaY * 0.001)));
     }) as EventListener, { passive: false });
@@ -405,8 +567,23 @@ export class GameEngine {
     this.status(text, toast);
   }
 
+  private stopGun() {
+    this.aimScreen = null;
+    this.aimingFire = false;
+    this.combatLayer?.setFiring(false);
+    this.combatLayer?.setAim(null);
+    this.aimHud(0, 0, false, false);
+  }
+
+  private endLookPointer(_force: boolean) {
+    this.lookPointer = null;
+    this.lookOrigin = null;
+    this.lookDragging = false;
+    this.stopGun();
+  }
+
   private updateAim() {
-    if (!this.aimScreen || !this.driving || this.approachFrom) {
+    if (!this.aimScreen || !this.driving || this.approachFrom || this.mapInspecting()) {
       this.combatLayer?.setAim(null);
       return;
     }
@@ -414,8 +591,8 @@ export class GameEngine {
     this.combatLayer?.setAim({ ground: [target.lng, target.lat], screen: this.aimScreen });
   }
 
-  decorate() {
-    this.sourceId = SOURCE_ID;
+  private placeTargetIndicator(marker: { element: HTMLElement; arrow: HTMLElement; distance: HTMLElement }, target: [number, number], pinMeters = MARKER_PIN_METERS) {
+    placeIndicator(this.map, marker, this.vehicle.position, target, pinMeters, this.mapInspecting());
   }
 
   setCar(car: Car) {
@@ -425,11 +602,48 @@ export class GameEngine {
     this.combatLayer?.setCar(car);
   }
 
+  /** Lot catalogue for the dealership dialog. */
+  private dealerState(): DealerOffer {
+    return { money: Math.floor(this.playerMoney), currentId: this.car.id, tradeIn: tradeInPrice(this.car) };
+  }
+
+  /** Open the showroom when standing on a dealership lot (Tab, or slow arrival). */
+  private tryOpenDealer() {
+    if (!this.driving || this.mode !== 'roam' || this.dealerOpen || this.serviceOpen || this.travelOpen || this.fuelOut) return false;
+    const lot = atStation(this.vehicle.position, [...this.dealerships.values()]);
+    if (!lot) return false;
+    this.offeredService = lot.id;
+    this.dealerOpen = true;
+    this.keys.clear();
+    this.vehicle.speed = 0;
+    this.onDealerOffer(this.dealerState());
+    return true;
+  }
+
+  leaveDealer() {
+    this.dealerOpen = false;
+    this.onDealerOffer(null);
+  }
+
+  /** Buy `carId`: pay shelf price, get half the current car back as trade-in, swap immediately. */
+  buyDealerCar(carId: string) {
+    if (!this.dealerOpen) return;
+    const next = carsConfig.find((c) => c.id === carId);
+    if (!next || next.id === this.car.id) return;
+    const net = carPrice(next) - tradeInPrice(this.car);
+    if (net > this.playerMoney) return;
+    this.playerMoney -= net;
+    this.setCar(next);
+    this.onCarBought(next);
+    this.onDealerOffer(this.dealerState());
+  }
+
   applySettings(settings: Settings) {
     const terrainChanged = settings.terrain !== this.settings.terrain;
     this.settings = settings;
-    if (!this.map.getSource('elevation')) return;
-    this.map.setTerrain(settings.terrain ? { source: 'elevation', exaggeration: 1 } : null);
+    this.map.setSkin(settings.skin);
+    if (!this.mapLoaded) return;
+    this.map.setRelief(settings.terrain);
     const ratio = settings.quality === 'low' ? 1 : settings.quality === 'medium' ? 1.25 : Math.min(window.devicePixelRatio || 1, 1.5);
     this.map.setPixelRatio(ratio);
     if (terrainChanged) { this.collisionDirty = true; this.syncedAt = null; }
@@ -451,9 +665,9 @@ export class GameEngine {
   }
 
   setSpawnFromClick(lngLat: { lng: number; lat: number }) {
-    if (!this.sourceId) return;
+    if (!this.mapLoaded) return;
     const origin: [number, number] = [lngLat.lng, lngLat.lat];
-    const start = roadStart(this.map, this.sourceId, origin, (position, heading) => this.collisions.blocked(position, position, heading));
+    const start = roadStart(this.map, origin, (position, heading) => this.collisions.blocked(position, position, heading));
     const position: [number, number] = start ? start.position : origin;
     const heading = start ? start.heading : this.vehicle.heading;
     this.customSpawn = { position, heading };
@@ -464,7 +678,7 @@ export class GameEngine {
     this.setTargetVehicles(position, heading);
     this.collisionDirty = true;
     if (this.settings.terrain) {
-      const ground = this.map.queryTerrainElevation(position);
+      const ground = this.map.groundAt(position);
       if (ground != null) this.altitude = ground;
     }
     this.placeSpawnMarker(position);
@@ -489,7 +703,7 @@ export class GameEngine {
     this.carry = null;
     this.fuelOut = false;
     this.onFuelOut(false);
-    const roads = this.map.querySourceFeatures(this.sourceId, { sourceLayer: 'transportation' }) as MapFeature[];
+    const roads = this.map.features('transportation') as MapFeature[];
     this.trafficNetwork.addFeatures(roads);
     this.trafficNetwork.flushRebuild();
     this.vehicleContactTimes.clear();
@@ -523,11 +737,11 @@ export class GameEngine {
         ?? this.trafficNetwork.randomAway(position, new Set(), Math.max(120, min * 0.6), max * 1.25, seed + attempt * 97 + 13);
       if (!node) continue;
       const spot = [...node.position] as [number, number];
-      if (avoid.some(other => distanceMeters(spot, other) < 280)) continue;
+      if (avoid.some(other => metersBetween(spot, other) < 280)) continue;
       return spot;
     }
     const ahead = this.trafficNetwork.destinationAhead(position, heading, seed);
-    if (ahead && !avoid.some(other => distanceMeters(ahead as [number, number], other) < 220)) return [...ahead] as [number, number];
+    if (ahead && !avoid.some(other => metersBetween(ahead as [number, number], other) < 220)) return [...ahead] as [number, number];
     const side = seed & 1 ? 1 : -1;
     return offsetPosition(position, Math.sin(heading + side) * (420 + (seed % 260)), Math.cos(heading + side) * (420 + (seed % 260))) as [number, number];
   }
@@ -556,12 +770,44 @@ export class GameEngine {
 
   private syncMissionVisuals(showWorld = this.mode === 'roam') {
     const visible = showWorld ? this.missions : [];
-    this.combatLayer?.setMissionBeacons(visible.map(mission => ({
+    const beacons: { id: string; kind: 'arena' | 'race' | 'bounty'; position: [number, number] }[] = visible.map(mission => ({
       id: mission.id,
       kind: mission.kind,
       position: mission.position,
-    })));
+    }));
+    if (showWorld && !this.bountyFight) {
+      if (this.bountyPending && this.bountyPickup) {
+        beacons.push({ id: 'bounty-pickup', kind: 'bounty', position: this.bountyPickup });
+      } else if (this.bounty?.spot) {
+        beacons.push({ id: 'bounty', kind: 'bounty', position: this.bounty.spot });
+      }
+    }
+    this.combatLayer?.setMissionBeacons(beacons);
     this.ensureEventMarkers();
+  }
+
+  /** Arena/race missions plus the wanted job (pending pickup or accepted hunt). */
+  private focusGoals() {
+    const goals: Array<
+      | { kind: 'mission'; id: string; label: string; position: [number, number] }
+      | { kind: 'bounty'; label: string; position: [number, number] | null }
+    > = this.missions.map(mission => ({
+      kind: 'mission' as const,
+      id: mission.id,
+      label: mission.label,
+      position: mission.position,
+    }));
+    if (this.bountyFight) return goals;
+    if (this.bountyPending && this.bountyPickup) {
+      goals.push({ kind: 'bounty', label: t('bounty.goal'), position: this.bountyPickup });
+    } else if (this.bounty) {
+      goals.push({
+        kind: 'bounty',
+        label: t('bounty.marker', { name: this.bounty.name }),
+        position: this.bounty.spot ?? null,
+      });
+    }
+    return goals;
   }
 
   private placeEventBeacons(position: [number, number], heading: number) {
@@ -583,10 +829,12 @@ export class GameEngine {
   }
 
   private cycleMissionFocus() {
-    if (!this.driving || this.mode !== 'roam' || this.missions.length < 2) return;
-    this.missionFocus = (this.missionFocus + 1) % this.missions.length;
-    const mission = this.missions[this.missionFocus];
-    if (mission) this.say(t('mission.target', { label: mission.label }), true);
+    if (!this.driving || this.mode !== 'roam') return;
+    const goals = this.focusGoals();
+    if (goals.length < 2) return;
+    this.missionFocus = (this.missionFocus + 1) % goals.length;
+    const goal = goals[this.missionFocus];
+    if (goal) this.say(t('mission.target', { label: goal.label }), true);
   }
 
   private completeActiveMission() {
@@ -627,6 +875,55 @@ export class GameEngine {
     this.say(t('mission.new', { label: added.label }), true);
   }
 
+  /** the parked test cars (extra targets), and when they were last placed */
+  private testList: TargetVehicle[] = [];
+  private testTargetsAt = 0;
+  private testSerial = 0;
+
+  /** Shared traffic and test cars: targets beside the missions', every frame. */
+  private syncExtraTargets(dt: number, now: number) {
+    const layer = this.combatLayer;
+    if (!layer) return;
+    layer.setExtraTargets([...this.sharedTraffic.update(dt, now), ...this.testTargets(now)]);
+  }
+
+  /**
+   * Parked test cars to shoot at, in rings around the car (?testcars=N in the
+   * address). Once every one has burnt out, fresh ones.
+   */
+  private testTargets(now: number): TargetVehicle[] {
+    const layer = this.combatLayer;
+    const count = testCarCount();
+    if (!this.driving || !layer || !count) { this.testList = []; return this.testList; }
+    if (this.testList.length) {
+      if (this.testList.some((t) => layer.isTargetAlive(t.id))) { this.testTargetsAt = now; return this.testList; }
+      if (now - this.testTargetsAt < 8000) return this.testList; // let the wrecks burn out first
+    } else if (now - this.testTargetsAt < 1000) return this.testList; // a try a second at most
+    this.testTargetsAt = now;
+    const { position, heading } = this.vehicle;
+    const targets: TargetVehicle[] = [];
+    // spots in rings around the car, ahead first; only where a car could drive to (no wall, no water)
+    for (let ring = 0; ring < 4 && targets.length < count; ring++) {
+      for (let k = 0; k < 12 && targets.length < count; k++) {
+        const angle = heading + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 0.5;
+        const distance = 14 + ring * 9;
+        const at: Position = [
+          position[0] + Math.sin(angle) * distance / (111320 * Math.cos(position[1] * Math.PI / 180)),
+          position[1] + Math.cos(angle) * distance / 111320,
+        ];
+        if (targets.some((o) => metersBetween(o.position, at) < 7)) continue;
+        if (this.collisions.blocked(position, at, angle, 1, this.altitude) || this.water.resolve(position, at, angle).stopped) continue;
+        // on the same surface as us (not the river beside a bridge, not a roof)
+        const ground = this.map.groundAt(at, this.altitude);
+        if (ground == null || Math.abs(ground - this.altitude) > 2) continue;
+        const i = targets.length;
+        targets.push({ id: `test-${this.testSerial++}`, driver: t('net.testCar') + ' ' + (i + 1), car: carsConfig[(i * 3 + 1) % carsConfig.length], position: at, heading: heading + i * 1.3 });
+      }
+    }
+    if (targets.length) this.testList = targets; // walled in: try again after we move
+    return this.testList;
+  }
+
   private targetVehicles() {
     return this.trafficBots.map(({ id, driver, car, position, heading }) => ({
       id, driver, car, position, heading,
@@ -636,6 +933,7 @@ export class GameEngine {
   private resolveVehicleContacts(now: number) {
     const participants = [
       { id: 'player', controller: this.vehicle, car: this.car },
+      ...this.sharedTraffic.bots().map((bot) => ({ id: bot.id, controller: bot.controller, car: bot.car })),
       ...this.trafficBots
         .filter(bot => !this.combatLayer || this.combatLayer.isTargetAlive(bot.id))
         .map(bot => ({ id: bot.id, controller: bot.controller, car: bot.car })),
@@ -710,6 +1008,16 @@ export class GameEngine {
         money: Math.floor(this.playerMoney),
         wins: this.wins.get('player') ?? 0,
       },
+      // other players: their health as they report it; money and wins are their own business
+      ...this.players.others().map((p) => ({
+        id: `net:${p.id}`,
+        name: p.name,
+        color: PLAYER_MARKER_COLOR,
+        hp: p.hp,
+        maxHp: PLAYER_HP,
+        money: Number.NaN,
+        wins: Number.NaN,
+      })),
       ...this.trafficBots.map((bot, index) => {
         const target = targetHealth.get(bot.id);
         const dead = Boolean(target && target.hp <= 0);
@@ -730,6 +1038,49 @@ export class GameEngine {
     this.wins.set(id, (this.wins.get(id) ?? 0) + 1);
   }
 
+  /**
+   * Another player's bullet. Only while roaming (a mission is our own fight); at
+   * zero we blow up, stop dead and come back with full health. True when it got us.
+   */
+  private hitByPlayer(name: string, damage: number): boolean {
+    if (!this.driving || this.mode !== 'roam' || this.bountyFight || this.playerHp <= 0) return false;
+    this.playerHp = Math.max(0, this.playerHp - damage);
+    this.combatLayer?.flashPlayer(160);
+    const now = performance.now();
+    if (now - this.hitNoticeAt > 3000) { this.hitNoticeAt = now; this.say(t('pvp.hit', { name })); }
+    if (this.playerHp > 0) return false;
+    this.combatLayer?.explodePlayer();
+    this.vehicle.speed = 0;
+    this.playerHp = this.playerMaxHp;
+    return true;
+  }
+
+  private hitNoticeAt = 0;
+
+  /** the camera keeps north up (compass double-click) until the player turns it */
+  private northUp = false;
+
+  /**
+   * Turn the view to north up, smoothly. Driving, it stays so (the car turns under
+   * it) until the player turns the view; on the menu and the map it simply turns.
+   */
+  faceNorth() {
+    if (this.driving) {
+      this.northUp = true;
+      this.orbit = 0;
+      return;
+    }
+    const from = this.map.getBearing();
+    const start = performance.now();
+    const step = () => {
+      const t = Math.min(1, (performance.now() - start) / 650);
+      const eased = t * t * (3 - 2 * t);
+      this.map.jumpTo({ bearing: from * (1 - eased) });
+      if (t < 1 && !this.disposed) requestAnimationFrame(step);
+    };
+    step();
+  }
+
   private damagePlayer(amount: number) {
     if (this.mode !== 'arena' || amount <= 0 || this.playerHp <= 0) return;
     this.playerHp = Math.max(0, this.playerHp - amount);
@@ -739,7 +1090,7 @@ export class GameEngine {
   acceptEvent() {
     if (this.mode !== 'roam' || !this.driving || !this.eventOffer) return;
     const kind = this.eventOffer;
-    const nearby = this.missions.find(mission => mission.kind === kind && distanceMeters(this.vehicle.position, mission.position) <= 18)
+    const nearby = this.missions.find(mission => mission.kind === kind && metersBetween(this.vehicle.position, mission.position) <= 18)
       ?? this.missions.find(mission => mission.kind === kind)
       ?? null;
     this.activeMissionId = nearby?.id ?? null;
@@ -781,8 +1132,10 @@ export class GameEngine {
       usedStarts,
       'hunt',
       seedBase ^ (index * 7919),
-      { min: 80, max: 1000 },
+      // Spread across neighbouring districts, then they hunt the player and each other.
+      { min: 280, max: 1800 },
     ));
+    for (let i = 0; i < this.trafficBots.length; i++) this.trafficBots[i].repathAt = performance.now() + i * 160;
     this.mode = 'arena';
     this.playerHp = this.playerMaxHp;
     this.vehicleContactTimes.clear();
@@ -797,8 +1150,8 @@ export class GameEngine {
     const center = this.vehicle.position as [number, number];
     const heading = this.vehicle.heading;
     const seedBase = Math.round(center[0] * 1e5) ^ Math.round(center[1] * 1e5) ^ (performance.now() | 0);
-    const finishSpot = this.trafficNetwork.randomAway(center, new Set(), 4200, 5800, seedBase)
-      ?? this.trafficNetwork.randomAway(center, new Set(), 2800, 6500, seedBase + 41);
+    const finishSpot = this.trafficNetwork.randomAway(center, new Set(), 1800, 2200, seedBase)
+      ?? this.trafficNetwork.randomAway(center, new Set(), 1400, 2600, seedBase + 41);
     const finishAhead = finishSpot ? null : this.trafficNetwork.destinationAhead(center, heading, seedBase);
     if (!finishSpot && !finishAhead) {
       this.say(t('race.unavailable'), true);
@@ -827,6 +1180,7 @@ export class GameEngine {
       bot.route = [];
       bot.routeIndex = 1;
       bot.lastRouteRevision = -1;
+      bot.repathAt = performance.now() + index * 160; // one Dijkstra per frame, not three
       return bot;
     });
     this.mode = 'race';
@@ -856,13 +1210,15 @@ export class GameEngine {
     this.clearEventBots();
     this.completeActiveMission();
     this.showEventBeacons();
+    this.onEventResult({ kind: 'arena', won });
   }
 
   private endRace(winnerId: string, winnerName: string) {
     if (this.mode !== 'race') return;
     this.mode = 'roam';
     this.eventCooldown = performance.now() + 8000;
-    if (winnerId === 'player') {
+    const won = winnerId === 'player';
+    if (won) {
       this.playerMoney += 10000;
       this.addWin('player');
       this.say(t('race.won'), true);
@@ -882,9 +1238,25 @@ export class GameEngine {
     this.clearEventBots();
     this.completeActiveMission();
     this.showEventBeacons();
+    this.onEventResult({ kind: 'race', won, name: won ? undefined : winnerName });
   }
 
-  private ensureHealthMarkers() {
+  /** Everybody with a health meter over the car: us, mission bots, other players, shared traffic and test cars. */
+  private meterTargets(): { id: string; name: string; hp: number; maxHp: number; position: Position }[] {
+    const layer = this.combatLayer;
+    const out = [{ id: 'player', name: t('you'), hp: this.playerHp, maxHp: this.playerMaxHp, position: this.renderVehicle.position }];
+    for (const p of this.players.others()) out.push({ id: `net:${p.id}`, name: p.name, hp: p.hp, maxHp: PLAYER_HP, position: p.position });
+    const health = new Map((layer?.targetHealth() ?? []).map((h) => [h.id, h]));
+    for (const bot of this.trafficBots) {
+      if (layer && !layer.isTargetAlive(bot.id)) continue;
+      const h = health.get(bot.id);
+      out.push({ id: bot.id, name: bot.driver, hp: h?.hp ?? 1000, maxHp: h?.maxHp ?? 1000, position: bot.position });
+    }
+    for (const e of layer?.extraHealth() ?? []) out.push({ id: e.id, name: e.driver, hp: e.hp, maxHp: e.maxHp, position: e.position });
+    return out;
+  }
+
+  private ensureHealthMarkers(participants = this.meterTargets()) {
     if (!this.healthMarkerLayer) {
       this.healthMarkerLayer = document.createElement('div');
       this.healthMarkerLayer.className = 'overhead-health-indicators';
@@ -896,7 +1268,6 @@ export class GameEngine {
       this.host.appendChild(this.healthMarkerLayer);
     }
 
-    const participants = this.hudParticipants();
     const active = new Set(participants.map(participant => participant.id));
     for (const [id, marker] of this.healthMarkers) {
       if (active.has(id)) continue;
@@ -933,21 +1304,18 @@ export class GameEngine {
   private updateHealthMarkers(updateMeters = true) {
     for (const marker of this.healthMarkers.values()) marker.element.style.display = 'none';
     if (!this.driving) return;
-
     const canvas = this.map.getCanvas();
     const width = canvas.clientWidth;
     const height = canvas.clientHeight;
     if (!width || !height) return;
 
-    const participants = this.hudParticipants();
+    // one list a frame: who has a meter and where (players and traffic come and go)
+    const participants = this.meterTargets();
+    this.ensureHealthMarkers(participants);
     for (const participant of participants) {
       const marker = this.healthMarkers.get(participant.id);
       if (!marker) continue;
-      if (participant.id !== 'player' && !this.combatLayer?.isTargetAlive(participant.id)) continue;
-      const position = participant.id === 'player'
-        ? this.renderVehicle.position
-        : this.trafficBots.find(bot => bot.id === participant.id)?.position;
-      if (!position) continue;
+      const position = participant.position;
 
       const point = this.map.project(position);
       if (!Number.isFinite(point.x) || !Number.isFinite(point.y)
@@ -972,10 +1340,10 @@ export class GameEngine {
     const position = this.vehicle.position;
     if (this.pickupNetworkRevision === this.trafficNetwork.revision
       && this.pickupFocus
-      && distanceMeters(this.pickupFocus, position) < 120) return;
+      && metersBetween(this.pickupFocus, position) < 120) return;
 
     for (const [id, pickup] of this.pickups) {
-      if (distanceMeters(position, pickup.position) <= 800) continue;
+      if (metersBetween(position, pickup.position) <= 800) continue;
       this.pickups.delete(id);
     }
 
@@ -1013,7 +1381,7 @@ export class GameEngine {
     const collect = (position: [number, number]) => {
       let money = 0;
       for (const [id, pickup] of this.pickups) {
-        if (distanceMeters(position, pickup.position) > 3.5) continue;
+        if (metersBetween(position, pickup.position) > 3.5) continue;
         this.pickups.delete(id);
         this.collectedPickups.add(id);
         money += 100;
@@ -1031,6 +1399,12 @@ export class GameEngine {
     if (totalMoney) this.combatLayer?.setPickups(this.pickupVisuals());
   }
 
+  /** Send a chat line to everybody. */
+  chat(text: string) { this.players.say(text); }
+
+  /** Join the shared world under this name (again: just a rename). */
+  joinNetwork(name: string) { this.players.join(name); }
+
   private ensureTrafficMarkers() {
     if (!this.trafficMarkerLayer) {
       this.trafficMarkerLayer = document.createElement('div');
@@ -1046,30 +1420,16 @@ export class GameEngine {
     }
     this.trafficBots.forEach((bot, index) => {
       if (this.trafficMarkers.has(bot.id)) return;
-      const element = document.createElement('div');
-      element.className = 'traffic-indicator';
-      const arrow = document.createElement('span');
-      arrow.className = 'traffic-indicator-arrow';
-      const name = document.createElement('span');
-      name.className = 'traffic-indicator-name';
-      name.textContent = bot.driver;
-      element.style.setProperty('--traffic-color', TRAFFIC_MARKER_COLORS[index % TRAFFIC_MARKER_COLORS.length]);
-      element.append(arrow, name);
-      markerLayer.appendChild(element);
-      this.trafficMarkers.set(bot.id, { element, arrow });
+      const marker = nameIndicator('traffic-indicator', TRAFFIC_MARKER_COLORS[index % TRAFFIC_MARKER_COLORS.length]);
+      marker.name.textContent = bot.driver;
+      markerLayer.appendChild(marker.element);
+      this.trafficMarkers.set(bot.id, marker);
     });
   }
 
   private updateTrafficMarkers() {
     for (const marker of this.trafficMarkers.values()) marker.element.style.display = 'none';
     if (!this.driving || !this.trafficBots.length) return;
-    const canvas = this.map.getCanvas();
-    const width = canvas.clientWidth;
-    const height = canvas.clientHeight;
-    if (!width || !height) return;
-    const centerX = width / 2;
-    const centerY = height / 2;
-    const margin = Math.min(78, Math.max(26, Math.min(width, height) * 0.16));
     this.trafficBots.forEach((bot, index) => {
       const marker = this.trafficMarkers.get(bot.id);
       if (!marker) return;
@@ -1079,20 +1439,7 @@ export class GameEngine {
         dead ? '#8b9198' : TRAFFIC_MARKER_COLORS[index % TRAFFIC_MARKER_COLORS.length],
       );
       marker.element.classList.toggle('is-dead', dead);
-      const point = this.map.project(bot.position);
-      if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
-      if (point.x >= 0 && point.x <= width && point.y >= 0 && point.y <= height) return;
-      const dx = point.x - centerX;
-      const dy = point.y - centerY;
-      const xLimit = Math.max(1, centerX - margin);
-      const yLimit = Math.max(1, centerY - margin);
-      const scale = Math.min(1, dx ? xLimit / Math.abs(dx) : Infinity, dy ? yLimit / Math.abs(dy) : Infinity);
-      const x = centerX + dx * scale;
-      const y = centerY + dy * scale;
-      marker.element.style.display = 'flex';
-      marker.element.style.left = `${x}px`;
-      marker.element.style.top = `${y}px`;
-      marker.arrow.style.transform = `rotate(${Math.atan2(dy, dx) * 180 / Math.PI + 90}deg)`;
+      this.placeTargetIndicator(marker, bot.position, MARKER_PIN_METERS);
     });
   }
 
@@ -1116,19 +1463,20 @@ export class GameEngine {
     }
     if (this.mode === 'race') {
       if (!this.raceGoal) return;
-      if (distanceMeters(this.vehicle.position, this.raceGoal) <= 12) {
+      // Generous radius — flag is a point; cars need room to count as finished.
+      if (metersBetween(this.vehicle.position, this.raceGoal) <= 28) {
         this.endRace('player', t('you'));
         return;
       }
       const winner = this.trafficBots.find(bot =>
-        this.combatLayer?.isTargetAlive(bot.id) && distanceMeters(bot.position, this.raceGoal!) <= 12,
+        this.combatLayer?.isTargetAlive(bot.id) && metersBetween(bot.position, this.raceGoal!) <= 28,
       );
       if (winner) this.endRace(winner.id, winner.driver);
       return;
     }
     this.refillMissions();
     if (this.eventOffer || performance.now() < this.eventCooldown) return;
-    const nearby = this.missions.find(mission => distanceMeters(this.vehicle.position, mission.position) <= 14);
+    const nearby = this.missions.find(mission => metersBetween(this.vehicle.position, mission.position) <= 14);
     if (!nearby) return;
     this.eventOffer = nearby.kind;
     this.activeMissionId = nearby.id;
@@ -1231,43 +1579,51 @@ export class GameEngine {
     titleText?: string,
   ) {
     if (!marker) return;
-    marker.element.style.display = 'none';
-    if (!visible || !target) return;
+    if (!visible || !target) {
+      marker.element.style.display = 'none';
+      return;
+    }
     if (titleText && marker.title) marker.title.textContent = titleText;
-    const canvas = this.map.getCanvas();
-    const width = canvas.clientWidth;
-    const height = canvas.clientHeight;
-    if (!width || !height) return;
-    const point = this.map.project(target);
-    if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
-    const sideMargin = Math.min(90, width * 0.14);
-    const topMargin = Math.min(132, height * 0.22);
-    const bottomMargin = Math.min(86, height * 0.14);
-    if (point.x >= sideMargin && point.x <= width - sideMargin
-      && point.y >= topMargin && point.y <= height - bottomMargin) return;
-    const centerX = width / 2;
-    const centerY = height / 2;
-    const dx = point.x - centerX;
-    const dy = point.y - centerY;
-    const xLimit = Math.max(1, centerX - sideMargin);
-    const yLimit = Math.max(1, centerY - (dy < 0 ? topMargin : bottomMargin));
-    const scale = Math.min(1, dx ? xLimit / Math.abs(dx) : Infinity, dy ? yLimit / Math.abs(dy) : Infinity);
-    marker.element.style.display = 'flex';
-    marker.element.style.left = `${centerX + dx * scale}px`;
-    marker.element.style.top = `${centerY + dy * scale}px`;
-    marker.arrow.style.transform = `rotate(${Math.atan2(dy, dx) * 180 / Math.PI + 90}deg)`;
-    marker.distance.textContent = t('unit.m', { n: formatNumber(Math.round(distanceMeters(this.vehicle.position, target))) });
+    // missions stay on the edge until close — no on-car pin
+    this.placeTargetIndicator(marker, target, 0);
   }
 
-  /** Offer a job now and then; with a job, find the spot, then the wanted car. */
+  /** Spawn a local wanted pin now and then; take the job there, then hunt the city. */
   private updateBounty() {
     const now = performance.now();
     const here = this.vehicle.position;
+    if (this.bountyPending && !this.bounty) {
+      if (this.mode !== 'roam' || this.bountyFight) return;
+      if (
+        this.bountyPickup
+        && !this.bountyOfferShown
+        && !this.eventOffer
+        && !this.travelOpen
+        && !this.serviceOpen
+        && !this.dealerOpen
+        && !this.fuelOut
+        && now > this.bountyApproachCooldown
+        && metersBetween(here, this.bountyPickup) <= 14
+      ) {
+        this.bountyOfferShown = true;
+        this.onBountyOffer(this.bountyOfferOf(this.bountyPending));
+      }
+      return;
+    }
     if (!this.bounty) {
-      const busy = this.mode !== 'roam' || this.bountyPending || this.eventOffer || this.travelOpen || this.serviceOpen || this.fuelOut;
+      const busy = this.mode !== 'roam' || this.bountyPending || this.eventOffer || this.travelOpen || this.serviceOpen || this.dealerOpen || this.fuelOut;
       if (busy || now < this.bountyOfferAt) return;
       this.bountyPending = makeBounty(here);
-      this.onBountyOffer(this.bountyOfferOf(this.bountyPending));
+      const seed = Math.round(here[0] * 1e5) ^ Math.round(here[1] * 1e5) ^ (now | 0);
+      this.bountyPickup = this.pickBeaconSpot(
+        here as [number, number],
+        this.vehicle.heading,
+        seed,
+        this.missions.map(mission => mission.position),
+      );
+      this.bountyOfferShown = false;
+      this.syncMissionVisuals(true);
+      this.say(t('mission.new', { label: t('bounty.goal') }), true);
       return;
     }
     const bounty = this.bounty;
@@ -1278,9 +1634,10 @@ export class GameEngine {
       if (node) {
         bounty.spot = [...node.position] as [number, number];
         saveBounty(bounty);
+        this.syncMissionVisuals(true);
       }
     }
-    if (bounty.spot && now > this.bountyRetryAt && distanceMeters(here, bounty.spot) < 650) this.startBountyFight(bounty);
+    if (bounty.spot && now > this.bountyRetryAt && metersBetween(here, bounty.spot) < 650) this.startBountyFight(bounty);
   }
 
   private bountyOfferOf(bounty: Bounty): BountyOffer {
@@ -1298,15 +1655,24 @@ export class GameEngine {
     if (!this.bountyPending) return;
     this.bounty = this.bountyPending;
     this.bountyPending = null;
+    this.bountyPickup = null;
+    this.bountyOfferShown = false;
+    this.bountyMarker?.remove();
+    this.bountyMarker = null;
     saveBounty(this.bounty);
     this.onBountyOffer(null);
+    this.syncMissionVisuals(true);
+    const goals = this.focusGoals();
+    const bountyIndex = goals.findIndex(goal => goal.kind === 'bounty');
+    if (bountyIndex >= 0) this.missionFocus = bountyIndex;
     const km = Math.round(kilometres(this.vehicle.position, this.bounty.place.coords));
     this.say(t('bounty.accepted', { place: this.bounty.place.name, km: formatNumber(km) }), true);
   }
 
   declineBounty() {
-    this.bountyPending = null;
-    this.bountyOfferAt = performance.now() + 240000;
+    // leave the pin; approach again after a short cooldown
+    this.bountyOfferShown = false;
+    this.bountyApproachCooldown = performance.now() + 14000;
     this.onBountyOffer(null);
   }
 
@@ -1349,10 +1715,11 @@ export class GameEngine {
     }
   }
 
-  /** Where the hunt points: the wanted car, its spot, or (far away) its city. */
+  /** Where the hunt points: pickup pin, the wanted car, its spot, or (far away) its city. */
   private updateBountyMarkers() {
-    const bounty = this.bounty;
-    if (!bounty || !this.driving) {
+    const pending = Boolean(this.bountyPending && this.bountyPickup && !this.bounty);
+    const bounty = this.bountyFight ? null : (this.bounty ?? this.bountyPending);
+    if (!bounty || !this.driving || (pending && !this.bountyPickup)) {
       if (this.bountyIndicator) this.bountyIndicator.element.style.display = 'none';
       if (this.bountyMarker) { this.bountyMarker.remove(); this.bountyMarker = null; }
       return;
@@ -1367,39 +1734,31 @@ export class GameEngine {
       this.bountyIndicator.element.classList.replace('mission-focus-indicator', 'bounty-indicator');
       this.eventIndicatorLayer.appendChild(this.bountyIndicator.element);
     }
-    const title = t('bounty.marker', { name: bounty.name });
+    const title = pending ? t('bounty.goal') : t('bounty.marker', { name: bounty.name });
+    const pin = pending ? this.bountyPickup : (bounty.spot && !this.bountyFight ? bounty.spot : null);
+    if (pin) {
+      if (!this.bountyMarker) {
+        this.bountyMarker = this.marker({ element: this.makeMapLabel('bounty-map-marker', title, title), anchor: 'bottom' }).setLngLat(pin).addTo(this.map);
+      } else {
+        this.bountyMarker.setLngLat(pin);
+        const label = this.bountyMarker.getElement()?.querySelector('span');
+        if (label) label.textContent = title;
+      }
+    } else if (this.bountyMarker) {
+      this.bountyMarker.remove();
+      this.bountyMarker = null;
+    }
     const bot = this.bountyFight ? this.trafficBots[0] : null;
-    if (bounty.spot && !this.bountyFight && !this.bountyMarker) {
-      this.bountyMarker = this.marker({ element: this.makeMapLabel('bounty-map-marker', title, title), anchor: 'bottom' }).setLngLat(bounty.spot).addTo(this.map);
-    }
-    const near = bot ? bot.position : bounty.spot && distanceMeters(this.vehicle.position, bounty.spot) < 2000 ? bounty.spot : null;
-    if (near) {
-      this.updateOffscreenMarker(this.bountyIndicator, near, true, title);
-      return;
-    }
-    // far away: point along the compass direction to its city, at the screen edge
-    const target = bounty.spot ?? bounty.place.coords;
-    const marker = this.bountyIndicator;
-    const canvas = this.map.getCanvas();
-    const width = canvas.clientWidth;
-    const height = canvas.clientHeight;
-    if (!width || !height) return;
-    const angle = (bearingTo(this.vehicle.position, target) - this.map.getBearing()) * Math.PI / 180;
-    const dx = Math.sin(angle);
-    const dy = -Math.cos(angle);
-    const sideMargin = Math.min(90, width * 0.14);
-    const topMargin = Math.min(132, height * 0.22);
-    const bottomMargin = Math.min(86, height * 0.14);
-    const xLimit = width / 2 - sideMargin;
-    const yLimit = height / 2 - (dy < 0 ? topMargin : bottomMargin);
-    const scale = Math.min(dx ? xLimit / Math.abs(dx) : Infinity, dy ? yLimit / Math.abs(dy) : Infinity);
-    marker.title.textContent = title;
-    marker.element.style.display = 'flex';
-    marker.element.style.left = `${width / 2 + dx * scale}px`;
-    marker.element.style.top = `${height / 2 + dy * scale}px`;
-    marker.arrow.style.transform = `rotate(${angle * 180 / Math.PI}deg)`;
-    const km = kilometres(this.vehicle.position, target);
-    marker.distance.textContent = km >= 2 ? t('unit.km', { n: formatNumber(Math.round(km)) }) : t('unit.m', { n: formatNumber(Math.round(km * 1000)) });
+    const near = pending
+      ? this.bountyPickup
+      : bot
+        ? bot.position
+        : bounty.spot && metersBetween(this.vehicle.position, bounty.spot) < 2000
+          ? bounty.spot
+          : null;
+    const target = near ?? bounty.spot ?? bounty.place.coords;
+    this.bountyIndicator.title.textContent = title;
+    this.placeTargetIndicator(this.bountyIndicator, target, near ? MARKER_PIN_METERS : 0);
   }
 
   /** Trains run in the menu and while driving; born and retired out of sight. */
@@ -1420,9 +1779,11 @@ export class GameEngine {
   private updateEventMarkers() {
     this.updateBountyMarkers();
     const roaming = this.driving && this.mode === 'roam';
-    if (this.missionFocus >= this.missions.length) this.missionFocus = Math.max(0, this.missions.length - 1);
-    const focused = roaming ? this.missions[this.missionFocus] ?? null : null;
-    this.updateOffscreenMarker(this.focusIndicator, focused?.position ?? null, Boolean(focused), focused?.label);
+    const goals = this.focusGoals();
+    if (this.missionFocus >= goals.length) this.missionFocus = Math.max(0, goals.length - 1);
+    const focused = roaming ? goals[this.missionFocus] ?? null : null;
+    const mission = focused?.kind === 'mission' ? focused : null;
+    this.updateOffscreenMarker(this.focusIndicator, mission?.position ?? null, Boolean(mission), mission?.label);
     this.updateOffscreenMarker(this.raceGoalIndicator, this.raceGoal, this.driving && this.mode === 'race');
   }
 
@@ -1473,12 +1834,29 @@ export class GameEngine {
     return this.customSpawn ? this.customSpawn.heading : this.vehicle.heading;
   }
 
+  /**
+   * OSM fuel/repair POIs often sit inside the shop building. Snap them to the
+   * nearest free road so the canopy and the dialog are reachable from the street.
+   */
+  private placeService(station: Station): Station {
+    if (!this.mapLoaded) return station;
+    const start = roadStart(
+      this.map,
+      station.position,
+      (position, heading) => this.collisions.blocked(position, position, heading),
+      120,
+    );
+    return start ? { id: station.id, position: [...start.position] } : station;
+  }
+
   /** Real petrol stations from the POI layer; remembered as the player drives on. */
   private collectStations() {
     const pois = this.readSourceLayer('poi');
     this.collectHubs(pois);
     for (const station of stationsFromFeatures(pois)) {
-      if (![...this.stations.values()].some(known => metersBetween(known.position, station.position) < 25)) this.stations.set(station.id, station);
+      if (this.stations.has(station.id)) continue;
+      if ([...this.stations.values()].some(known => metersBetween(known.position, station.position) < 35)) continue;
+      this.stations.set(station.id, this.placeService(station));
     }
     // keep the nearest few hundred; far ones come back when we drive there again
     if (this.stations.size > 300) {
@@ -1486,14 +1864,21 @@ export class GameEngine {
       this.stations = new Map(keep.map(station => [station.id, station]));
     }
     for (const shop of repairShopsFromFeatures(pois)) {
-      if (![...this.repairShops.values()].some(known => metersBetween(known.position, shop.position) < 25)) this.repairShops.set(shop.id, shop);
+      if (this.repairShops.has(shop.id)) continue;
+      if ([...this.repairShops.values()].some(known => metersBetween(known.position, shop.position) < 35)) continue;
+      this.repairShops.set(shop.id, this.placeService(shop));
+    }
+    for (const shop of dealershipsFromFeatures(pois)) {
+      if (this.dealerships.has(shop.id)) continue;
+      if ([...this.dealerships.values()].some(known => metersBetween(known.position, shop.position) < 35)) continue;
+      this.dealerships.set(shop.id, this.placeService(shop));
     }
     const visible = [...this.stations.values()].filter(station => metersBetween(station.position, this.vehicle.position) < 2500);
     this.fuelLayer?.setStations(visible, this.settings.terrain);
     this.labelServices();
   }
 
-  /** Map labels for the nearest fuel stations and car services, like ports. */
+  /** Map labels for the nearest fuel stations, car services and dealerships. */
   private labelServices() {
     const here = this.vehicle.position;
     const nearest = (list: Station[]) => list
@@ -1502,32 +1887,37 @@ export class GameEngine {
       .sort((a, b) => a.d - b.d)
       .slice(0, 10)
       .map(item => item.station);
-    const wanted = new Map<string, { station: Station; kind: 'fuel' | 'repair' }>();
+    const wanted = new Map<string, { station: Station; kind: 'fuel' | 'repair' | 'dealer' }>();
     for (const station of nearest([...this.stations.values()])) wanted.set(station.id, { station, kind: 'fuel' });
     for (const shop of nearest([...this.repairShops.values()])) wanted.set(shop.id, { station: shop, kind: 'repair' });
+    for (const shop of nearest([...this.dealerships.values()])) wanted.set(shop.id, { station: shop, kind: 'dealer' });
     for (const [id, marker] of this.serviceMarkers) {
       if (wanted.has(id)) continue;
       marker.remove();
       this.serviceMarkers.delete(id);
     }
+    const label: Record<'fuel' | 'repair' | 'dealer', string> = {
+      fuel: t('poi.fuel'), repair: t('poi.service'), dealer: t('poi.dealer'),
+    };
     for (const [id, { station, kind }] of wanted) {
       if (this.serviceMarkers.has(id)) continue;
-      const text = kind === 'fuel' ? t('poi.fuel') : t('poi.service');
+      const text = label[kind];
       this.serviceMarkers.set(id, this.marker({ element: this.makeMapLabel(`travel-hub-marker is-${kind}`, text, text), anchor: 'bottom' }).setLngLat(station.position).addTo(this.map));
     }
   }
 
-  /** Ports and airports from real data, with a map label each. */
+  /** Ports, airports and railway stations from real data, with a map label each. */
   private collectHubs(pois: MapFeature[]) {
     for (const hub of hubsFromFeatures(this.readSourceLayer('aerodrome_label'), pois)) {
       if (!this.hubs.has(hub.id)) this.hubs.set(hub.id, hub);
     }
     const here = this.vehicle.position;
+    const hubLabel: Record<HubKind, string> = { airport: t('hub.airport'), port: t('hub.port'), station: t('hub.station') };
     for (const hub of this.hubs.values()) {
       const near = metersBetween(hub.position, here) < 6000;
       const marker = this.hubMarkers.get(hub.id);
       if (near && !marker) {
-        const text = hub.kind === 'airport' ? t('hub.airport') : t('hub.port');
+        const text = hubLabel[hub.kind];
         this.hubMarkers.set(hub.id, this.marker({ element: this.makeMapLabel(`travel-hub-marker is-${hub.kind}`, text, text), anchor: 'bottom' }).setLngLat(hub.position).addTo(this.map));
       } else if (!near && marker) {
         marker.remove();
@@ -1570,13 +1960,15 @@ export class GameEngine {
   private updateFuel(_dt: number) {
     const station = atStation(this.vehicle.position, [...this.stations.values()]);
     const shop = atStation(this.vehicle.position, [...this.repairShops.values()]);
+    const dealer = atStation(this.vehicle.position, [...this.dealerships.values()]);
     this.refuelling = false;
-    // arriving (slowly) at a station or a service opens its dialog once per visit
-    const here = station ?? shop;
+    // arriving (slowly) at a station, service or showroom opens its dialog once per visit
+    const here = station ?? shop ?? dealer;
     if (!here) this.offeredService = null;
-    else if (here.id !== this.offeredService && Math.abs(this.vehicle.speed) < 4 && !this.serviceOpen && !this.travelOpen && !this.fuelOut && this.mode === 'roam') {
+    else if (here.id !== this.offeredService && Math.abs(this.vehicle.speed) < 7 && !this.serviceOpen && !this.dealerOpen && !this.travelOpen && !this.fuelOut && this.mode === 'roam') {
       this.offeredService = here.id;
-      this.openService(station ? 'fuel' : 'repair');
+      if (dealer && here.id === dealer.id) this.tryOpenDealer();
+      else this.openService(station ? 'fuel' : 'repair');
     }
     if (this.fuel.empty && Math.abs(this.vehicle.speed) < 0.3 && !this.fuelOut && !station) {
       this.fuelOut = true;
@@ -1627,8 +2019,8 @@ export class GameEngine {
   evacuate() {
     if (!this.fuelOut) return;
     const near = nearestStation(this.vehicle.position, [...this.stations.values()]);
-    if (near && this.sourceId) {
-      const start = roadStart(this.map, this.sourceId, near.station.position, (position, heading) => this.collisions.blocked(position, position, heading));
+    if (near && this.mapLoaded) {
+      const start = roadStart(this.map, near.station.position, (position, heading) => this.collisions.blocked(position, position, heading));
       // the nearest road next to the pumps (the POI point itself may sit inside the shop)
       this.vehicle.position = start ? [...start.position] : [...near.station.position];
       if (start) this.vehicle.heading = start.heading;
@@ -1653,10 +2045,6 @@ export class GameEngine {
   }
 
   /** Our own world under the game. */
-  private get threeMap() {
-    return this.map;
-  }
-
   introView() {
     return {
       center: this.vehicle.position as [number, number],
@@ -1671,16 +2059,12 @@ export class GameEngine {
     if (this.mapShown || this.disposed) return;
     this.mapShown = true;
     this.map.jumpTo(this.introView());
-    this.introCameraKey = 'locked';
     this.host.style.transition = 'opacity .7s ease';
     this.host.style.opacity = '1';
     this.onBoot(true);
     this.say(t('status.ready'));
     // Enable map navigation for the intro screen (pan, zoom, right-drag rotate).
-    this.map.dragPan.enable();
-    this.map.scrollZoom.enable();
-    this.map.dragRotate.enable();
-    this.map.touchPitch.enable();
+    this.map.setInteractive({ pan: true, rotate: true });
   }
 
   private settleBoot() {
@@ -1696,11 +2080,11 @@ export class GameEngine {
       return;
     }
     if (this.settings.terrain) {
-      if (!this.map.isSourceLoaded('elevation')) {
+      if (!this.map.hasGround()) {
         this.say(t('status.terrain'));
         return;
       }
-      const ground = this.map.queryTerrainElevation(this.vehicle.position);
+      const ground = this.map.groundAt(this.vehicle.position);
       if (ground == null) {
         this.groundHits = 0;
         this.say(t('status.terrain'));
@@ -1752,6 +2136,8 @@ export class GameEngine {
     // the view from above belongs to one mode; switching modes lands back on the ground
     this.overview = 0;
     this.overviewTarget = 0;
+    this.overviewFree = false;
+    this.overviewLeave = null;
     this.menuView = null;
     const fromMenu = value && !this.driving && approach;
     this.driving = value;
@@ -1759,6 +2145,7 @@ export class GameEngine {
     if (!value) {
       this.eventOffer = null;
       this.onEventOffer(null);
+      this.onEventResult(null);
       if (this.mode !== 'roam') {
         this.mode = 'roam';
         this.raceGoal = null;
@@ -1793,12 +2180,8 @@ export class GameEngine {
         if (Math.abs(center.lng - view.center[0]) > 1e-8 || Math.abs(center.lat - view.center[1]) > 1e-8 || Math.abs(this.map.getCenterElevation() - view.elevation) > 0.25 || Math.abs(this.map.getZoom() - view.zoom) > 0.001) {
           this.map.jumpTo(view);
         }
-        this.introCameraKey = 'locked';
         // Re-enable map navigation for intro
-        this.map.dragPan.enable();
-        this.map.scrollZoom.enable();
-        this.map.dragRotate.enable();
-        this.map.touchPitch.enable();
+        this.map.setInteractive({ pan: true, rotate: true });
       }
       return;
     }
@@ -1816,10 +2199,7 @@ export class GameEngine {
       this.accumulator = 0;
     }
     // Disable map interactivity while driving
-    this.map.dragPan.disable();
-    this.map.scrollZoom.disable();
-    this.map.dragRotate.disable();
-    this.map.touchPitch.disable();
+    this.map.setInteractive({ pan: false, rotate: false });
     if (!fromMenu) return;
     const center = this.map.getCenter();
     this.approachFrom = { lng: center.lng, lat: center.lat, zoom: this.map.getZoom(), pitch: this.map.getPitch(), bearing: this.map.getBearing() };
@@ -1837,25 +2217,44 @@ export class GameEngine {
     this.fpsStamp = now;
   }
 
-  /** Put a kicker ramp one body length ahead of the nose, if there is room. */
-  placeRamp() {
+  private rampGroundAt(point: [number, number]) {
+    return this.map.groundAt(point) ?? this.altitude;
+  }
+
+  private rampPose(length: number, start: [number, number], heading: number) {
+    const end = offsetPosition(start, Math.sin(heading) * length, Math.cos(heading) * length) as [number, number];
+    const ground = this.rampGroundAt(start);
+    const tilt = Math.atan2(this.rampGroundAt(end) - ground, length);
+    const height = length * RAMP.grade;
+    return { ground, tilt, height, width: RAMP.width };
+  }
+
+  private showRampAt(start: [number, number], heading: number, length: number, usedAt = 0) {
+    const { ground, tilt, height, width } = this.rampPose(length, start, heading);
+    this.ramp = { start, heading, usedAt, length, height, width };
+    this.combatLayer?.setRamp({ position: start, heading, ground, tilt, length, height, width });
+  }
+
+  /** Hold J: start a growing preview ahead of the nose. */
+  beginRampCharge() {
     if (!this.driving || this.paused || this.airborne) return;
     const heading = this.vehicle.heading;
-    const east = Math.sin(heading);
-    const north = Math.cos(heading);
-    const ahead = (meters: number) => offsetPosition(this.vehicle.position, east * meters, north * meters);
-    const nose = ahead(this.car.length * 0.5);
-    const start = ahead(this.car.length * 1.5);
-    const end = ahead(this.car.length * 1.5 + RAMP.length);
-    if (this.collisions.blocked(nose, end, heading) || this.water.resolve(nose, end, heading).stopped) {
-      this.say(t('ramp.blocked'), true);
-      return;
-    }
-    const ground = (point: [number, number]) => (this.settings.terrain ? this.map.queryTerrainElevation(point) : 0) ?? this.altitude;
-    const base = ground(start);
-    const tilt = Math.atan2(ground(end) - base, RAMP.length);
-    this.ramp = { start, heading, usedAt: 0 };
-    this.combatLayer?.setRamp({ position: start, heading, ground: base, tilt });
+    const start = offsetPosition(
+      this.vehicle.position,
+      Math.sin(heading) * this.car.length * 1.5,
+      Math.cos(heading) * this.car.length * 1.5,
+    ) as [number, number];
+    const length = RAMP.minLength;
+    this.rampCharge = { start, heading, ground: this.rampGroundAt(start), length };
+    this.showRampAt(start, heading, length);
+  }
+
+  /** Release J: lock the charged size in place (through anything). */
+  commitRamp() {
+    const charge = this.rampCharge;
+    this.rampCharge = null;
+    if (!charge || !this.driving) return;
+    this.showRampAt(charge.start, charge.heading, charge.length);
   }
 
   /** Height of the ramp surface under this point (driving onto it head-on), or null. */
@@ -1867,15 +2266,20 @@ export class GameEngine {
     const north = (position[1] - ramp.start[1]) * METERS_PER_DEGREE;
     const along = east * Math.sin(ramp.heading) + north * Math.cos(ramp.heading);
     const side = east * Math.cos(ramp.heading) - north * Math.sin(ramp.heading);
-    if (along < 0 || along > RAMP.length || Math.abs(side) > RAMP.width / 2 + 0.3) return null;
-    return along / RAMP.length * RAMP.height;
+    if (along < 0 || along > ramp.length || Math.abs(side) > ramp.width / 2 + 0.3) return null;
+    return along / ramp.length * ramp.height;
   }
 
-  /** The ramp goes away a moment after the jump, or when left far behind. */
-  private updateRamp(now: number) {
+  /** Grow the preview while J is held; clear the ramp after a jump or when left behind. */
+  private updateRamp(now: number, dt: number) {
+    if (this.rampCharge && this.driving && !this.paused) {
+      this.rampCharge.length = Math.min(RAMP.maxLength, this.rampCharge.length + RAMP.growPerSec * dt);
+      this.showRampAt(this.rampCharge.start, this.rampCharge.heading, this.rampCharge.length);
+      return;
+    }
     const ramp = this.ramp;
     if (!ramp) return;
-    const far = distanceMeters(ramp.start, this.vehicle.position) > 300;
+    const far = metersBetween(ramp.start, this.vehicle.position) > 300;
     if (far || (ramp.usedAt && now - ramp.usedAt > 900)) {
       this.ramp = null;
       this.combatLayer?.setRamp(null);
@@ -1900,8 +2304,12 @@ export class GameEngine {
       // terrain and roofs both support the car; clear a building only above its skin
       const sample = (along: number, side: number) => {
         const at = offsetPosition(this.renderVehicle.position, forwardEast * along + rightEast * side, forwardNorth * along + rightNorth * side);
-        const terrain = this.settings.terrain ? this.map.queryTerrainElevation(at) : 0;
-        const roof = this.collisions.supportAt(at);
+        const terrain = this.map.groundAt(at);
+        // a roof carries the car only if it came from above (a jump, a landing): one far above
+        // its wheels is a wall it is touching — long cars' bumpers reach past the wall
+        // test, and taking that roof as ground used to lift them onto houses like a ramp
+        const top = this.collisions.supportAt(at);
+        const roof = top != null && top <= this.altitude + 0.6 ? top : null;
         if (terrain == null && roof == null) return null;
         return Math.max(terrain ?? -Infinity, roof ?? -Infinity);
       };
@@ -1972,10 +2380,11 @@ export class GameEngine {
     if (lift != null) {
       // on the ramp: straight up its slope
       this.altitude = ground;
-      // up its slope, but a kicker throws you ~2 m up at most, whatever the speed
-      const kick = Math.sqrt(2 * GRAVITY * (2 - RAMP.height));
-      this.climb = Math.min(kick, this.vehicle.speed * Math.cos(this.vehicle.heading - this.ramp!.heading) * RAMP.height / RAMP.length);
-      this.modelPitch = settle(this.modelPitch, Math.atan2(RAMP.height, RAMP.length));
+      // up its slope — bigger ramps throw higher
+      const ramp = this.ramp!;
+      const kick = Math.sqrt(2 * GRAVITY * Math.max(0.8, ramp.height * 1.4));
+      this.climb = Math.min(kick, this.vehicle.speed * Math.cos(this.vehicle.heading - ramp.heading) * RAMP.grade);
+      this.modelPitch = settle(this.modelPitch, Math.atan2(ramp.height, ramp.length));
     } else {
       this.altitude = Math.max(ground, settle(this.altitude, ground));
       const measured = (this.altitude - before) / Math.max(dt, 1e-3);
@@ -1988,7 +2397,7 @@ export class GameEngine {
 
   private readSourceLayer(layer: string) {
     try {
-      const features = this.map.querySourceFeatures(this.sourceId, { sourceLayer: layer }) as MapFeature[];
+      const features = this.map.features(layer) as MapFeature[];
       this.featureReadFailures.delete(layer);
       return features;
     } catch (error) {
@@ -2016,7 +2425,7 @@ export class GameEngine {
       this.placeSpawnMarker(this.customSpawn.position);
       return;
     }
-    const start = roadStart(this.map, this.sourceId, this.vehicle.position, (position, heading) => this.collisions.blocked(position, position, heading));
+    const start = roadStart(this.map, this.vehicle.position, (position, heading) => this.collisions.blocked(position, position, heading));
     if (start) {
       this.defaultSpawn = { position: [...start.position], heading: start.heading };
       this.vehicle.position = start.position;
@@ -2040,19 +2449,17 @@ export class GameEngine {
    * re-reading, dedup or near-set here. Collisions come straight from footprints.
    */
   private *collectWorldThree(refreshTiles: boolean): Generator<null, void> {
-    const world = this.threeMap!.world;
+    const world = this.map.world;
     if (refreshTiles) this.tilesIngested = true;
-    const exag = this.map.getTerrain()?.exaggeration ?? 1;
-    this.collisions.update(this.vehicle.position, world.buildingsNear(this.vehicle.position, 260, this.settings.terrain ? exag : 0));
+    this.collisions.update(this.vehicle.position, world.buildingsNear(this.vehicle.position, 260, this.map.exaggeration));
     yield null;
     // place the car on a road only once roads around it are actually in
-    if (!this.spawnResolved && this.map.querySourceFeatures(this.sourceId, { sourceLayer: 'transportation' }).length) this.resolveSpawn();
+    if (!this.spawnResolved && this.map.features('transportation').length) this.resolveSpawn();
     const center = this.map.getCenter();
     const focus: [number, number] = this.driving ? this.vehicle.position : [center.lng, center.lat];
     this.syncedAt = [focus[0], focus[1]];
-    this.worldFresh = true;
     yield null;
-    yield* this.collectGround(refreshTiles, focus, () => world.footprintsNear(focus, 700));
+    yield* this.collectGround(refreshTiles, focus);
   }
 
   *collectWorldSteps(refreshTiles: boolean): Generator<null, void> {
@@ -2060,8 +2467,7 @@ export class GameEngine {
   }
 
   /** Roads, water, green areas and stations for collisions and gameplay. */
-  private *collectGround(refreshTiles: boolean, focus: [number, number], buildingRings: () => [number, number][][][]): Generator<null, void> {
-    const cos = Math.cos(focus[1] * Math.PI / 180);
+  private *collectGround(refreshTiles: boolean, focus: [number, number]): Generator<null, void> {
     if (refreshTiles) {
       this.cachedWater = this.readSourceLayer('water');
       yield null;
@@ -2089,6 +2495,14 @@ export class GameEngine {
 
   }
 
+  /** Is this tile ("z/x/y") within reach of the gameplay data around the car? */
+  private nearCar(key: string) {
+    const [z, x, y] = key.split('/').map(Number);
+    if (![z, x, y].every(Number.isFinite)) return true;
+    const [lng, lat] = this.vehicle.position;
+    return distanceToTile(mercatorX(lng), mercatorY(lat), { z, x, y }, Math.cos(lat * Math.PI / 180)) <= NEAR_TILE_METERS;
+  }
+
   private pumpWorld(now: number) {
     const movedLimit = this.driving ? 90 : 40;
     const origin = this.syncedAt;
@@ -2101,7 +2515,7 @@ export class GameEngine {
     const refreshTiles = (!this.tilesIngested || this.collisionDirty) && now - this.collisionTime >= tileDebounce;
     const needFocus = needsCoverage || moved >= movedLimit;
 
-    if (!this.worldWork && this.sourceId) {
+    if (!this.worldWork && this.mapLoaded) {
       if (refreshTiles) {
         this.collisionTime = now;
         this.collisionDirty = false;
@@ -2114,7 +2528,8 @@ export class GameEngine {
     }
 
     if (!this.worldWork) return;
-    const deadline = performance.now() + (this.driving ? 2.2 : 8);
+    // background reading gets a slice of the frame; the map view (M) keeps it small
+    const deadline = performance.now() + (this.driving || this.overview > 0 ? 2.2 : 8);
     while (this.worldWork && performance.now() < deadline) {
       if (this.worldWork.next().done) this.worldWork = null;
     }
@@ -2164,6 +2579,9 @@ export class GameEngine {
             if (hit.stopped) {
               this.vehicle.speed = 0;
               shore = true;
+            } else if (Math.abs(this.vehicle.speed) > 1.5 && this.map.knockDown(previous, this.vehicle.position, this.altitude)) {
+              // a tree or lamp post goes down under the bumper; the car loses some pace
+              this.vehicle.speed *= 0.72;
             }
           }
         }
@@ -2227,10 +2645,12 @@ export class GameEngine {
           bot.heading = bot.controller.heading;
         }
         this.resolveVehicleContacts(now);
+        this.players.bump(now);
         this.collectRoadPickups();
         this.accumulator -= 1 / 60;
       }
       if (this.trafficBots.length) this.combatLayer?.updateTargets(this.targetVehicles());
+      this.syncExtraTargets(dt, now);
       this.updateFuel(dt);
       this.updateTravel();
       if (blocked) this.say(t('hint.building'));
@@ -2240,11 +2660,16 @@ export class GameEngine {
       this.updateEvents();
       this.renderVehicle.update(this.vehicle, this.accumulator * 60);
       this.plantWheels(dt, now);
-      this.updateRamp(now);
+      this.updateRamp(now, dt);
       this.nudgeCamera(dt);
-      const targetBearing = (this.settings.follow ? this.renderVehicle.heading * 180 / Math.PI : this.bearing) + this.orbit;
+      // north up (compass double-click) until the player turns the view themselves
+      if (this.northUp && this.orbit !== 0) {
+        this.northUp = false;
+        if (this.settings.follow) this.orbit += this.bearing - this.renderVehicle.heading * 180 / Math.PI;
+      }
+      const targetBearing = this.northUp ? 0 : (this.settings.follow ? this.renderVehicle.heading * 180 / Math.PI : this.bearing) + this.orbit;
       const delta = ((targetBearing - this.bearing + 540) % 360) - 180;
-      if (this.settings.follow) this.bearing += delta * (1 - Math.exp(-dt * 5));
+      if (this.northUp || this.settings.follow) this.bearing += delta * (1 - Math.exp(-dt * 5));
       else { this.bearing += this.orbit; this.orbit = 0; }
       const bearingRad = this.bearing * Math.PI / 180;
       const ahead = this.distance * cameraConfig.lookAheadFactor;
@@ -2269,23 +2694,49 @@ export class GameEngine {
           this.onApproach(false);
         }
       }
-      // map view from above: blend toward a north-up, straight-down view of ~2 km
+      // map view from above: blend in, then free pan/zoom; blend out from where you were looking
       const step = dt / 1.2;
       this.overview = this.overviewTarget > this.overview ? Math.min(this.overviewTarget, this.overview + step) : Math.max(this.overviewTarget, this.overview - step);
-      if (this.overview > 0) {
+      if (this.overviewTarget > 0 && this.overview > 0.98) {
+        if (!this.overviewFree) {
+          this.overviewFree = true;
+          this.setOverviewMapNav(true);
+          this.stopGun();
+        }
+        const c = this.map.getCenter();
+        center = [c.lng, c.lat];
+        zoomNow = this.map.getZoom();
+        pitchNow = 0;
+        bearingNow = 0;
+      } else if (this.overview > 0) {
         const e = this.overview * this.overview * (3 - 2 * this.overview);
         const topZoom = this.overviewZoom(this.renderVehicle.position[1]);
         const here = this.renderVehicle.position;
-        center = [center[0] + (here[0] - center[0]) * e, center[1] + (here[1] - center[1]) * e];
-        zoomNow += (topZoom - zoomNow) * e;
+        if (this.overviewTarget < 1 && this.overviewLeave) {
+          // leaving: from the inspected spot back to chase
+          center = [
+            this.overviewLeave.center[0] * e + center[0] * (1 - e),
+            this.overviewLeave.center[1] * e + center[1] * (1 - e),
+          ];
+          zoomNow = this.overviewLeave.zoom * e + zoomNow * (1 - e);
+        } else {
+          center = [center[0] + (here[0] - center[0]) * e, center[1] + (here[1] - center[1]) * e];
+          zoomNow += (topZoom - zoomNow) * e;
+        }
         pitchNow += (0 - pitchNow) * e;
         bearingNow -= (((bearingNow + 540) % 360) - 180) * e;
+        if (this.overviewFree) {
+          this.overviewFree = false;
+          this.setOverviewMapNav(false);
+        }
+      } else if (this.overviewLeave) {
+        this.overviewLeave = null;
       }
       this.map.jumpTo({ center, zoom: zoomNow, pitch: pitchNow, bearing: bearingNow, elevation: this.altitude });
-      this.threeMap?.setFocusCar(this.renderVehicle.position, this.altitude, this.renderVehicle.heading, this.modelPitch);
+      this.map.setFocusCar(this.renderVehicle.position, this.altitude, this.renderVehicle.heading, this.modelPitch);
       this.updateAim();
     } else if (!this.driving) {
-      this.threeMap?.setFocusCar(null);
+      this.map.setFocusCar(null);
       // menu: view from above toggled with M
       if (this.menuView && (this.overview > 0 || this.overviewTarget > 0)) {
         const step = dt / 1.2;
@@ -2303,7 +2754,7 @@ export class GameEngine {
       this.renderVehicle.reset(this.vehicle);
       if (!this.mapShown) {
         if (this.settings.terrain) {
-          const ground = this.map.queryTerrainElevation(this.vehicle.position);
+          const ground = this.map.groundAt(this.vehicle.position);
           if (ground != null) this.altitude = ground;
         } else this.altitude = 0;
         const view = this.introView();
@@ -2314,6 +2765,7 @@ export class GameEngine {
     this.updateTrains(dt);
     this.updateHealthMarkers(now - this.overlayTime > 100);
     this.updateTrafficMarkers();
+    this.players.update();
     this.updateEventMarkers();
     if (now - this.overlayTime > 100) this.overlayTime = now;
     if (now - this.hudTime > 100) {
@@ -2322,18 +2774,19 @@ export class GameEngine {
       const near = nearestStation(this.vehicle.position, [...this.stations.values()]);
       const hub = nearestHub(this.vehicle.position, [...this.hubs.values()]);
       // only hint the hub when you're close enough that it matters (not from across town)
-      const hubHud = hub && hub.distance < (hub.hub.kind === 'airport' ? 800 : 120)
+      const hubHint = hub?.hub.kind === 'airport' ? 800 : hub?.hub.kind === 'station' ? 220 : 120;
+      const hubHud = hub && hub.distance < hubHint
         ? { kind: hub.hub.kind, distance: hub.distance }
         : null;
       this.onFuel({ level: this.fuel.level, tank: this.fuel.spec.tank, refuelling: this.refuelling, station: near ? near.distance : null, money: Math.floor(this.playerMoney), hub: hubHud });
     }
-    this.worldFresh = false;
     if (!this.mapShown) this.settleBoot();
     this.map.triggerRepaint();
   };
 
   dispose() {
     this.disposed = true;
+    this.players.dispose();
     this.worldWork = null;
     cancelAnimationFrame(this.frame);
     this.spawnMarker?.remove();

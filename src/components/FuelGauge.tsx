@@ -41,7 +41,7 @@ export default function FuelGauge({ subscribe }: { subscribe: (fn: ((fuel: FuelH
       <div className="fuel-readout">
         <strong>{Math.ceil(fuel.level)}<small> / {Math.round(fuel.tank)} {t('unit.l')}</small></strong>
         <span>{fuel.refuelling ? t('fuel.refuelling') : station ? t('fuel.station', { d: station }) : t('fuel.noStation')}</span>
-        {fuel.hub && <span className="fuel-hub-line">{fuel.hub.kind === 'airport' ? '✈' : '⚓'} {formatDistance(fuel.hub.distance)}</span>}
+        {fuel.hub && <span className="fuel-hub-line">{fuel.hub.kind === 'airport' ? '✈' : fuel.hub.kind === 'station' ? '🚂' : '⚓'} {formatDistance(fuel.hub.distance)}</span>}
       </div>
     </div>
   );

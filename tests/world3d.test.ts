@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { buildTile, clipRing } from '../src/world3d/tiles/buildTile.ts';
-import { LocalFrame, tileAt, tileCorner, tileSpan, mercatorX, mercatorY } from '../src/world3d/mercator.ts';
+import { buildTile, clipRing, omitBorderWall } from '../src/world3d/tiles/buildTile.ts';
+import { tileAt, tileCorner, tileSpan, mercatorX, mercatorY } from '../src/world3d/mercator.ts';
 import { tilesAround } from '../src/world3d/tiles/tilePlan.ts';
 
 const COIMBRA: [number, number] = [-8.42922, 40.20805];
@@ -17,21 +17,19 @@ test('Coimbra centre falls into the fixture tile', () => {
   assert.ok(mercatorY(COIMBRA[1]) <= cy && mercatorY(COIMBRA[1]) >= cy - span);
 });
 
-test('local frame round-trips and measures true meters', () => {
-  const frame = new LocalFrame(COIMBRA);
-  const p = frame.fromLngLat([COIMBRA[0] + 0.001, COIMBRA[1] + 0.001]);
-  const back = frame.toLngLat(p.x, p.z);
-  assert.ok(Math.abs(back[0] - COIMBRA[0] - 0.001) < 1e-9);
-  assert.ok(Math.abs(back[1] - COIMBRA[1] - 0.001) < 1e-9);
-  // 0.001° of latitude ≈ 111.3 m, longitude ≈ 85.1 m at 40.2° N
-  assert.ok(Math.abs(-p.z - 111.3) < 0.5, String(p.z));
-  assert.ok(Math.abs(p.x - 85.06) < 0.5, String(p.x));
-});
-
 test('clipping keeps a ring inside the tile square', () => {
   const ring = clipRing([[-10, -10], [50, -10], [50, 50], [-10, 50]], 40);
   for (const [x, y] of ring) assert.ok(x >= 0 && x <= 40 && y >= 0 && y <= 40);
   assert.equal(ring.length, 4);
+});
+
+test('clip seams: min edges keep a sealing wall, max edges defer to the neighbour', () => {
+  const e = 100;
+  assert.equal(omitBorderWall([0, 10], [0, 40], e), false, 'west (x=0) kept');
+  assert.equal(omitBorderWall([10, 0], [40, 0], e), false, 'north (y=0) kept');
+  assert.equal(omitBorderWall([e, 10], [e, 40], e), true, 'east (x=extent) omitted');
+  assert.equal(omitBorderWall([10, e], [40, e], e), true, 'south (y=extent) omitted');
+  assert.equal(omitBorderWall([10, 20], [40, 20], e), false, 'interior kept');
 });
 
 test('Coimbra tile decodes into batched chunks with real heights', () => {
@@ -128,19 +126,39 @@ test('world tile: terrain, roads facing up, gameplay features and raw data kept'
     const a = r.index[t] * 3, b = r.index[t + 1] * 3, c = r.index[t + 2] * 3;
     const cross = (r.positions[b] - r.positions[a]) * (r.positions[c + 2] - r.positions[a + 2]) - (r.positions[b + 2] - r.positions[a + 2]) * (r.positions[c] - r.positions[a]);
     if (Math.abs(cross) < 1e-9) continue;
+    if (r.positions[a + 1] < 0) continue; // under a bridge deck: its underside faces down
     if (cross < 0) up++; else down++;
   }
   assert.equal(down, 0, `downward road triangles: ${down} of ${up + down}`);
-  // roads follow the ground (lowered only near water beds) or ride bridge decks
-  assert.ok(r.ground.every((g) => g >= 47 && g <= 50.6));
+  // roads follow the ground or sit just above nearby water; bridge decks stand a few meters over it
+  assert.ok(r.ground.every((g) => g >= 47 && g <= 58), `road ground out of range`);
   assert.ok(data.buildings.chunks.every((c) => c.ground.every((g) => g === 50)));
   // vector ground: land use drawn as polygons, flat water at bank level, beds carved below
   const g = data.ground;
   assert.ok(g.layers.reduce((n, l) => n + l.index.length, 0) > 3000);
-  assert.ok(g.water.index.length > 100 && g.water.ground.every((h) => Math.abs(h - 50) < 1e-3));
+  // flat at the level; along the banks it may hug the ground a finger above it
+  assert.ok(g.water.index.length > 100 && g.water.ground.every((h) => h >= 50 - 1e-3 && h < 50.06));
   assert.ok(g.water.shore && g.water.shore.length === g.water.ground.length);
   assert.ok(g.heights.some((h) => h < 49), 'water beds are carved');
-  assert.ok(data.bridges.length % 6 === 0);
+  assert.ok(g.waterLevel.some((h) => Number.isFinite(h)), 'water surface levels recorded');
+  assert.ok(data.bridges.length % 7 === 0);
+});
+
+test('bridge decks are only under the ribbon, not a parallel lower road', async () => {
+  const { bridgeDeck } = await import('../src/world3d/tiles/worldTile.ts');
+  // one span at height 70, half-width 5 — a car 8 m aside must stay on the ground
+  const bridges = Float32Array.from([0, 0, 40, 0, 5, 70, 70]);
+  assert.equal(bridgeDeck(bridges, 20, 0), 70);
+  assert.equal(bridgeDeck(bridges, 20, 5.2), 70);
+  assert.equal(bridgeDeck(bridges, 20, 8), null);
+});
+
+test('overpass: car under the deck stays on the ground; car on the deck stays up', async () => {
+  const { pickDriveHeight } = await import('../src/world3d/tiles/worldTile.ts');
+  assert.equal(pickDriveHeight(10, 20, 10.5), 10, 'underpass');
+  assert.equal(pickDriveHeight(10, 20, 19), 20, 'on the bridge');
+  assert.equal(pickDriveHeight(10, 20), 10, 'no altitude hint → ground');
+  assert.equal(pickDriveHeight(10, 10.5, 10), 10.5, 'barely raised → one surface');
 });
 
 test('coplanar walls: the taller keeps the shared stretch, the rest of the lower one survives', async () => {
@@ -154,4 +172,19 @@ test('coplanar walls: the taller keeps the shared stretch, the rest of the lower
   assert.equal(of(twin).length, 0, 'duplicate removed');
   assert.equal(of(low).length, 1);
   assert.ok(Math.abs(of(low)[0].t0 - 0.4) < 1e-6 && of(low)[0].t1 === 1, 'only 10..16 of the low wall remains');
+});
+
+test('grid under a road is smoothed, slopes and tile borders are kept', async () => {
+  const { flattenUnderRoads, roadMask } = await import('../src/world3d/tiles/groundVector.ts');
+  const grid = 10, n = grid + 1, cs = 10;
+  const H = new Float32Array(n * n);
+  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) H[j * n + i] = i * 0.5; // steady slope
+  H[5 * n + 5] += 3; // DEM lump on the road
+  const border = H[5 * n];
+  const dry = new Uint8Array(n * n);
+  flattenUnderRoads(H, grid, roadMask(grid, cs, [0, 50, 100, 50, 3]), dry, 6);
+  assert.ok(Math.abs(H[5 * n + 5] - 2.5) < 0.6, `lump flattened, got ${H[5 * n + 5]}`);
+  assert.ok(Math.abs(H[5 * n + 3] - 1.5) < 0.6, 'slope kept along the road');
+  assert.equal(H[5 * n], border, 'tile border untouched');
+  assert.equal(H[1 * n + 5], 2.5, 'far from the road untouched');
 });

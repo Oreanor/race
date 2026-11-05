@@ -1,20 +1,6 @@
-import { BoxGeometry, BufferGeometry, Matrix4, Quaternion, Vector3 } from 'three';
+import { BoxGeometry, BufferGeometry } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { PIECES, type MeshName, type Placement } from './pieces.ts';
-
-export type WallModel = {
-  ax: number;
-  az: number;
-  tx: number;
-  tz: number;
-  nx: number;
-  nz: number;
-  length: number;
-  y0a: number;
-  y0b: number;
-  yTop: number;
-  hole: boolean;
-};
+import { PIECES, type MeshName } from './pieces.ts';
 
 function box(w: number, h: number, d: number, x: number, y: number, z: number) {
   const geometry = new BoxGeometry(Math.max(0.02, w), Math.max(0.02, h), Math.max(0.02, d));
@@ -113,33 +99,4 @@ export function createPieceGeometries(): Record<MeshName, BufferGeometry> {
     ]),
     vent: box(vent.w, vent.h, vent.d, 0, 0, 0),
   };
-}
-
-const axisX = new Vector3();
-const axisY = new Vector3();
-const axisZ = new Vector3();
-const position = new Vector3();
-const quaternion = new Quaternion();
-const scale = new Vector3();
-
-export function writeWallMatrix(wall: WallModel, piece: Placement, target: Matrix4) {
-  const size = PIECES[piece.mesh];
-  axisX.set(wall.tx * piece.sx, 0, wall.tz * piece.sx);
-  axisY.set(0, piece.sy, 0);
-  axisZ.set(wall.nx * piece.sz, 0, wall.nz * piece.sz);
-  target.makeBasis(axisX, axisY, axisZ);
-  const outward = size.anchor === 'center' ? size.d * piece.sz * 0.5 + 0.055 : 0.045;
-  target.setPosition(
-    wall.ax + wall.tx * piece.along + wall.nx * outward,
-    piece.y,
-    wall.az + wall.tz * piece.along + wall.nz * outward,
-  );
-  return target;
-}
-
-export function writePointMatrix(x: number, y: number, z: number, sx: number, sy: number, sz: number, target: Matrix4) {
-  position.set(x, y, z);
-  quaternion.identity();
-  scale.set(sx, sy, sz);
-  return target.compose(position, quaternion, scale);
 }
