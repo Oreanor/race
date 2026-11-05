@@ -45,7 +45,7 @@ function cityNote(city: City) {
   const text = t(key);
   return text !== key ? text : city.note || t('place.pin');
 }
-import CarPreview from './CarPreview';
+import CarCarousel from './CarCarousel';
 import FuelGauge from './FuelGauge';
 import TravelDialog from './TravelDialog';
 import ServiceDialog from './ServiceDialog';
@@ -515,21 +515,7 @@ export default function Game() {
                 )}
               </div>
               <h3 className="ui-section">{t('intro.car')}</h3>
-              <div className="car-pick">
-                <CarPreview car={cars[car]} />
-                <button type="button" className="car-arrow is-prev" aria-label="←" onClick={() => setCar((car + cars.length - 1) % cars.length)}>‹</button>
-                <button type="button" className="car-arrow is-next" aria-label="→" onClick={() => setCar((car + 1) % cars.length)}>›</button>
-                <div className="car-pick-name">
-                  <strong>{cars[car].name}</strong>
-                  <span>{car + 1} / {cars.length}</span>
-                </div>
-                <dl className="car-specs">
-                  <div><dt>{t('car.accel')}</dt><dd>{t('car.accelValue', { s: formatNumber(Math.round(100 / 3.6 / cars[car].acceleration * 10) / 10) })}</dd></div>
-                  <div><dt>{t('car.top')}</dt><dd>{t('car.topValue', { n: formatNumber(Math.round(cars[car].maxSpeed * 3.6)) })}</dd></div>
-                  <div><dt>{t('car.engine')}</dt><dd>{t('car.engineValue', { l: formatNumber(cars[car].engine) })}</dd></div>
-                  <div><dt>{t('car.mass')}</dt><dd>{t('car.massValue', { n: formatNumber(cars[car].mass) })}</dd></div>
-                </dl>
-              </div>
+              <CarCarousel index={car} onIndex={setCar} />
               <button
                 className="ui-btn drive"
                 disabled={!booted}
