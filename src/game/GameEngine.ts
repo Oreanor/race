@@ -1727,9 +1727,10 @@ export class GameEngine {
       this.map,
       station.position,
       (position, heading) => this.collisions.blocked(position, position, heading),
-      120,
+      60,
     );
-    return start ? { id: station.id, position: [...start.position] } : station;
+    // drive up on the road in front; the label stays over the shop itself
+    return start ? { id: station.id, position: [...start.position], place: station.position } : station;
   }
 
   /** Real petrol stations from the POI layer; remembered as the player drives on. */
@@ -1738,7 +1739,7 @@ export class GameEngine {
     this.collectHubs(pois);
     for (const station of stationsFromFeatures(pois)) {
       if (this.stations.has(station.id)) continue;
-      if ([...this.stations.values()].some(known => metersBetween(known.position, station.position) < 35)) continue;
+      if ([...this.stations.values()].some(known => metersBetween(known.place ?? known.position, station.position) < 35)) continue;
       this.stations.set(station.id, this.placeService(station));
     }
     // keep the nearest few hundred; far ones come back when we drive there again
@@ -1748,12 +1749,12 @@ export class GameEngine {
     }
     for (const shop of repairShopsFromFeatures(pois)) {
       if (this.repairShops.has(shop.id)) continue;
-      if ([...this.repairShops.values()].some(known => metersBetween(known.position, shop.position) < 35)) continue;
+      if ([...this.repairShops.values()].some(known => metersBetween(known.place ?? known.position, shop.position) < 35)) continue;
       this.repairShops.set(shop.id, this.placeService(shop));
     }
     for (const shop of dealershipsFromFeatures(pois)) {
       if (this.dealerships.has(shop.id)) continue;
-      if ([...this.dealerships.values()].some(known => metersBetween(known.position, shop.position) < 35)) continue;
+      if ([...this.dealerships.values()].some(known => metersBetween(known.place ?? known.position, shop.position) < 35)) continue;
       this.dealerships.set(shop.id, this.placeService(shop));
     }
     const visible = [...this.stations.values()].filter(station => metersBetween(station.position, this.vehicle.position) < 2500);
@@ -1785,7 +1786,7 @@ export class GameEngine {
     for (const [id, { station, kind }] of wanted) {
       if (this.serviceMarkers.has(id)) continue;
       const text = label[kind];
-      this.serviceMarkers.set(id, this.marker({ element: this.makeMapLabel(`travel-hub-marker is-${kind}`, text, text), anchor: 'bottom' }).setLngLat(station.position).addTo(this.map));
+      this.serviceMarkers.set(id, this.marker({ element: this.makeMapLabel(`travel-hub-marker is-${kind}`, text, text), anchor: 'bottom' }).setLngLat(station.place ?? station.position).addTo(this.map));
     }
   }
 
