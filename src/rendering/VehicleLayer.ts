@@ -37,6 +37,8 @@ type TargetState = TargetVehicle & {
   wreckQuat: THREE.Quaternion | null;
   wreckBakeHeading: number;
   wreckRestY: number;
+  /** the ground under it (m), its own: a bot under a bridge stays under it */
+  altitude: number | null;
 };
 export type AimPoint = { ground: Position; screen: [number, number] };
 export type VehicleSceneLayer = MapLayer & {
@@ -460,11 +462,25 @@ export function vehicleLayer(
     }
   }
 
+  /**
+   * A target's ground relative to our car (m). Each keeps its last height as the hint
+   * (the same rule as the car and the trains): on a bridge it stays on the deck,
+   * under it on the road below. A wreck stays where it fell.
+   */
+  function targetLift(target: TargetState) {
+    if (!target.destroyed || target.altitude == null) {
+      // first look: our own height as the hint (targets appear near us)
+      const ground = map.groundAt(target.position, target.altitude ?? undefined);
+      if (ground != null) target.altitude = ground;
+    }
+    return target.altitude == null ? 0 : target.altitude - height();
+  }
+
   function burstExplosion(target: TargetState, here: Position, _heading: number, now: number, size: number) {
     const o = eastNorth(here, target.position);
     const jitter = () => (Math.random() - 0.5) * 1.6;
     fx.altitude = height();
-    fx.explosion(here, { e: o.east + jitter(), n: o.north + jitter(), u: 0.6 + Math.random() * 0.8 }, 0.75 * size, now, size > 1);
+    fx.explosion(here, { e: o.east + jitter(), n: o.north + jitter(), u: targetLift(target) + 0.6 + Math.random() * 0.8 }, 0.75 * size, now, size > 1);
   }
 
   /** when each burning wreck last put out a puff of smoke */
@@ -639,7 +655,7 @@ export function vehicleLayer(
         ...spec, root, explosion, hp: targetMaxHp,
         destroyed: false, deathPhase: null, explodedAt: 0, flashUntil: 0, flashing: false,
         spinX: 0, spinY: 0, spinZ: 0, velUp: 0, blastsLeft: 0, nextBlastAt: 0, charMats: [],
-        wreckQuat: null, wreckBakeHeading: 0, wreckRestY: 0.45,
+        wreckQuat: null, wreckBakeHeading: 0, wreckRestY: 0.45, altitude: null,
       };
       targets.set(spec.id, target);
       loadCar(spec.car).then(model => {
@@ -739,10 +755,11 @@ export function vehicleLayer(
       const t = (-b - Math.sqrt(disc)) / (2 * a);
       if (t < 1.2 || t > bestT) continue;
       const up = cam.up + uy * t;
-      if (up < -0.4 || up > 2.6) continue;
+      const rel = targetLift(target);
+      if (up < rel - 0.4 || up > rel + 2.6) continue;
       bestT = t;
       hit = target;
-      hitUp = Math.max(0.35, Math.min(1.6, up));
+      hitUp = Math.max(rel + 0.35, Math.min(rel + 1.6, up));
     }
 
     // other players' cars: the same upright cylinder, at their own height
@@ -1060,7 +1077,7 @@ export function vehicleLayer(
         beam.visible = night > 0.02;
       }
       for (const target of targets.values()) {
-        const offset = scenePoint(here, target.position, heading, 0);
+        const offset = scenePoint(here, target.position, heading, targetLift(target));
         if (target.destroyed) {
           const age = now - target.explodedAt;
           const tumbleMs = 1100;
@@ -1117,7 +1134,7 @@ export function vehicleLayer(
               fireAt.set(target, now);
               const o = eastNorth(here, target.position);
               fx.altitude = height();
-              fx.burning(here, { e: o.east, n: o.north, u: target.wreckRestY + 0.3 }, strength, now);
+              fx.burning(here, { e: o.east, n: o.north, u: targetLift(target) + target.wreckRestY + 0.3 }, strength, now);
             }
             if (burn >= 1) {
               putOut(target);

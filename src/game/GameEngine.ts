@@ -7,7 +7,7 @@ import { WaterCollisionController, type MapFeature } from './WaterCollisionContr
 import { mapConfig, cars as carsConfig, carPrice, tradeInPrice, type City, type Car, vehicleConfig } from '@/config/vehicle.config';
 import { cameraConfig, zoomForDistance } from '@/config/camera.config';
 import { VehicleController, offsetPosition, resolveVehicleCollision, type Position } from './VehicleController';
-import { vehicleLayer, type TargetVehicle, type VehicleSceneLayer } from '@/rendering/VehicleLayer';
+import { vehicleLayer, type VehicleSceneLayer } from '@/rendering/VehicleLayer';
 import type { ArchitectureSetting, BuildingDetail } from './buildings/BuildingStyles';
 import type { SkinId } from '@/world3d/buildings/skins';
 import type { ChatLine, NetNotice } from '@/net/NetClient';
@@ -18,10 +18,11 @@ import { mercatorX, mercatorY } from '@/world3d/mercator';
 const NEAR_TILE_METERS = 2600;
 import { NetPlayers, type OnlinePlayer } from './net/NetPlayers';
 import { SharedTraffic } from './net/SharedTraffic';
+import { HealthMeters } from './hud/HealthMeters';
+import { TestTargets } from './TestTargets';
 import { PLAYER_HP } from '@/net/protocol';
 import { MARKER_PIN_METERS, nameIndicator, placeIndicator } from './hud/indicators';
 import { advanceTrafficBot, createTrafficBot, TrafficRoadNetwork, type TrafficBot } from './TrafficBots';
-import { healthColor } from './health';
 import { formatNumber, t } from '@/i18n';
 import { ThreeMap, ThreeMarker } from '@/world3d/map/ThreeMap';
 import { atStation, dealershipsFromFeatures, EVACUATION_COST, EVACUATION_RESERVE, FuelTank, FUEL_PRICE, metersBetween, nearestStation, repairShopsFromFeatures, REPAIR_PRICE, stationsFromFeatures, type Station } from './Fuel';
@@ -105,13 +106,6 @@ function randomDriverNames(count: number) {
 /** other players' name tags and roster lines (as their pointers on screen) */
 const PLAYER_MARKER_COLOR = '#7cf0b0';
 
-/** Parked test cars to shoot at: none unless asked for, ?testcars=N in the address. */
-function testCarCount() {
-  if (typeof location === 'undefined') return 0;
-  const asked = new URLSearchParams(location.search).get('testcars');
-  if (asked != null) return Math.max(0, Math.min(20, Number(asked) || 0));
-  return 0;
-}
 
 export class GameEngine {
   collisions = new BuildingCollisions();
@@ -194,8 +188,8 @@ export class GameEngine {
   private vehicleContactTimes = new Map<string, number>();
   private trafficMarkerLayer: HTMLElement | null = null;
   private trafficMarkers = new Map<string, { element: HTMLElement; arrow: HTMLElement; distance: HTMLElement }>();
-  private healthMarkerLayer: HTMLElement | null = null;
-  private healthMarkers = new Map<string, { element: HTMLElement; fill: HTMLElement }>();
+  /** health bars over the cars on screen */
+  private healthMeters!: HealthMeters;
   private mode: 'roam' | 'arena' | 'race' = 'roam';
   private missions: { id: string; kind: 'arena' | 'race'; label: string; position: [number, number] }[] = [];
   private missionFocus = 0;
@@ -335,6 +329,7 @@ export class GameEngine {
     this.settings = settings;
     this.car = car;
     this.vehicle = new VehicleController(city.coords, city.heading);
+    this.healthMeters = new HealthMeters(el);
     const engine = this;
     this.players = new NetPlayers({
       host: el,
@@ -709,7 +704,6 @@ export class GameEngine {
     this.vehicleContactTimes.clear();
     this.placeEventBeacons(position, heading);
     this.ensureTrafficMarkers();
-    this.ensureHealthMarkers();
     this.combatLayer?.setTargets([]);
     this.combatLayer?.setRaceFinish(null);
     this.syncRoadPickups();
@@ -720,7 +714,6 @@ export class GameEngine {
     this.trafficBots = [];
     this.combatLayer?.setTargets([]);
     this.ensureTrafficMarkers();
-    this.ensureHealthMarkers();
   }
 
   private pickBeaconSpot(
@@ -875,53 +868,20 @@ export class GameEngine {
     this.say(t('mission.new', { label: added.label }), true);
   }
 
-  /** the parked test cars (extra targets), and when they were last placed */
-  private testList: TargetVehicle[] = [];
-  private testTargetsAt = 0;
-  private testSerial = 0;
+  /** parked cars to shoot at (?testcars=N) */
+  private testCars = new TestTargets((from, at, heading) => {
+    if (this.collisions.blocked(from, at, heading, 1, this.altitude) || this.water.resolve(from, at, heading).stopped) return false;
+    // on the same surface as us (not the river beside a bridge, not a roof)
+    const ground = this.map.groundAt(at, this.altitude);
+    return ground != null && Math.abs(ground - this.altitude) <= 2;
+  });
 
   /** Shared traffic and test cars: targets beside the missions', every frame. */
   private syncExtraTargets(dt: number, now: number) {
     const layer = this.combatLayer;
     if (!layer) return;
-    layer.setExtraTargets([...this.sharedTraffic.update(dt, now), ...this.testTargets(now)]);
-  }
-
-  /**
-   * Parked test cars to shoot at, in rings around the car (?testcars=N in the
-   * address). Once every one has burnt out, fresh ones.
-   */
-  private testTargets(now: number): TargetVehicle[] {
-    const layer = this.combatLayer;
-    const count = testCarCount();
-    if (!this.driving || !layer || !count) { this.testList = []; return this.testList; }
-    if (this.testList.length) {
-      if (this.testList.some((t) => layer.isTargetAlive(t.id))) { this.testTargetsAt = now; return this.testList; }
-      if (now - this.testTargetsAt < 8000) return this.testList; // let the wrecks burn out first
-    } else if (now - this.testTargetsAt < 1000) return this.testList; // a try a second at most
-    this.testTargetsAt = now;
-    const { position, heading } = this.vehicle;
-    const targets: TargetVehicle[] = [];
-    // spots in rings around the car, ahead first; only where a car could drive to (no wall, no water)
-    for (let ring = 0; ring < 4 && targets.length < count; ring++) {
-      for (let k = 0; k < 12 && targets.length < count; k++) {
-        const angle = heading + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 0.5;
-        const distance = 14 + ring * 9;
-        const at: Position = [
-          position[0] + Math.sin(angle) * distance / (111320 * Math.cos(position[1] * Math.PI / 180)),
-          position[1] + Math.cos(angle) * distance / 111320,
-        ];
-        if (targets.some((o) => metersBetween(o.position, at) < 7)) continue;
-        if (this.collisions.blocked(position, at, angle, 1, this.altitude) || this.water.resolve(position, at, angle).stopped) continue;
-        // on the same surface as us (not the river beside a bridge, not a roof)
-        const ground = this.map.groundAt(at, this.altitude);
-        if (ground == null || Math.abs(ground - this.altitude) > 2) continue;
-        const i = targets.length;
-        targets.push({ id: `test-${this.testSerial++}`, driver: t('net.testCar') + ' ' + (i + 1), car: carsConfig[(i * 3 + 1) % carsConfig.length], position: at, heading: heading + i * 1.3 });
-      }
-    }
-    if (targets.length) this.testList = targets; // walled in: try again after we move
-    return this.testList;
+    const tests = this.testCars.update(now, this.driving, this.vehicle, (id) => layer.isTargetAlive(id));
+    layer.setExtraTargets([...this.sharedTraffic.update(dt, now), ...tests]);
   }
 
   private targetVehicles() {
@@ -1141,7 +1101,6 @@ export class GameEngine {
     this.vehicleContactTimes.clear();
     this.hideEventBeacons();
     this.ensureTrafficMarkers();
-    this.ensureHealthMarkers();
     this.combatLayer?.setTargets(this.targetVehicles());
     this.say(t('arena.start'), true);
   }
@@ -1189,7 +1148,6 @@ export class GameEngine {
     this.combatLayer?.setRaceFinish(this.raceGoal);
     this.ensureRaceGoalMarker();
     this.ensureTrafficMarkers();
-    this.ensureHealthMarkers();
     this.combatLayer?.setTargets(this.targetVehicles());
     this.say(t('race.start'), true);
   }
@@ -1256,84 +1214,10 @@ export class GameEngine {
     return out;
   }
 
-  private ensureHealthMarkers(participants = this.meterTargets()) {
-    if (!this.healthMarkerLayer) {
-      this.healthMarkerLayer = document.createElement('div');
-      this.healthMarkerLayer.className = 'overhead-health-indicators';
-      this.healthMarkerLayer.style.position = 'absolute';
-      this.healthMarkerLayer.style.inset = '0';
-      this.healthMarkerLayer.style.zIndex = '6';
-      this.healthMarkerLayer.style.pointerEvents = 'none';
-      this.healthMarkerLayer.style.overflow = 'hidden';
-      this.host.appendChild(this.healthMarkerLayer);
-    }
-
-    const active = new Set(participants.map(participant => participant.id));
-    for (const [id, marker] of this.healthMarkers) {
-      if (active.has(id)) continue;
-      marker.element.remove();
-      this.healthMarkers.delete(id);
-    }
-
-    for (const participant of participants) {
-      if (this.healthMarkers.has(participant.id)) continue;
-      const element = document.createElement('div');
-      element.className = 'overhead-health-meter';
-      element.setAttribute('role', 'meter');
-      element.setAttribute('aria-label', t('health.label', { name: participant.name }));
-      element.style.position = 'absolute';
-      element.style.display = 'none';
-      element.style.width = '48px';
-      element.style.height = '7px';
-      element.style.transform = 'translate(-50%, -50%)';
-      element.style.overflow = 'hidden';
-      element.style.border = '1px solid #f7f7ef';
-      element.style.borderRadius = '4px';
-      element.style.backgroundColor = '#1a2228d9';
-      element.style.boxShadow = '0 1px 5px #000b';
-      const fill = document.createElement('span');
-      fill.style.display = 'block';
-      fill.style.height = '100%';
-      fill.style.transition = 'width .12s';
-      element.appendChild(fill);
-      this.healthMarkerLayer.appendChild(element);
-      this.healthMarkers.set(participant.id, { element, fill });
-    }
-  }
-
-  private updateHealthMarkers(updateMeters = true) {
-    for (const marker of this.healthMarkers.values()) marker.element.style.display = 'none';
-    if (!this.driving) return;
+  private updateHealthMarkers(refill = true) {
+    if (!this.driving) { this.healthMeters.hide(); return; }
     const canvas = this.map.getCanvas();
-    const width = canvas.clientWidth;
-    const height = canvas.clientHeight;
-    if (!width || !height) return;
-
-    // one list a frame: who has a meter and where (players and traffic come and go)
-    const participants = this.meterTargets();
-    this.ensureHealthMarkers(participants);
-    for (const participant of participants) {
-      const marker = this.healthMarkers.get(participant.id);
-      if (!marker) continue;
-      const position = participant.position;
-
-      const point = this.map.project(position);
-      if (!Number.isFinite(point.x) || !Number.isFinite(point.y)
-        || point.x < 0 || point.x > width || point.y < 0 || point.y > height) continue;
-
-      if (updateMeters) {
-        const color = healthColor(participant.hp, participant.maxHp);
-        marker.element.className = `overhead-health-meter ${color}`;
-        marker.element.setAttribute('aria-valuenow', String(participant.hp));
-        marker.element.setAttribute('aria-valuemin', '0');
-        marker.element.setAttribute('aria-valuemax', String(participant.maxHp));
-        marker.fill.style.width = `${Math.max(0, Math.min(1, participant.hp / participant.maxHp)) * 100}%`;
-        marker.fill.style.backgroundColor = color === 'green' ? '#25e35b' : color === 'yellow' ? '#ffe000' : '#ff3030';
-      }
-      marker.element.style.left = `${point.x}px`;
-      marker.element.style.top = `${point.y - 52}px`;
-      marker.element.style.display = 'block';
-    }
+    this.healthMeters.update(this.meterTargets(), (p) => this.map.project(p), canvas.clientWidth, canvas.clientHeight, refill);
   }
 
   private syncRoadPickups() {
@@ -1690,7 +1574,6 @@ export class GameEngine {
     this.bountyMarker?.remove();
     this.bountyMarker = null;
     this.ensureTrafficMarkers();
-    this.ensureHealthMarkers();
     this.combatLayer?.setTargets(this.targetVehicles());
     this.say(t('bounty.found', { name: bounty.name }), true);
   }
@@ -2803,8 +2686,7 @@ export class GameEngine {
     this.combatLayer?.setPickups([]);
     this.trafficMarkerLayer?.remove();
     this.trafficMarkers.clear();
-    this.healthMarkerLayer?.remove();
-    this.healthMarkers.clear();
+    this.healthMeters.dispose();
     this.cleanups.forEach((fn) => fn());
     this.map.remove();
   }
