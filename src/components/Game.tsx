@@ -626,6 +626,14 @@ export default function Game() {
         />
       )}
 
+      {dealerOffer && driving && !fuelOut && (
+        <DealershipDialog
+          offer={dealerOffer}
+          onBuy={(carId) => engine.current?.buyDealerCar(carId)}
+          onLeave={() => engine.current?.leaveDealer()}
+        />
+      )}
+
       {travelOffer && driving && !fuelOut && (
         <TravelDialog
           offer={travelOffer}
