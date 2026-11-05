@@ -617,6 +617,28 @@ export class WorldTiles {
     return out;
   }
 
+  /**
+   * The house a shop is in: the building around the point, else the nearest one
+   * within `radius` m. Its middle and the height of its top (m, not exaggerated).
+   */
+  houseAt(point: LngLat, radius: number): { middle: LngLat; top: number } | null {
+    let best: { middle: LngLat; top: number; d: number } | null = null;
+    const cos = Math.cos(point[1] * Math.PI / 180);
+    this.eachFootprint(point, radius, (rings, height, roof, crest) => {
+      const outer = rings()[0];
+      if (!outer?.length) return;
+      let x = 0, y = 0;
+      for (const [lng, lat] of outer) { x += lng; y += lat; }
+      const middle: LngLat = [x / outer.length, y / outer.length];
+      const inside = insideLngLat(point, outer);
+      const d = inside ? 0 : Math.hypot((middle[0] - point[0]) * 111320 * cos, (middle[1] - point[1]) * 111320);
+      if (d > radius || (best && d >= best.d)) return;
+      const ridge = roof.half > 0 && roof.peak < 1e6 ? roof.peak : 0;
+      best = { middle, top: crest + Math.max(height, ridge), d };
+    });
+    return best ? { middle: (best as { middle: LngLat }).middle, top: (best as { top: number }).top } : null;
+  }
+
   /** Footprints with roof skins for vehicle collisions (`crest` already exaggerated). */
   buildingsNear(center: LngLat, radius: number, exaggeration: number): BuildingCollider[] {
     const out: BuildingCollider[] = [];

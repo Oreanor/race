@@ -22,9 +22,10 @@ export type FuelSpec = {
 /** Abstract fuel station: real location, no brand or name on purpose. */
 /**
  * A station, service or showroom: `position` is where to drive to (on the road in
- * front of it), `place` the shop itself, where its label stands.
+ * front of it), `place` the house it is in and `top` that house's top, where its
+ * label stands.
  */
-export type Station = { id: string; position: Position; place?: Position };
+export type Station = { id: string; position: Position; place?: Position; top?: number };
 
 
 export { metersBetween };

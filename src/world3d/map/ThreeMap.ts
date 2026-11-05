@@ -67,6 +67,8 @@ export class ThreeMarker {
   private map: ThreeMap | null = null;
   /** @internal the ground under it, once a tile there has told us */
   altitude: number | null = null;
+  /** @internal set: it stands at this height (m, as drawn), not on the ground */
+  fixed: number | null = null;
   constructor(options: { element?: HTMLElement; anchor?: string } = {}) {
     this.element = options.element ?? document.createElement('div');
     this.element.style.position = 'absolute';
@@ -77,6 +79,8 @@ export class ThreeMarker {
     this.element.dataset.anchor = options.anchor ?? 'center';
   }
   setLngLat(p: LngLatLike) { this.lngLat = toLngLat(p); this.altitude = null; this.map?.placeMarker(this); return this; }
+  /** Stand at this height (m, as drawn: on a roof, say) instead of on the ground; null: the ground again. */
+  setAltitude(altitude: number | null) { this.fixed = altitude; this.map?.placeMarker(this); return this; }
   getLngLat() { return { lng: this.lngLat[0], lat: this.lngLat[1] }; }
   addTo(map: ThreeMap) { this.map = map; map.addMarker(this); return this; }
   remove() { this.map?.removeMarker(this); this.map = null; return this; }
@@ -273,6 +277,12 @@ export class ThreeMap {
   surfaceAt(p: LngLatLike) {
     const [lng, lat] = toLngLat(p);
     return this.world.surfaceAt(lng, lat);
+  }
+
+  /** The house a shop is in (or the nearest within `radius` m): its middle and its top, as drawn. */
+  houseAt(p: LngLatLike, radius = 80) {
+    const house = this.world.houseAt(toLngLat(p), radius);
+    return house ? { middle: house.middle, top: house.top * this.exaggeration } : null;
   }
 
   /** The ground under the view centre has arrived. */
@@ -500,7 +510,7 @@ export class ThreeMap {
     const [lng, lat] = marker.position();
     // stands on the ground under it: known once its tile is in (kept after the tile goes);
     // until then hidden, a label at a guessed height slides across the screen as the camera moves
-    const ground = this.groundAt([lng, lat]);
+    const ground = marker.fixed ?? this.groundAt([lng, lat]);
     if (ground != null) marker.altitude = ground;
     if (marker.altitude == null) { el.style.visibility = 'hidden'; return; }
     this.camera.update();

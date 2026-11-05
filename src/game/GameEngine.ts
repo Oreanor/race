@@ -50,6 +50,8 @@ const NO_FUEL_KEYS = new Set(['KeyW', 'Space']);
 
 type MapMarker = {
   setLngLat(position: [number, number]): MapMarker;
+  /** stand at this height (m) instead of on the ground */
+  setAltitude(altitude: number | null): MapMarker;
   addTo(map: ThreeMap): MapMarker;
   remove(): unknown;
   getElement(): HTMLElement;
@@ -1729,8 +1731,10 @@ export class GameEngine {
       (position, heading) => this.collisions.blocked(position, position, heading),
       60,
     );
-    // drive up on the road in front; the label stays over the shop itself
-    return start ? { id: station.id, position: [...start.position], place: station.position } : station;
+    // the label over the house the shop is in (the nearest one will do); drive up on the road in front
+    const house = this.map.houseAt(station.position);
+    const place = house?.middle ?? station.position;
+    return { id: station.id, position: start ? [...start.position] : station.position, place, top: house?.top };
   }
 
   /** Real petrol stations from the POI layer; remembered as the player drives on. */
@@ -1784,9 +1788,18 @@ export class GameEngine {
       fuel: t('poi.fuel'), repair: t('poi.service'), dealer: t('poi.dealer'),
     };
     for (const [id, { station, kind }] of wanted) {
+      // the houses come in after the roads: find the shop's house when they do
+      if (station.top == null) {
+        const house = this.map.houseAt(station.place ?? station.position);
+        if (house) {
+          station.place = house.middle;
+          station.top = house.top;
+          this.serviceMarkers.get(id)?.setLngLat(house.middle).setAltitude(house.top);
+        }
+      }
       if (this.serviceMarkers.has(id)) continue;
       const text = label[kind];
-      this.serviceMarkers.set(id, this.marker({ element: this.makeMapLabel(`travel-hub-marker is-${kind}`, text, text), anchor: 'bottom' }).setLngLat(station.place ?? station.position).addTo(this.map));
+      this.serviceMarkers.set(id, this.marker({ element: this.makeMapLabel(`travel-hub-marker is-${kind}`, text, text), anchor: 'bottom' }).setLngLat(station.place ?? station.position).setAltitude(station.top ?? null).addTo(this.map));
     }
   }
 
