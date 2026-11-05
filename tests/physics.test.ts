@@ -86,7 +86,12 @@ test('clutch while moving only allows braking',()=>{
   for(let i=0;i<60;i++)v.step(1/60,new Set(['KeyS','ShiftLeft']),config);
   assert.ok(v.speed<coasting-2);
 });
-test('ferrari pulls hardest, ford stays fast, howler is slower but not flat',()=>{const pace=(car:typeof cars[number])=>{const v=new VehicleController([0,40],0);for(let i=0;i<60;i++)v.step(1/60,new Set(['KeyW']),{...vehicleConfig,acceleration:car.acceleration,maxSpeed:car.maxSpeed});return v.speed;};const [ferrari,ford,howler]=cars.map(pace);assert.ok(ferrari>ford&&ford>howler);assert.ok(ferrari>14);assert.ok(howler>8);assert.ok(ford>howler+1);});
+test('ferrari pulls hardest, ford stays fast, howler is slower but not flat',()=>{
+  const byId=(id:string)=>cars.find(car=>car.id===id)!;
+  const pace=(car:typeof cars[number])=>{const v=new VehicleController([0,40],0);for(let i=0;i<60;i++)v.step(1/60,new Set(['KeyW']),{...vehicleConfig,acceleration:car.acceleration,maxSpeed:car.maxSpeed});return v.speed;};
+  const ferrari=pace(byId('01')), ford=pace(byId('02')), howler=pace(byId('03'));
+  assert.ok(ferrari>ford&&ford>howler);assert.ok(ferrari>14);assert.ok(howler>8);assert.ok(ford>howler+1);
+});
 test('wall contact and courtyard geometry',()=>{const p:[number,number][][]=[[[0,0],[10,0],[10,10],[0,10],[0,0]],[[3,3],[7,3],[7,7],[3,7],[3,3]]];assert.equal(circleHitsPolygon([-0.5,5],1,p),true);assert.equal(circleHitsPolygon([-2,5],1,p),false);assert.equal(circleHitsPolygon([5,5],1,p),false);assert.equal(circleHitsPolygon([1,1],.5,p),true);});
 test('swept collision prevents tunneling in both directions',()=>{const c=new BuildingCollisions();c.update([0,0],[[[[.0001,-.0001],[.00012,-.0001],[.00012,.0001],[.0001,.0001],[.0001,-.0001]]]]);assert.equal(c.blocked([0,0],[.0002,0],Math.PI/2),true);assert.equal(c.blocked([.0002,0],[0,0],Math.PI/2),true);assert.equal(c.blocked([0,.001],[.0002,.001],0),false);});
 test('a car overlapping a building can move out but not deeper into it',()=>{
