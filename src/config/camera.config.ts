@@ -3,6 +3,8 @@ export const cameraConfig = {
   minDistance: 8,
   /** zoom out far enough to spot bots a few blocks ahead */
   maxDistance: 110,
+  /** while holding fire, chase distance eases toward this (m) */
+  aimDistance: 9,
   pitch: 73,
   minPitch: 28,
   maxPitch: 74,

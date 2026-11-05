@@ -30,14 +30,20 @@ export const cities = [
 export type City = typeof cities[number];
 export type Car = typeof cars[number];
 
+/** Coins on a fresh start; the intro car is bought out of this purse. */
+export const STARTING_CASH = 5000;
+
 /**
- * Showroom price in coins. Scaled from top speed, punch and engine size so
- * beaters stay cheap and race cars cost a serious bounty or arena purse.
+ * Showroom price in coins. Steep curve on speed and punch so a starter purse
+ * only covers the slowest beaters; race cars need arena / bounty money.
  */
 export function carPrice(car: Car): number {
   const kph = car.maxSpeed * 3.6;
-  const raw = kph * 12 + car.acceleration * 220 + car.engine * 280;
-  return Math.max(400, Math.round(raw / 100) * 100);
+  const raw =
+    (kph / 125) ** 2.8 * 2200 +
+    (car.acceleration / 8) ** 2.9 * 1600 +
+    (car.engine / 2.5) ** 1.7 * 500;
+  return Math.max(1500, Math.round(raw / 100) * 100);
 }
 
 /** What the dealership pays for the car you drive in (half the shelf price). */

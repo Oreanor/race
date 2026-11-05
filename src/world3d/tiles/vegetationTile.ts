@@ -34,6 +34,13 @@ export type VegetationData = {
   rails: InstanceSet;
   /** street lamps (model in meters, arm along +X) */
   lamps: InstanceSet;
+  /** statues on pedestals: the stone (square or long) and the bronze (a figure or a rider) */
+  plinths: InstanceSet;
+  plinthsLong: InstanceSet;
+  figures: InstanceSet;
+  riders: InstanceSet;
+  /** each monument's footprint for collisions: x, z (tile-local mercator), ground, half width, half length (m), yaw */
+  monuments: Float32Array;
   /**
    * Things gunfire or a car can knock over, FELL_STRIDE floats each: kind
    * (0 tree, 1 lamp), x, z (tile-local mercator), ground, top (m above ground),
@@ -49,6 +56,10 @@ export type VegetationData = {
 
 /** texels per tile edge of the baked street light (≈3 m each) */
 export const LAMP_MAP = 768;
+/** where the bronze stands on a monument's pedestal (m above the ground) */
+export const MONUMENT_PLINTH_TOP = 2.7;
+export const MONUMENT_PLINTH_LONG_TOP = 2.4;
+
 /** radius of a lamp's pool of light on the street (m) */
 const LAMP_POOL = 11;
 /** the head hangs this far out over the road from the pole (m) */
@@ -162,6 +173,7 @@ export function buildVegetation(
   metersScale: number,
   features: Record<string, MapFeature[]>,
   groundAt: (x: number, z: number) => number,
+  monumentSpots: { x: number; z: number; seed: number }[] = [],
 ): VegetationData {
   const toMerc = 1 / metersScale;
   const center: [number, number] = [lngFromMercator(corner[0] + span / 2), latFromMercator(corner[1] - span / 2)];
@@ -273,15 +285,36 @@ export function buildVegetation(
   for (const lamp of streets.lamps) heads.push(lamp.x + Math.cos(lamp.yaw) * LAMP_ARM * toMerc, lamp.z - Math.sin(lamp.yaw) * LAMP_ARM * toMerc);
   const lampLight = new Uint8Array(LAMP_MAP * LAMP_MAP);
   bakeLampLight(heads, span, metersScale, lampLight);
-  return { flora: flora.map((f) => f.done(true)), preset: presetId, posts: posts.done(), rails: rails.done(), lamps: lamps.done(), fell: new Float32Array(fell), lampLight };
+  // ---- monuments: a statue on a pedestal, about one in three on horseback --------
+  const plinths = new Instances(), plinthsLong = new Instances(), figures = new Instances(), riders = new Instances();
+  const monuments: number[] = [];
+  for (const spot of monumentSpots) {
+    const ground = groundAt(spot.x, spot.z);
+    const yaw = (spot.seed % 360) * Math.PI / 180;
+    const mounted = spot.seed % 3 === 0;
+    if (mounted) {
+      plinthsLong.push(spot.x, 0, spot.z, yaw, toMerc, 1, toMerc, ground);
+      riders.push(spot.x, MONUMENT_PLINTH_LONG_TOP, spot.z, yaw, toMerc, 1, toMerc, ground);
+      monuments.push(spot.x, spot.z, ground, 1.25, 2.1, yaw);
+    } else {
+      plinths.push(spot.x, 0, spot.z, yaw, toMerc, 1, toMerc, ground);
+      figures.push(spot.x, MONUMENT_PLINTH_TOP, spot.z, yaw, toMerc, 1, toMerc, ground);
+      monuments.push(spot.x, spot.z, ground, 1.1, 1.1, yaw);
+    }
+  }
+  return {
+    flora: flora.map((f) => f.done(true)), preset: presetId, posts: posts.done(), rails: rails.done(), lamps: lamps.done(),
+    plinths: plinths.done(), plinthsLong: plinthsLong.done(), figures: figures.done(), riders: riders.done(), monuments: new Float32Array(monuments),
+    fell: new Float32Array(fell), lampLight,
+  };
 }
 
 export function vegetationTransferables(v: VegetationData): ArrayBuffer[] {
   const out: ArrayBuffer[] = [];
-  for (const set of [...v.flora, v.posts, v.rails, v.lamps]) {
+  for (const set of [...v.flora, v.posts, v.rails, v.lamps, v.plinths, v.plinthsLong, v.figures, v.riders]) {
     out.push(set.matrices.buffer as ArrayBuffer, set.ground.buffer as ArrayBuffer);
     for (const extra of [set.colors, set.bark, set.traits]) if (extra) out.push(extra.buffer as ArrayBuffer);
   }
-  out.push(v.fell.buffer as ArrayBuffer, v.lampLight.buffer as ArrayBuffer);
+  out.push(v.fell.buffer as ArrayBuffer, v.lampLight.buffer as ArrayBuffer, v.monuments.buffer as ArrayBuffer);
   return out;
 }

@@ -19,7 +19,85 @@ const pieces = createPieceGeometries();
 // tree / shrub shape per tile (all in one material), plus fences, lamps and
 // roof props. Ground height and fog in the shader.
 
-type Kind = 'post' | 'rail' | 'chimney' | 'vent' | 'lamp';
+type Kind = 'post' | 'rail' | 'chimney' | 'vent' | 'lamp' | 'plinth' | 'plinthLong' | 'figure' | 'rider';
+
+/** Merge simple pieces into one shape, no uvs. */
+function shape(pieces: THREE.BufferGeometry[]) {
+  const merged = mergeGeometries(pieces.map((g) => g.toNonIndexed()), false)!;
+  merged.deleteAttribute('uv');
+  merged.computeVertexNormals();
+  return merged;
+}
+
+/** A stone pedestal: two steps, a shaft and a cornice; top at 2.7 m. */
+function plinthGeometry() {
+  return shape([
+    new THREE.BoxGeometry(2.2, 0.22, 2.2).translate(0, 0.11, 0),
+    new THREE.BoxGeometry(1.8, 0.22, 1.8).translate(0, 0.33, 0),
+    new THREE.BoxGeometry(1.15, 1.95, 1.15).translate(0, 0.44 + 0.975, 0),
+    new THREE.BoxGeometry(1.4, 0.18, 1.4).translate(0, 2.48, 0),
+    new THREE.BoxGeometry(1.25, 0.12, 1.25).translate(0, 2.64, 0),
+  ]);
+}
+
+/** The long pedestal under a horse (along +Z); top at 2.4 m. */
+function plinthLongGeometry() {
+  return shape([
+    new THREE.BoxGeometry(2.5, 0.22, 4.2).translate(0, 0.11, 0),
+    new THREE.BoxGeometry(2.1, 0.22, 3.8).translate(0, 0.33, 0),
+    new THREE.BoxGeometry(1.5, 1.7, 3.1).translate(0, 0.44 + 0.85, 0),
+    new THREE.BoxGeometry(1.75, 0.16, 3.4).translate(0, 2.22, 0),
+    new THREE.BoxGeometry(1.6, 0.1, 3.25).translate(0, 2.35, 0),
+  ]);
+}
+
+/** A standing figure in a long coat, one arm raised; 2.8 m, facing +Z. */
+function figureGeometry() {
+  const arm = (side: number, raised: boolean) => {
+    const g = new THREE.CylinderGeometry(0.07, 0.08, 0.78, 6).translate(0, -0.36, 0);
+    if (raised) g.rotateX(-2.35).rotateZ(side * 0.25);
+    else g.rotateZ(side * 0.12);
+    return g.translate(side * 0.36, 2.0, 0);
+  };
+  return shape([
+    new THREE.CylinderGeometry(0.11, 0.12, 1.0, 6).translate(-0.13, 0.5, 0),
+    new THREE.CylinderGeometry(0.11, 0.12, 1.0, 6).translate(0.13, 0.5, 0.05),
+    // coat flaring to the knees, chest, shoulders
+    new THREE.CylinderGeometry(0.3, 0.42, 0.75, 7).translate(0, 1.05, 0),
+    new THREE.CylinderGeometry(0.33, 0.3, 0.7, 7).translate(0, 1.75, 0),
+    new THREE.BoxGeometry(0.78, 0.14, 0.34).translate(0, 2.08, 0),
+    arm(1, true), arm(-1, false),
+    new THREE.CylinderGeometry(0.07, 0.08, 0.14, 6).translate(0, 2.2, 0),
+    new THREE.SphereGeometry(0.17, 8, 6).translate(0, 2.42, 0.01),
+    // a hat brim
+    new THREE.CylinderGeometry(0.22, 0.22, 0.04, 8).translate(0, 2.56, 0),
+  ]);
+}
+
+/** A rider on a standing horse, facing +Z; 3.2 m. */
+function riderGeometry() {
+  const leg = (x: number, z: number, lift = 0) => new THREE.CylinderGeometry(0.08, 0.1, 1.1, 6).translate(x, 0.55 + lift, z);
+  const neck = new THREE.BoxGeometry(0.34, 0.9, 0.4).rotateX(0.6).translate(0, 1.85, 0.95);
+  const head = new THREE.BoxGeometry(0.26, 0.3, 0.62).rotateX(0.35).translate(0, 2.2, 1.35);
+  const tail = new THREE.BoxGeometry(0.12, 0.7, 0.12).rotateX(-0.35).translate(0, 1.3, -1.05);
+  return shape([
+    // the horse: body, chest, rump, legs (a fore leg raised), neck, head, tail
+    new THREE.BoxGeometry(0.62, 0.62, 1.7).translate(0, 1.4, 0),
+    new THREE.SphereGeometry(0.36, 8, 6).scale(1, 1.05, 1.1).translate(0, 1.42, 0.78),
+    new THREE.SphereGeometry(0.37, 8, 6).scale(1, 1, 1.1).translate(0, 1.45, -0.78),
+    leg(-0.2, 0.7), leg(0.2, 0.55, 0.35).rotateX(0) , leg(-0.2, -0.7), leg(0.2, -0.7),
+    neck, head, tail,
+    // the rider: legs astride, body, arms, head
+    new THREE.BoxGeometry(0.72, 0.18, 0.34).translate(0, 1.82, 0.05),
+    new THREE.CylinderGeometry(0.08, 0.09, 0.6, 6).translate(-0.36, 1.55, 0.1),
+    new THREE.CylinderGeometry(0.08, 0.09, 0.6, 6).translate(0.36, 1.55, 0.1),
+    new THREE.CylinderGeometry(0.22, 0.26, 0.72, 7).translate(0, 2.25, 0),
+    new THREE.CylinderGeometry(0.06, 0.07, 0.62, 6).rotateX(-0.9).translate(0.28, 2.32, 0.28),
+    new THREE.CylinderGeometry(0.06, 0.07, 0.62, 6).rotateX(-0.5).translate(-0.28, 2.25, 0.25),
+    new THREE.SphereGeometry(0.15, 8, 6).translate(0, 2.8, 0.02),
+    new THREE.CylinderGeometry(0.2, 0.2, 0.04, 8).translate(0, 2.93, 0),
+  ]);
+}
 
 /** Mark every vertex: 0 metal post, 1 neon / lamp head (shader glow). */
 function withGlow(geometry: THREE.BufferGeometry, glow: number) {
@@ -133,12 +211,16 @@ export class VegetationRenderer {
       chimney: pieces.chimney,
       vent: pieces.vent,
       lamp: this.classicLamp,
+      plinth: plinthGeometry(), plinthLong: plinthLongGeometry(), figure: figureGeometry(), rider: riderGeometry(),
     };
     const lambert = (color: string | number) => simpleLit(color, uniforms);
     this.materials = {
       post: lambert('#4a4036'), rail: lambert('#5c5145'),
       chimney: lambert(0xffffff), vent: lambert(0xffffff),
       lamp: simpleLit('#9aa1a8', uniforms, { shiny: true, glow: true }),
+      // pale stone, dark bronze
+      plinth: lambert('#c9c1b3'), plinthLong: lambert('#c9c1b3'),
+      figure: simpleLit('#5a4a33', uniforms, { shiny: true }), rider: simpleLit('#5a4a33', uniforms, { shiny: true }),
     };
     this.flora = createFloraModels();
     this.floraFar = createFarFloraModels(this.flora);
@@ -156,7 +238,7 @@ export class VegetationRenderer {
   build(data: VegetationData): THREE.InstancedMesh[] {
     const out: THREE.InstancedMesh[] = [];
     data.flora.forEach((set, i) => out.push(...this.instanced(`flora${i}`, this.flora[i], this.floraMat, set)));
-    for (const [kind, set] of [['post', data.posts], ['rail', data.rails], ['lamp', data.lamps]] as [Kind, InstanceSet][]) {
+    for (const [kind, set] of [['post', data.posts], ['rail', data.rails], ['lamp', data.lamps], ['plinth', data.plinths], ['plinthLong', data.plinthsLong], ['figure', data.figures], ['rider', data.riders]] as [Kind, InstanceSet][]) {
       out.push(...this.instanced(kind, this.geometries[kind], this.materials[kind], set));
     }
     // every lamp's cone of light, on its own copy of the matrices: a lamp knocked down puts it out

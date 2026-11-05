@@ -4,7 +4,7 @@ import { supportAltitude, type GroundSample } from './groundSupport';
 import { BuildingCollisions } from './BuildingCollisions';
 import { ThicketCollision } from './Vegetation';
 import { WaterCollisionController, type MapFeature } from './WaterCollisionController';
-import { mapConfig, cars as carsConfig, carPrice, tradeInPrice, type City, type Car, vehicleConfig } from '@/config/vehicle.config';
+import { mapConfig, cars as carsConfig, carPrice, tradeInPrice, STARTING_CASH, type City, type Car, vehicleConfig } from '@/config/vehicle.config';
 import { cameraConfig, zoomForDistance } from '@/config/camera.config';
 import { VehicleController, offsetPosition, resolveVehicleCollision, type Position } from './VehicleController';
 import { vehicleLayer, type VehicleSceneLayer } from '@/rendering/VehicleLayer';
@@ -31,10 +31,16 @@ import { trainsLayer } from '@/rendering/TrainsLayer';
 import { RailNetwork, TrainTraffic } from './Trains';
 import { hubAt, hubsFromFeatures, kilometres, nearestHub, ticketPrice, type Hub, type HubKind } from './Travel';
 import { bearingTo, loadBounty, makeBounty, saveBounty, type Bounty } from './Bounty';
+import type { GameSave } from './save';
 
 export type FuelHud = { level: number; tank: number; refuelling: boolean; station: number | null; money: number; hub: { kind: HubKind; distance: number } | null };
-/** What a player takes along to another city (ticket, later: server handoff). */
-export type PlayerCarry = { money: number; fuel: number };
+/** What a player takes along to another city (ticket) or restores on page reload. */
+export type PlayerCarry = {
+  money: number;
+  fuel: number;
+  /** page reload: keep the car where it was */
+  at?: { position: [number, number]; heading: number; hp: number };
+};
 export type TravelOffer = { kind: HubKind; from: [number, number]; money: number; target?: { name: string; country: string; coords: [number, number] } };
 /** A wanted driver somewhere in the world, offered as a job. */
 export type BountyOffer = { name: string; car: string; place: string; country: string; km: number; reward: number };
@@ -317,6 +323,8 @@ export class GameEngine {
   private playerMoney = 0;
   get booted() { return this.mapShown; }
   private aimingFire = false;
+  /** 0…1 ease: chase cam pulls in while the gun is held */
+  private fireCam = 0;
   /** LMB: drag to look around; hold still to aim/fire (no permanent reticle). */
   private lookPointer: number | null = null;
   private lookOrigin: { x: number; y: number } | null = null;
@@ -687,7 +695,8 @@ export class GameEngine {
     this.eventOffer = null;
     this.eventCooldown = 0;
     this.raceGoal = null;
-    this.playerHp = this.playerMaxHp;
+    const resumeHp = this.carry?.at?.hp;
+    this.playerHp = resumeHp != null ? Math.max(1, Math.min(this.playerMaxHp, resumeHp)) : this.playerMaxHp;
     this.wins.clear();
     this.clearEventBots();
     this.pickups.clear();
@@ -695,7 +704,8 @@ export class GameEngine {
     this.collectedPickups.clear();
     this.pickupFocus = null;
     this.pickupNetworkRevision = -1;
-    this.playerMoney = this.carry?.money ?? 0;
+    // travel / reload keep the purse; a fresh start buys the intro car out of STARTING_CASH
+    this.playerMoney = this.carry?.money ?? Math.max(0, STARTING_CASH - carPrice(this.car));
     this.fuel.level = this.fuel.spec.tank * (this.carry?.fuel ?? 1);
     this.carry = null;
     this.fuelOut = false;
@@ -710,6 +720,44 @@ export class GameEngine {
     this.combatLayer?.setRaceFinish(null);
     this.syncRoadPickups();
     this.onEventOffer(null);
+  }
+
+  /** Snapshot for localStorage so a refresh lands back mid-drive. */
+  snapshot(place: { name: string; country: string; coords: [number, number] }): GameSave {
+    return {
+      money: Math.floor(this.playerMoney),
+      fuel: this.fuel.ratio,
+      hp: this.playerHp,
+      carId: this.car.id,
+      position: [...this.vehicle.position] as [number, number],
+      heading: this.vehicle.heading,
+      place: { name: place.name, country: place.country, coords: [...place.coords] as [number, number] },
+    };
+  }
+
+  /** Put the car back where a save left it (before setDriving from the menu). */
+  resumeFrom(at: { position: [number, number]; heading: number }) {
+    this.customSpawn = { position: [...at.position], heading: at.heading };
+    this.vehicle.position = [...at.position];
+    this.vehicle.heading = at.heading;
+    this.bearing = at.heading * 180 / Math.PI;
+    this.spawnResolved = true;
+    this.renderVehicle.reset(this.vehicle);
+    this.setTargetVehicles(at.position, at.heading);
+  }
+
+  /** Exit to menu: drop this run so the next drive is a fresh purchase. */
+  resetRun() {
+    this.customSpawn = null;
+    this.defaultSpawn = null;
+    this.spawnResolved = false;
+    this.playerMoney = 0;
+    this.playerHp = this.playerMaxHp;
+    this.carry = null;
+    this.fuel.level = this.fuel.spec.tank;
+    this.fuelOut = false;
+    this.onFuelOut(false);
+    this.onSpawnSet(null);
   }
 
   private clearEventBots() {
@@ -2559,6 +2607,10 @@ export class GameEngine {
       this.plantWheels(dt, now);
       this.updateRamp(now, dt);
       this.nudgeCamera(dt);
+      // pull in while firing; keep the player's wheel-zoom distance when they let go
+      const fireWant = this.aimingFire && !this.lookDragging && !this.mapInspecting() ? 1 : 0;
+      this.fireCam += (fireWant - this.fireCam) * (1 - Math.exp(-dt * 10));
+      const chaseDistance = this.distance + (Math.min(this.distance, cameraConfig.aimDistance) - this.distance) * this.fireCam;
       // north up (compass double-click) until the player turns the view themselves
       if (this.northUp && this.orbit !== 0) {
         this.northUp = false;
@@ -2569,9 +2621,9 @@ export class GameEngine {
       if (this.northUp || this.settings.follow) this.bearing += delta * (1 - Math.exp(-dt * 5));
       else { this.bearing += this.orbit; this.orbit = 0; }
       const bearingRad = this.bearing * Math.PI / 180;
-      const ahead = this.distance * cameraConfig.lookAheadFactor;
+      const ahead = chaseDistance * cameraConfig.lookAheadFactor;
       const look = offsetPosition(this.renderVehicle.position, Math.sin(bearingRad) * ahead, Math.cos(bearingRad) * ahead);
-      const zoom = zoomForDistance(this.distance, this.renderVehicle.position[1]);
+      const zoom = zoomForDistance(chaseDistance, this.renderVehicle.position[1]);
       let center: [number, number] = look;
       let zoomNow = zoom;
       let pitchNow = this.pitch;

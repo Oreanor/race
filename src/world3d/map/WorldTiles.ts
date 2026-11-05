@@ -645,6 +645,25 @@ export class WorldTiles {
     this.eachFootprint(center, radius, (rings, _height, roof, crest) => {
       out.push({ rings: rings(), crest: crest * exaggeration, roof });
     });
+    // monuments: their pedestals are solid too (a car stops at them, flies over on a jump)
+    const mx = mercatorX(center[0]), my = mercatorY(center[1]);
+    for (const live of this.tiles.values()) {
+      const m = live.data.vegetation.monuments;
+      if (!m?.length) continue;
+      const [cx, cy] = live.data.corner;
+      const k = 1 / live.data.metersScale;
+      for (let i = 0; i < m.length; i += 6) {
+        const x = cx + m[i], y = cy - m[i + 1];
+        if (Math.hypot(x - mx, y - my) * live.data.metersScale > radius) continue;
+        const c = Math.cos(m[i + 5]), s = Math.sin(m[i + 5]);
+        const ring: [number, number][] = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => {
+          const ex = a * m[i + 3] * k, ez = b * m[i + 4] * k;
+          // yaw as the instance matrix turns it (x east, z south)
+          return [lngFromMercator(x + c * ex + s * ez), latFromMercator(y - (-s * ex + c * ez))];
+        });
+        out.push({ rings: [ring], crest: m[i + 2] * exaggeration, roof: { eaves: 2.6, peak: 2.6, half: 0, ridgeA: null, ridgeB: null } });
+      }
+    }
     return out;
   }
 

@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { cars, cities, type City } from '@/config/vehicle.config';
+import { cars, carPrice, cities, STARTING_CASH, type City } from '@/config/vehicle.config';
 import { SKINS } from '@/world3d/buildings/skins';
 import { NetHud, type NetFeed } from './NetHud';
 import ServerStatus from './ServerStatus';
@@ -8,8 +8,22 @@ import { findPlaces } from '@/game/findPlaces';
 import { healthColor } from '@/game/health';
 import { GameEngine, type BountyOffer, type DealerOffer, type EventResult, type FuelHud, type HudParticipant, type PlayerCarry, type ServiceOffer, type Settings, type Theme, type TravelOffer } from '@/game/GameEngine';
 import { EVACUATION_COST } from '@/game/Fuel';
+import { clearSave, loadSave, writeSave, type GameSave } from '@/game/save';
 import { formatNumber, getLang, LANGS, setLang, t, type Lang, type MessageKey } from '@/i18n';
 import { useLang } from '@/i18n/react';
+
+function cheapestCarIndex() {
+  let best = 0;
+  for (let i = 1; i < cars.length; i++) if (carPrice(cars[i]) < carPrice(cars[best])) best = i;
+  return best;
+}
+
+/** Saved mid-drive progress, ignored when the URL pins a test spot. */
+function bootSave(): GameSave | null {
+  if (typeof window === 'undefined') return null;
+  if (placeFromAddress()) return null;
+  return loadSave();
+}
 
 const LOCALES: Record<Lang, string> = { en: 'en-GB', pt: 'pt-PT', ru: 'ru-RU' };
 let clockFormat: { key: string; time: Intl.DateTimeFormat; date: Intl.DateTimeFormat } | null = null;
@@ -176,11 +190,35 @@ export default function Game() {
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ?at=lng,lat&heading=deg (testing): start right there instead of the first city
-  const [place, setPlace] = useState<City>(() => placeFromAddress() ?? cities[0]);
-  const [car, setCar] = useState(0);
+  const [place, setPlace] = useState<City>(() => {
+    const pinned = placeFromAddress();
+    if (pinned) return pinned;
+    const save = bootSave();
+    if (save) {
+      return {
+        name: save.place.name,
+        country: save.place.country,
+        coords: [...save.position] as [number, number],
+        heading: save.heading * 180 / Math.PI,
+        road: '',
+        note: '',
+      };
+    }
+    return cities[0];
+  });
+  // open on the cheapest car — with STARTING_CASH only beaters are affordable
+  const [car, setCar] = useState(() => {
+    const save = bootSave();
+    if (save) {
+      const index = cars.findIndex((entry) => entry.id === save.carId);
+      if (index >= 0) return index;
+    }
+    return cheapestCarIndex();
+  });
   const [driving, setDriving] = useState(false);
   const [approaching, setApproaching] = useState(false);
   const [booted, setBooted] = useState(false);
+  const [exitConfirm, setExitConfirm] = useState(false);
   const [search, setSearch] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [found, setFound] = useState<City[]>([]);
@@ -213,9 +251,23 @@ export default function Game() {
   const [serviceOffer, setServiceOffer] = useState<ServiceOffer | null>(null);
   const [dealerOffer, setDealerOffer] = useState<DealerOffer | null>(null);
   const [bountyOffer, setBountyOffer] = useState<BountyOffer | null>(null);
-  // a bought ticket: what the player takes to the next city, and drive on arrival
+  // a bought ticket / page-reload purse: what the player takes into the next engine
   const carryRef = useRef<PlayerCarry | null>(null);
   const arriveRef = useRef(false);
+  const resumeRef = useRef(false);
+  const resumeAtRef = useRef<{ position: [number, number]; heading: number; hp: number } | null>(null);
+  // one-time: restore mid-drive progress from localStorage
+  const resumeBoot = useRef(false);
+  if (!resumeBoot.current) {
+    resumeBoot.current = true;
+    const save = bootSave();
+    if (save) {
+      const at = { position: save.position, heading: save.heading, hp: save.hp };
+      carryRef.current = { money: save.money, fuel: save.fuel, at };
+      resumeAtRef.current = at;
+      resumeRef.current = true;
+    }
+  }
   const [settings, setSettings] = useState<Settings>(() => {
     // like language: saved choice, else the browser's light/dark preference
     let theme: Theme = 'light';
@@ -283,14 +335,27 @@ export default function Game() {
           aim.style.top = `${y}px`;
           aim.style.display = visible ? 'block' : 'none';
           aim.classList.toggle('is-firing', Boolean(firing));
+          // OS cursor on top of the reticle; hide it while aiming/firing
+          host.current?.classList.toggle('is-aiming', visible);
         },
         carryRef.current,
       );
       carryRef.current = null;
-      game.onApproach = (active) => setApproaching(active);
-      game.onBoot = (ready) => {
+      const live = game;
+      live.onApproach = (active) => setApproaching(active);
+      live.onBoot = (ready) => {
         setBooted(ready);
-        if (ready && arriveRef.current) {
+        if (!ready) return;
+        if (resumeRef.current) {
+          resumeRef.current = false;
+          const at = resumeAtRef.current;
+          resumeAtRef.current = null;
+          if (at) live.resumeFrom(at);
+          setApproaching(true);
+          setDriving(true);
+          return;
+        }
+        if (arriveRef.current) {
           arriveRef.current = false;
           setApproaching(true);
           setDriving(true);
@@ -348,8 +413,8 @@ export default function Game() {
   useEffect(() => engine.current?.applySettings(settings), [settings]);
   useEffect(() => engine.current?.setDriving(driving), [driving]);
   useEffect(() => {
-    engine.current?.setPaused((settingsOpen || Boolean(eventOffer) || Boolean(eventResult) || Boolean(bountyOffer) || fuelOut || Boolean(travelOffer) || Boolean(serviceOffer)) && driving);
-  }, [settingsOpen, eventOffer, eventResult, bountyOffer, fuelOut, travelOffer, serviceOffer, driving]);
+    engine.current?.setPaused((settingsOpen || exitConfirm || Boolean(eventOffer) || Boolean(eventResult) || Boolean(bountyOffer) || fuelOut || Boolean(travelOffer) || Boolean(serviceOffer) || Boolean(dealerOffer)) && driving);
+  }, [settingsOpen, exitConfirm, eventOffer, eventResult, bountyOffer, fuelOut, travelOffer, serviceOffer, dealerOffer, driving]);
   useEffect(() => {
     drivingRef.current = driving;
     if (!driving) {
@@ -374,6 +439,7 @@ export default function Game() {
       }
       if (e.code !== 'KeyW' || e.repeat) return;
       if (drivingRef.current || !booted) return;
+      if (carPrice(cars[car]) > STARTING_CASH) return;
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement) return;
       e.preventDefault();
       setApproaching(true);
@@ -382,7 +448,7 @@ export default function Game() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [booted]);
+  }, [booted, car]);
   useEffect(() => () => {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
   }, []);
@@ -419,13 +485,50 @@ export default function Game() {
     return next;
   });
   const closeSettings = () => setSettingsOpen(false);
-  const exitToMenu = () => {
+  const askExit = () => setExitConfirm(true);
+  const cancelExit = () => setExitConfirm(false);
+  const confirmExit = () => {
+    clearSave();
+    engine.current?.resetRun();
+    setExitConfirm(false);
     setSettingsOpen(false);
     setDriving(false);
     setApproaching(false);
+    setSpawnPin(null);
+    setFuelOut(false);
+    setTravelOffer(null);
+    setServiceOffer(null);
+    setDealerOffer(null);
+    setBountyOffer(null);
+    setEventOffer(null);
+    setEventResult(null);
+    setCar(cheapestCarIndex());
+    carryRef.current = null;
   };
 
+  // keep mid-drive progress so a refresh lands back on the road
+  useEffect(() => {
+    if (!driving) return;
+    const persist = () => {
+      const game = engine.current;
+      if (!game) return;
+      writeSave(game.snapshot({ name: place.name, country: place.country, coords: place.coords }));
+    };
+    persist();
+    const id = window.setInterval(persist, 2500);
+    const onLeave = () => persist();
+    window.addEventListener('pagehide', onLeave);
+    document.addEventListener('visibilitychange', onLeave);
+    return () => {
+      window.clearInterval(id);
+      window.removeEventListener('pagehide', onLeave);
+      document.removeEventListener('visibilitychange', onLeave);
+    };
+  }, [driving, place]);
+
   const query = search.trim().toLowerCase();
+  const starterPrice = carPrice(cars[car]);
+  const canBuyStarter = starterPrice <= STARTING_CASH;
   const chosen = (c: City) => c.name === place.name && Math.abs(c.coords[0] - place.coords[0]) < 1e-4 && Math.abs(c.coords[1] - place.coords[1]) < 1e-4;
   const option = (c: City) => (
     <button
@@ -515,10 +618,19 @@ export default function Game() {
                 )}
               </div>
               <h3 className="ui-section">{t('intro.car')}</h3>
-              <CarCarousel index={car} onIndex={setCar} />
+              <div className="ui-row ui-wallet"><span>{t('travel.wallet')}</span><strong>{t('travel.coins', { n: formatNumber(STARTING_CASH) })}</strong></div>
+              <CarCarousel index={car} onIndex={setCar}>
+                <div className="car-deal">
+                  <span>{t('dealer.shelf', { price: formatNumber(starterPrice) })}</span>
+                  <strong className={canBuyStarter ? '' : 'is-broke'}>
+                    {canBuyStarter ? t('travel.coins', { n: formatNumber(starterPrice) }) : t('dialog.broke')}
+                  </strong>
+                </div>
+              </CarCarousel>
               <button
                 className="ui-btn drive"
-                disabled={!booted}
+                disabled={!booted || !canBuyStarter}
+                title={canBuyStarter ? undefined : t('dialog.broke')}
                 onClick={() => { setApproaching(true); setDriving(true); setSettingsOpen(false); }}
               >
                 {t('drive')}
@@ -567,7 +679,7 @@ export default function Game() {
           onBackdrop={closeSettings}
           actions={<>
             <button type="button" className="ui-btn" onClick={closeSettings}>{driving ? t('settings.resume') : t('settings.back')}</button>
-            <button type="button" className="ui-btn is-ghost" onClick={exitToMenu}>{t('settings.exit')}</button>
+            {driving && <button type="button" className="ui-btn is-ghost" onClick={askExit}>{t('settings.exit')}</button>}
           </>}
         >
           <div className="ui-form">
@@ -591,6 +703,20 @@ export default function Game() {
             <ServerStatus />
             <label>{t('settings.quality')}<select value={settings.quality} onChange={e => update({ quality: e.target.value as Settings['quality'] })}><option value="low">{t('quality.low')}</option><option value="medium">{t('quality.medium')}</option><option value="high">{t('quality.high')}</option></select></label>
           </div>
+        </Dialog>
+      )}
+
+      {exitConfirm && (
+        <Dialog
+          tone="alert"
+          title={t('settings.exit.confirm')}
+          onBackdrop={cancelExit}
+          actions={<>
+            <button type="button" className="ui-btn" autoFocus onClick={cancelExit}>{t('settings.exit.no')}</button>
+            <button type="button" className="ui-btn is-ghost" onClick={confirmExit}>{t('settings.exit.yes')}</button>
+          </>}
+        >
+          <p className="ui-text">{t('settings.exit.text')}</p>
         </Dialog>
       )}
 

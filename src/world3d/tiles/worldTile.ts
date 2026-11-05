@@ -774,6 +774,38 @@ function roadMesh(vt: VectorTile, span: number, grid: number, at: Surfaces, brid
   return meshOf(builder);
 }
 
+// ---- monuments ---------------------------------------------------------------
+
+/** what makes a point of interest a monument we put up (a statue on a pedestal) */
+const MONUMENT_SUBCLASS = /^(artwork|statue|monument|memorial|sculpture)$/;
+const MONUMENT_NAME = /pelourinho|est[áa]tua|statue|monument|memorial|obelis|denkmal|памятник|монумент/i;
+
+/**
+ * Where to put up a statue: sculptures, monuments and memorials of the POI layer
+ * (and attractions named like one), in the tile, one per 30 m. Tile-local
+ * mercator x, z, and a seed from the place (stable across loads).
+ */
+function monumentSpots(vt: VectorTile, span: number, metersScale: number): { x: number; z: number; seed: number }[] {
+  const layer = vt.layers.poi;
+  const out: { x: number; z: number; seed: number }[] = [];
+  if (!layer) return out;
+  const k = span / layer.extent;
+  const apart = 30 / metersScale;
+  for (let i = 0; i < layer.length; i++) {
+    const feature = layer.feature(i);
+    if (feature.type !== 1) continue;
+    const p = feature.properties;
+    const sub = String(p.subclass ?? ''), cls = String(p.class ?? '');
+    if (!MONUMENT_SUBCLASS.test(sub) && cls !== 'monument' && !(cls === 'attraction' && MONUMENT_NAME.test(String(p.name ?? '')))) continue;
+    const point = feature.loadGeometry()[0]?.[0];
+    if (!point || point.x < 0 || point.y < 0 || point.x >= layer.extent || point.y >= layer.extent) continue;
+    const x = point.x * k, z = point.y * k;
+    if (out.some((m) => Math.hypot(m.x - x, m.z - z) < apart)) continue;
+    out.push({ x, z, seed: ((point.x * 73856093) ^ (point.y * 19349663)) >>> 0 });
+  }
+  return out;
+}
+
 // ---- assembly --------------------------------------------------------------
 
 export function buildWorldTile(buffer: ArrayBuffer, tile: TileId, options: WorldBuildOptions): WorldTileData {
@@ -823,7 +855,7 @@ export function buildWorldTile(buffer: ArrayBuffer, tile: TileId, options: World
     roads,
     streams,
     buildings: buildTile(vt, tile, { chunks: options.chunks, windows: false, dem, inset: options.inset, legacyColors: true, detailed: { region: options.region } }),
-    vegetation: buildVegetation(corner, span, metersScale, features as unknown as Record<string, MapFeature[]>, surfaceAt),
+    vegetation: buildVegetation(corner, span, metersScale, features as unknown as Record<string, MapFeature[]>, surfaceAt, monumentSpots(vt, span, metersScale)),
     features,
     layers: Object.keys(vt.layers),
     raw: buffer,
