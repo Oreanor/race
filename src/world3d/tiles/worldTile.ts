@@ -179,6 +179,26 @@ class RoadBuilder {
     }
   }
 
+  /**
+   * The wedge on the outside of a gentle bend at q (between the segment coming in along u
+   * and the one going out along v): without it the two ribbons leave a notch there.
+   */
+  bevel(qx: number, qz: number, ux: number, uz: number, vx: number, vz: number, half: number, y: number, rgb: [number, number, number]) {
+    const lu = Math.hypot(ux, uz), lv = Math.hypot(vx, vz);
+    if (lu < 1e-9 || lv < 1e-9) return;
+    const turn = ux * vz - uz * vx;
+    if (Math.abs(turn) < 1e-12) return;
+    // the outer side: right of a left turn, left of a right turn
+    const s = turn > 0 ? -1 : 1;
+    const c1: Pt = [qx - uz / lu * half * s, qz + ux / lu * half * s];
+    const c2: Pt = [qx - vz / lv * half * s, qz + vx / lv * half * s];
+    const q: Pt = [qx, qz];
+    // same winding as the ribbons (negative cross = seen from above)
+    const cross = (c1[0] - q[0]) * (c2[1] - q[1]) - (c1[1] - q[1]) * (c2[0] - q[0]);
+    if (cross < 0) this.tri(q, c1, c2, y, rgb);
+    else this.tri(q, c2, c1, y, rgb);
+  }
+
   /** Straight ribbon a→b, `half` wide on each side, draped on the terrain. */
   segment(ax: number, az: number, bx: number, bz: number, half: number, y: number, rgb: [number, number, number]) {
     const dx = bx - ax, dz = bz - az;
@@ -583,6 +603,42 @@ function deckRibbon(builder: RoadBuilder, deck: Pick<Deck, 'pts' | 'h'>, half: n
 }
 
 /**
+ * Stair towers at a footbridge's ends that hang in the air: a concrete box from the
+ * ground up past the parapet. Ends cut by the tile border are not ends. `seen` keeps
+ * one tower per spot where a bridge and its approach meet.
+ */
+function stairTowers(builder: RoadBuilder, deck: Deck, toMerc: number, span: number, seen: Set<string>) {
+  const n = deck.pts.length;
+  if (n < 2) return;
+  const shade = (rgb: [number, number, number], f: number): [number, number, number] => [rgb[0] * f, rgb[1] * f, rgb[2] * f];
+  const edge = 0.5 * toMerc;
+  for (const [i, j] of [[0, 1], [n - 1, n - 2]]) {
+    const [x, z] = deck.pts[i];
+    if (x < edge || z < edge || x > span - edge || z > span - edge) continue;
+    const h = deck.h[i], bed = deck.bed[i];
+    if (h - bed < 2.2) continue;
+    const key = `${Math.round(x / toMerc)},${Math.round(z / toMerc)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    // square, turned with the deck, centred a little past its end
+    const [px, pz] = deck.pts[j];
+    const len = Math.hypot(x - px, z - pz) || 1;
+    const ux = (x - px) / len, uz = (z - pz) / len;   // outward along the deck
+    const vx = -uz, vz = ux;
+    const a = 1.5 * toMerc, cx = x + ux * a * 0.6, cz = z + uz * a * 0.6;
+    const ring: Pt[] = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([p, q]) => [cx + ux * a * p + vx * a * q, cz + uz * a * p + vz * a * q]);
+    const top = PARAPET + 0.35;
+    for (let e = 0; e < 4; e++) {
+      const [ax, az] = ring[e], [bx, bz] = ring[(e + 1) % 4];
+      const ex = bx - ax, ez = bz - az, el = Math.hypot(ex, ez) || 1;
+      const f = 0.7 + 0.2 * ((ez / el) * 0.6 + (-ex / el) * 0.8);
+      builder.quad([[ax, az, bed, -1.5], [bx, bz, bed, -1.5], [bx, bz, h, top], [ax, az, h, top]], shade(CONCRETE, f * 0.95));
+    }
+    builder.quad([[ring[0][0], ring[0][1], h, top], [ring[1][0], ring[1][1], h, top], [ring[2][0], ring[2][1], h, top], [ring[3][0], ring[3][1], h, top]], PARAPET_TOP, 'up');
+  }
+}
+
+/**
  * The bridge itself where it stands clear of the ground: the slab's sides and
  * underside, a low parapet on each side and concrete piers down into the river.
  */
@@ -706,6 +762,7 @@ function railTracks(builder: RoadBuilder, layer: VectorTile['layers'][string], k
 }
 
 function roadMesh(vt: VectorTile, span: number, grid: number, at: Surfaces, bridges: number[], pitchLines: number[] = []): MeshData {
+  const towerSpots = new Set<string>();
   const { driveAt, groundAt: bedAt } = at;
   const builder = new RoadBuilder(driveAt, span / grid, grid);
   // white pitch markings, painted on the ground under the roads' ribbons
@@ -716,6 +773,10 @@ function roadMesh(vt: VectorTile, span: number, grid: number, at: Surfaces, brid
     const k = span / layer.extent;
     const toMerc = at.toMerc;
     const ways = transportWays(layer);
+    // points another line runs through (not ends): a road ending there meets it side-on (a T),
+    // and a round cap there would stick out past a narrower crossing road as an "ear"
+    const through = new Set<string>();
+    for (const way of ways.values()) for (const line of way.lines) for (let n = 1; n + 1 < line.length; n++) through.add(line[n].x + ',' + line[n].y);
     // bridges, overpasses and their ramps, worked out once for rails and both road passes
     const plan = planBridges(ways, layer.extent, span, at);
     railTracks(builder, layer, k, at, bridges, ways, plan);
@@ -736,6 +797,8 @@ function roadMesh(vt: VectorTile, span: number, grid: number, at: Surfaces, brid
           if (pass === 'casing') {
             // the parapets stand just outside the pavement, on a concrete edge
             deckStructure(builder, deck, half + 0.35 * toMerc, toMerc);
+            // footbridges: stair towers where an end hangs in the air
+            if (style.width < 1.5) stairTowers(builder, deck, toMerc, span, towerSpots);
             deckRibbon(builder, deck, half + 0.35 * toMerc, y - 0.01, CONCRETE, 0);
           } else pushDeck(bridges, deck, half);
           deckRibbon(builder, deck, half, y, rgb, steps);
@@ -759,16 +822,21 @@ function roadMesh(vt: VectorTile, span: number, grid: number, at: Surfaces, brid
             builder.segment(ax, az, bx, bz, half, y, rgb);
             const startsHere = c[0] === line[j].x && c[1] === line[j].y;
             if (!startsHere) continue;
-            if (j === 0) { builder.disc(ax, az, half, y, rgb, steps); continue; }
+            if (j === 0) {
+              if (!through.has(line[0].x + ',' + line[0].y)) builder.disc(ax, az, half, y, rgb, steps);
+              continue;
+            }
             const prev = line[j - 1], q = line[j], r = line[j + 1];
             const ux = q.x - prev.x, uy = q.y - prev.y, vx = r.x - q.x, vy = r.y - q.y;
             const cos = (ux * vx + uy * vy) / ((Math.hypot(ux, uy) * Math.hypot(vx, vy)) || 1);
-            if (cos < 0.97) builder.disc(ax, az, half, y, rgb, steps);
+            // sharp bends: a round join; gentle ones: just the outer wedge (no notch, no bulge)
+            if (cos < 0.9) builder.disc(ax, az, half, y, rgb, steps);
+            else if (cos < 0.99999) builder.bevel(ax, az, ux, uy, vx, vy, half, y, rgb);
           }
           const last = line.length - 1;
           if (last > 0) {
             const e = line[last];
-            if (e.x >= 0 && e.y >= 0 && e.x <= layer.extent && e.y <= layer.extent) builder.disc(e.x * k, e.y * k, half, y, rgb, steps);
+            if (e.x >= 0 && e.y >= 0 && e.x <= layer.extent && e.y <= layer.extent && !through.has(e.x + ',' + e.y)) builder.disc(e.x * k, e.y * k, half, y, rgb, steps);
           }
         }
         builder.groundAt = driveAt;

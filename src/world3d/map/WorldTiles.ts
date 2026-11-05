@@ -872,8 +872,9 @@ export class WorldTiles {
   }
 
   /** Knock a tree or lamp over, away from the shot. */
-  topple(hit: NonNullable<ReturnType<WorldTiles['raycastProps']>>, now: number) {
-    if (this.fallen.has(hit.key)) return;
+  /** True when a tree (not a lamp) went down. */
+  topple(hit: NonNullable<ReturnType<WorldTiles['raycastProps']>>, now: number): boolean {
+    if (this.fallen.has(hit.key)) return false;
     const { live, index } = hit;
     const fell = live.data.vegetation.fell;
     const parts: Fallen['parts'] = [];
@@ -889,8 +890,9 @@ export class WorldTiles {
       relight = this.lampOut(live, index);
     }
     else take([`flora${fell[index + 6]}`], fell[index + 5]); // the whole tree is one instance
-    if (!parts.length) return;
+    if (!parts.length) return false;
     this.fallen.set(hit.key, { live, index, started: now, dirX: hit.dirX, dirZ: hit.dirZ, parts, settled: false, unseenSince: 0, relight });
+    return fell[index] !== 1;
   }
 
   /** Animate falling props; stand them up again once they have been out of view a moment. `clip`: scene → clip. */

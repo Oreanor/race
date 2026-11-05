@@ -161,10 +161,19 @@ players.on('connection', (socket: WebSocket, request: http.IncomingMessage) => {
         if (!c || typeof c.id !== 'string' || !c.id.startsWith(id + ':') || c.id.length > 24) continue;
         if (!Array.isArray(c.p) || !finite(c.p[0], -180, 180) || !finite(c.p[1], -85.1, 85.1)) continue;
         if (meters(c.p, client.player.p) > 3000) continue;
-        cars.push({ id: c.id, car: String(c.car ?? '01').slice(0, 8), p: [c.p[0], c.p[1]], h: finite(c.h, -100, 100) ? c.h : 0, s: finite(c.s, -200, 200) ? c.s : 0, hp: finite(c.hp, 0, 10000) ? c.hp : 0 });
+        cars.push({ id: c.id, car: String(c.car ?? '01').slice(0, 8), p: [c.p[0], c.p[1]], h: finite(c.h, -100, 100) ? c.h : 0, s: finite(c.s, -200, 200) ? c.s : 0, hp: finite(c.hp, 0, 10000) ? c.hp : 0, ...(c.pk === 1 ? { pk: 1 as const } : {}) });
       }
       const out = JSON.stringify({ t: 'traffic', from: id, at: now, cars } satisfies ServerMessage);
       for (const [other, c] of clients) if (other !== id && c.player && c.socket.readyState === c.socket.OPEN) c.socket.send(out);
+      return;
+    }
+    if (message.t === 'take') {
+      // a hijack: to the player who parked that car, if the thief stands near it
+      const carId = String(message.id);
+      const owner = clients.get(carId.split(':')[0]);
+      if (!owner?.player || owner === client) return;
+      if (meters(client.player.p, owner.player.p) > 3000) return;
+      send(owner.socket, { t: 'take', id: carId, from: id });
       return;
     }
     if (message.t === 'thit') {

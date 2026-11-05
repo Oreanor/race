@@ -6,7 +6,7 @@ import { NetHud, type NetFeed } from './NetHud';
 import ServerStatus from './ServerStatus';
 import { findPlaces } from '@/game/findPlaces';
 import { healthColor } from '@/game/health';
-import { GameEngine, type BountyOffer, type DealerOffer, type EventResult, type FuelHud, type HudParticipant, type PlayerCarry, type ServiceOffer, type Settings, type Theme, type TravelOffer } from '@/game/GameEngine';
+import { GameEngine, type BountyOffer, type DealerOffer, type EventResult, type FuelHud, type HudParticipant, type PlayerCarry, type BankOffer, type ServiceOffer, type Settings, type Theme, type TravelOffer } from '@/game/GameEngine';
 import { EVACUATION_COST } from '@/game/Fuel';
 import { clearSave, loadSave, writeSave, type GameSave } from '@/game/save';
 import { formatNumber, getLang, LANGS, setLang, t, type Lang, type MessageKey } from '@/i18n';
@@ -19,6 +19,9 @@ function cheapestCarIndex() {
 }
 
 /** Saved mid-drive progress, ignored when the URL pins a test spot. */
+/** settings other than theme and language (they keep their own keys) */
+const SETTINGS_STORE = 'cityRider.settings';
+
 function bootSave(): GameSave | null {
   if (typeof window === 'undefined') return null;
   if (placeFromAddress()) return null;
@@ -61,8 +64,10 @@ function cityNote(city: City) {
 }
 import CarCarousel from './CarCarousel';
 import FuelGauge from './FuelGauge';
+import KeysHelp from './KeysHelp';
 import TravelDialog from './TravelDialog';
 import ServiceDialog from './ServiceDialog';
+import BankDialog from './BankDialog';
 import DealershipDialog from './DealershipDialog';
 import Dialog from './ui/Dialog';
 import PerfOverlay from './PerfOverlay';
@@ -135,7 +140,8 @@ function syncRoster(root: HTMLElement, store: Map<string, RosterNodes>, drivers:
     nodes.name.textContent = driver.name;
     const dead = driver.id !== 'player' && driver.hp <= 0;
     nodes.entry.classList.toggle('is-dead', dead);
-    nodes.name.style.color = dead ? '#8b9198' : (driver.color || '');
+    // the player's own line takes the theme's ink (its marker colour is near-black, unreadable at night)
+    nodes.name.style.color = dead ? '#8b9198' : driver.id === 'player' ? '' : (driver.color || '');
     nodes.meter.className = `roster-health ${dead ? 'dead' : healthColor(driver.hp, driver.maxHp)}`;
     nodes.meter.setAttribute('aria-valuemax', String(driver.maxHp));
     nodes.meter.setAttribute('aria-valuenow', String(Math.ceil(driver.hp)));
@@ -258,8 +264,14 @@ export default function Game() {
   const subscribeNet = useCallback((feed: NetFeed | null) => { netFeed.current = feed; }, []);
   const sendChat = useCallback((text: string) => engine.current?.chat(text), []);
   const [fuelOut, setFuelOut] = useState(false);
+  // E while driving: call the tow truck (stuck somewhere)
+  const [towAsk, setTowAsk] = useState(false);
+  // K, or the settings entry: the list of keys
+  const [keysOpen, setKeysOpen] = useState(false);
+  const closeKeys = useCallback(() => setKeysOpen(false), []);
   const [travelOffer, setTravelOffer] = useState<TravelOffer | null>(null);
   const [serviceOffer, setServiceOffer] = useState<ServiceOffer | null>(null);
+  const [bankOffer, setBankOffer] = useState<BankOffer | null>(null);
   const [dealerOffer, setDealerOffer] = useState<DealerOffer | null>(null);
   const [bountyOffer, setBountyOffer] = useState<BountyOffer | null>(null);
   // a bought ticket / page-reload purse: what the player takes into the next engine
@@ -279,6 +291,8 @@ export default function Game() {
         fuel: save.fuel,
         at,
         collected: save.collected ?? [],
+        loan: Number.isFinite(save.loan) ? save.loan : 0,
+        garage: Array.isArray(save.garage) ? save.garage.filter((id): id is string => typeof id === 'string') : [save.carId],
       };
       resumeAtRef.current = at;
       resumeRef.current = true;
@@ -292,7 +306,7 @@ export default function Game() {
       if (saved === 'night' || saved === 'light') theme = saved;
       else if (window.matchMedia('(prefers-color-scheme: dark)').matches) theme = 'night';
     } catch { /* private mode */ }
-    return {
+    const defaults: Settings = {
       terrain: true,
       follow: true,
       sensitivity: 1,
@@ -302,6 +316,23 @@ export default function Game() {
       skin: 'original',
       theme,
     };
+    // the rest of the settings: remembered as a whole, each value checked against its default
+    try {
+      const saved = JSON.parse(localStorage.getItem(SETTINGS_STORE) ?? 'null') as Partial<Record<keyof Settings, unknown>> | null;
+      if (saved && typeof saved === 'object') {
+        const out = { ...defaults } as Record<string, unknown>;
+        for (const key of Object.keys(defaults) as (keyof Settings)[]) {
+          const value = saved[key];
+          if (key === 'theme' || value == null || typeof value !== typeof defaults[key]) continue;
+          if (key === 'skin' && !(SKINS as readonly string[]).includes(value as string)) continue;
+          if (key === 'quality' && !['low', 'medium', 'high'].includes(value as string)) continue;
+          if (key === 'sensitivity' && !(Number.isFinite(value) && (value as number) >= 0.3 && (value as number) <= 2)) continue;
+          out[key] = value;
+        }
+        return out as Settings;
+      }
+    } catch { /* private mode or a broken entry: defaults */ }
+    return defaults;
   });
 
   // Recreate the engine only when the city changes. Car swaps reuse the live map.
@@ -312,6 +343,8 @@ export default function Game() {
     setSpawnPin(null);
     let game: GameEngine | undefined;
     let clockAt = 0;
+    // the purse this engine starts with (a save or a ticket); handed back if it is torn down unused
+    const bootCarry = carryRef.current;
     try {
       game = new GameEngine(
         host.current!,
@@ -331,7 +364,8 @@ export default function Game() {
             const { at, timeZone } = game.map.localTime();
             clockRef.current.textContent = localClock(at, timeZone);
           }
-          if (drivingRef.current && rosterRef.current) syncRoster(rosterRef.current, rosterStoreRef.current, drivers);
+          // not before the run's purse is in: a booting engine reports 0 coins
+          if (drivingRef.current && rosterRef.current && game?.runStarted) syncRoster(rosterRef.current, rosterStoreRef.current, drivers);
         },
         (text, toast) => {
           setStatus(text);
@@ -354,7 +388,7 @@ export default function Game() {
           // OS cursor on top of the reticle; hide it while aiming/firing
           host.current?.classList.toggle('is-aiming', visible);
         },
-        carryRef.current,
+        bootCarry,
       );
       carryRef.current = null;
       const live = game;
@@ -367,20 +401,24 @@ export default function Game() {
           const at = resumeAtRef.current;
           resumeAtRef.current = null;
           if (at) live.resumeFrom(at);
-          setApproaching(true);
           setDriving(true);
           // driving may already be true from boot — push it into the engine explicitly
           live.setDriving(true);
+          // the fly-in may already be over (it can run before boot): only wait for one in flight,
+          // else the HUD stays hidden for good
+          setApproaching(live.approaching);
           return;
         }
         if (arriveRef.current) {
           arriveRef.current = false;
-          setApproaching(true);
           setDriving(true);
+          live.setDriving(true);
+          setApproaching(live.approaching);
         }
       };
       game.onTravelOffer = (offer) => setTravelOffer(offer);
       game.onServiceOffer = (offer) => setServiceOffer(offer);
+      game.onBankOffer = (offer) => setBankOffer(offer);
       game.onDealerOffer = (offer) => setDealerOffer(offer);
       game.onCarBought = (bought) => {
         const index = cars.findIndex((entry) => entry.id === bought.id);
@@ -401,7 +439,13 @@ export default function Game() {
       console.error('Failed to initialize the game engine', error);
       setStatus(t('webgl.failed'));
     }
-    return () => { game?.dispose(); engine.current = null; };
+    return () => {
+      // dev StrictMode (or a quick city switch) drops the engine before it applied the purse:
+      // give it back so the next engine resumes it instead of starting from scratch
+      if (bootCarry && game && !game.runStarted && !carryRef.current) carryRef.current = bootCarry;
+      game?.dispose();
+      engine.current = null;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [place]);
 
@@ -431,8 +475,8 @@ export default function Game() {
   useEffect(() => engine.current?.applySettings(settings), [settings]);
   useEffect(() => engine.current?.setDriving(driving), [driving]);
   useEffect(() => {
-    engine.current?.setPaused((settingsOpen || exitConfirm || Boolean(eventOffer) || Boolean(eventResult) || Boolean(bountyOffer) || fuelOut || Boolean(travelOffer) || Boolean(serviceOffer) || Boolean(dealerOffer)) && driving);
-  }, [settingsOpen, exitConfirm, eventOffer, eventResult, bountyOffer, fuelOut, travelOffer, serviceOffer, dealerOffer, driving]);
+    engine.current?.setPaused((settingsOpen || exitConfirm || Boolean(eventOffer) || Boolean(eventResult) || Boolean(bountyOffer) || fuelOut || Boolean(travelOffer) || Boolean(serviceOffer) || Boolean(dealerOffer) || towAsk || keysOpen || Boolean(bankOffer)) && driving);
+  }, [settingsOpen, exitConfirm, eventOffer, eventResult, bountyOffer, fuelOut, travelOffer, serviceOffer, dealerOffer, towAsk, keysOpen, bankOffer, driving]);
   useEffect(() => {
     drivingRef.current = driving;
     if (!driving) {
@@ -465,6 +509,37 @@ export default function Game() {
         }
         e.preventDefault();
         setSettingsOpen(open => !open);
+        return;
+      }
+      if (e.code === 'KeyY' && !e.repeat
+        && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement)) {
+        // Y: the next architecture style (remembered like the settings choice)
+        e.preventDefault();
+        setSettings((s) => {
+          const skin = SKINS[(SKINS.indexOf(s.skin) + 1) % SKINS.length];
+          const next = { ...s, skin };
+          try {
+            const { theme: _theme, ...rest } = next;
+            localStorage.setItem(SETTINGS_STORE, JSON.stringify(rest));
+          } catch { /* private mode */ }
+          const text = t('skin.switched', { name: t(`skin.${skin}` as MessageKey) });
+          setStatusToast(text);
+          if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+          toastTimerRef.current = setTimeout(() => { setStatusToast(''); toastTimerRef.current = null; }, 2500);
+          return next;
+        });
+        return;
+      }
+      if (e.code === 'KeyK' && !e.repeat
+        && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement)) {
+        e.preventDefault();
+        setKeysOpen(true);
+        return;
+      }
+      if (e.code === 'KeyE' && !e.repeat && drivingRef.current
+        && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement)) {
+        e.preventDefault();
+        setTowAsk((open) => !open);
         return;
       }
       if (e.code !== 'KeyW' || e.repeat) return;
@@ -509,9 +584,11 @@ export default function Game() {
 
   const update = (patch: Partial<Settings>) => setSettings(s => {
     const next = { ...s, ...patch };
-    if (patch.theme) {
-      try { localStorage.setItem('cityRider.theme', patch.theme); } catch { /* private mode */ }
-    }
+    try {
+      if (patch.theme) localStorage.setItem('cityRider.theme', patch.theme);
+      const { theme: _theme, ...rest } = next; // the theme keeps its own key
+      localStorage.setItem(SETTINGS_STORE, JSON.stringify(rest));
+    } catch { /* private mode */ }
     return next;
   });
   const closeSettings = () => setSettingsOpen(false);
@@ -541,8 +618,9 @@ export default function Game() {
     if (!driving) return;
     const persist = () => {
       const game = engine.current;
-      if (!game) return;
-      writeSave(game.snapshot({ name: place.name, country: place.country, coords: place.coords }));
+      // null while the engine is still booting — keep the old save untouched
+      const save = game?.snapshot({ name: place.name, country: place.country, coords: place.coords });
+      if (save) writeSave(save);
     };
     persist();
     const id = window.setInterval(persist, 2500);
@@ -731,9 +809,12 @@ export default function Game() {
             <label>{t('settings.sensitivity')}<input type="range" min="0.3" max="2" step="0.1" value={settings.sensitivity} onChange={e => update({ sensitivity: Number(e.target.value) })} /></label>
             <label className="toggle">{t('settings.stats')}<input type="checkbox" checked={perfOn} onChange={e => toggleStats(e.target.checked)} /></label>
             <ServerStatus />
+            <button type="button" className="ui-btn is-ghost" onClick={() => { setSettingsOpen(false); setKeysOpen(true); }}>{t('keys.open')} · K</button>
           </div>
         </Dialog>
       )}
+
+      {keysOpen && <KeysHelp onClose={closeKeys} />}
 
       {exitConfirm && (
         <Dialog
@@ -759,11 +840,32 @@ export default function Game() {
         </Dialog>
       )}
 
+      {towAsk && driving && !fuelOut && (
+        <Dialog
+          title={t('tow.title')}
+          actions={<>
+            <button type="button" className="ui-btn" autoFocus onClick={() => { engine.current?.evacuate(); setTowAsk(false); }}>{t('fuel.out.button', { cost: EVACUATION_COST })}</button>
+            <button type="button" className="ui-btn is-ghost" onClick={() => setTowAsk(false)}>{t('tow.cancel')}</button>
+          </>}
+        >
+          <p className="ui-text">{t('tow.text', { cost: EVACUATION_COST })}</p>
+        </Dialog>
+      )}
+
       {serviceOffer && driving && !fuelOut && (
         <ServiceDialog
           offer={serviceOffer}
           onBuy={() => (serviceOffer.kind === 'fuel' ? engine.current?.buyFuel() : engine.current?.repairCar())}
           onLeave={() => engine.current?.leaveService()}
+        />
+      )}
+
+      {bankOffer && driving && !fuelOut && (
+        <BankDialog
+          offer={bankOffer}
+          onBorrow={(amount) => engine.current?.borrow(amount)}
+          onRepay={() => engine.current?.repayLoan()}
+          onLeave={() => engine.current?.leaveBank()}
         />
       )}
 
@@ -826,7 +928,7 @@ export default function Game() {
 
       {eventResult && driving && !settingsOpen && (
         <Dialog
-          title={eventResult.kind === 'arena' ? t('event.arena') : t('event.race')}
+          title={eventResult.kind === 'heist' ? t('heist.title') : eventResult.kind === 'arena' ? t('event.arena') : t('event.race')}
           tone={eventResult.won ? 'default' : 'alert'}
           onBackdrop={() => setEventResult(null)}
           actions={
@@ -834,9 +936,11 @@ export default function Game() {
           }
         >
           <p className="ui-text">
-            {eventResult.kind === 'arena'
-              ? (eventResult.won ? t('arena.won') : t('arena.lost'))
-              : (eventResult.won ? t('race.won') : t('race.lost', { name: eventResult.name ?? '' }))}
+            {eventResult.kind === 'heist'
+              ? t('heist.escaped', { cash: formatNumber(eventResult.cash ?? 0) })
+              : eventResult.kind === 'arena'
+                ? (eventResult.won ? t('arena.won') : t('arena.lost'))
+                : (eventResult.won ? t('race.won') : t('race.lost', { name: eventResult.name ?? '' }))}
           </p>
         </Dialog>
       )}

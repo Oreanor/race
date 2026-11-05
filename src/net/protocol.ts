@@ -3,7 +3,7 @@
 // builds it from the same map tiles. Only the players travel over the wire.
 
 /** bump when the messages change: an old tab is told to reload instead of sending junk */
-export const NET_VERSION = 3;
+export const NET_VERSION = 4;
 /** the relay's port: it serves the game (proxying Next) and the multiplayer socket */
 export const NET_PORT = 3001;
 /** the multiplayer socket's path on that port */
@@ -18,11 +18,11 @@ export const HIT_DAMAGE = 15;
 export const PLAYER_HP = 1000;
 /** farther than this, a hit is not believed (m) */
 export const HIT_RANGE = 250;
-/** shared traffic: cars one player drives for everybody around */
-export const TRAFFIC_MAX = 3;
+/** shared traffic: cars one player drives (and parks, and the police after them) for everybody around */
+export const TRAFFIC_MAX = 40;
 
 /** A car of the shared traffic. Its id starts with the driving player's id and a colon. */
-export type TrafficCar = { id: string; car: string; p: [number, number]; h: number; s: number; hp: number };
+export type TrafficCar = { id: string; car: string; p: [number, number]; h: number; s: number; hp: number; /** parked: can be hijacked */ pk?: 1 };
 
 /** One player as everybody sees them. Position is lng/lat, altitude in meters (as drawn). */
 export type NetPlayer = {
@@ -55,7 +55,9 @@ export type ClientMessage =
   /** the traffic we drive, NET_HZ times a second */
   | { t: 'traffic'; cars: TrafficCar[] }
   /** our bullet hit a traffic car (goes to the player driving it) */
-  | { t: 'thit'; id: string };
+  | { t: 'thit'; id: string }
+  /** we hijacked a parked traffic car (goes to the player who parked it) */
+  | { t: 'take'; id: string };
 
 export type ServerMessage =
   | { t: 'welcome'; id: string }
@@ -69,6 +71,8 @@ export type ServerMessage =
   | { t: 'traffic'; from: string; at: number; cars: TrafficCar[] }
   /** somebody's bullet hit one of our traffic cars */
   | { t: 'thit'; id: string; from: string }
+  /** somebody hijacked one of the cars we parked */
+  | { t: 'take'; id: string; from: string }
   /** the server will not take us: an outdated page, or no room */
   | { t: 'reject'; reason: 'version' | 'full' };
 

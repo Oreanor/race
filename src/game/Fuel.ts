@@ -6,7 +6,6 @@ import { type Position, metersBetween } from './VehicleController.ts';
 export const FUEL_PRICE = 1; // coins per litre
 export const EVACUATION_COST = 100; // coins
 /** what the tow truck leaves in the tank, as a share of capacity, so nobody gets stuck broke */
-export const EVACUATION_RESERVE = 0.1;
 const REFUEL_RATE = 12; // litres per second at the pump
 /** meters from the (road-snapped) pumps — OSM points often sit inside the shop */
 export const STATION_REACH = 55;
@@ -110,6 +109,48 @@ export function dealershipsFromFeatures(features: Parameters<typeof stationsFrom
     return sub === 'car' || sub === 'car_dealer' || sub === 'vehicle';
   }).map((f) => ({ ...f, properties: { ...(f.properties ?? {}), class: 'fuel', subclass: 'dealer' } }));
   return stationsFromFeatures(shops).map((s) => ({ ...s, id: `dealer:${s.id}` }));
+}
+
+/** Banks (OpenMapTiles poi: class / subclass bank; cash machines left out). */
+export function banksFromFeatures(features: Parameters<typeof stationsFromFeatures>[0]): Station[] {
+  const banks = features.filter((f) => {
+    const p = f.properties ?? {};
+    return (p.class === 'bank' || p.subclass === 'bank') && p.subclass !== 'atm';
+  }).map((f) => ({ ...f, properties: { ...(f.properties ?? {}), class: 'fuel', subclass: 'bank' } }));
+  return stationsFromFeatures(banks).map((s) => ({ ...s, id: `bank:${s.id}` }));
+}
+
+/** Police / prison / court / hospital — where an arrest drops you. */
+export type CivicKind = 'police' | 'prison' | 'court' | 'hospital';
+
+function civicFromFeatures(
+  features: Parameters<typeof stationsFromFeatures>[0],
+  kind: CivicKind,
+  match: (props: Record<string, unknown>) => boolean,
+): Station[] {
+  const matched = features
+    .filter((f) => match(f.properties ?? {}))
+    .map((f) => ({ ...f, properties: { ...(f.properties ?? {}), class: 'fuel', subclass: kind } }));
+  return stationsFromFeatures(matched).map((s) => ({ ...s, id: `${kind}:${s.id}` }));
+}
+
+export function policeFromFeatures(features: Parameters<typeof stationsFromFeatures>[0]): Station[] {
+  return civicFromFeatures(features, 'police', (p) => p.class === 'police' || p.subclass === 'police');
+}
+
+export function prisonsFromFeatures(features: Parameters<typeof stationsFromFeatures>[0]): Station[] {
+  return civicFromFeatures(features, 'prison', (p) => p.class === 'prison' || p.subclass === 'prison');
+}
+
+export function courtsFromFeatures(features: Parameters<typeof stationsFromFeatures>[0]): Station[] {
+  return civicFromFeatures(features, 'court', (p) =>
+    p.subclass === 'courthouse' || p.class === 'courthouse' || (p.class === 'town_hall' && p.subclass === 'courthouse'));
+}
+
+/** Hospitals (clinics count too — denser coverage for a nearby drop-off). */
+export function hospitalsFromFeatures(features: Parameters<typeof stationsFromFeatures>[0]): Station[] {
+  return civicFromFeatures(features, 'hospital', (p) =>
+    p.class === 'hospital' || p.subclass === 'hospital' || p.subclass === 'clinic');
 }
 
 export function nearestStation(position: Position, stations: readonly Station[]) {

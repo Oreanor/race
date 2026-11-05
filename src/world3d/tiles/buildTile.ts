@@ -11,7 +11,7 @@ import { VectorTile, classifyRings } from '@mapbox/vector-tile';
 import earcut from 'earcut';
 import { createRecipe, hashSeed, HOUSE_PALETTE, indexFor, portuguesePastel, type BuildingRecipe } from '../../game/buildings/BuildingStyles.ts';
 import { layoutFacade } from '../../game/buildings/FacadeGenerator.ts';
-import { buildRoof, canPitch, simplifyRing, type RoofPoint } from '../../game/buildings/RoofGenerator.ts';
+import { buildRoof, canPitch, simplifyRing, type RoofKind as PitchedKind, type RoofPoint } from '../../game/buildings/RoofGenerator.ts';
 import { PIECES, ROOF_LIP } from '../../game/buildings/pieces.ts';
 import type { InstanceSet } from './vegetationTile.ts';
 import { footprintKey } from '../../game/buildings/wallOverlap.ts';
@@ -187,6 +187,16 @@ function rgbBytes(hex: string): Pt3 {
 }
 
 const WALLS = portuguesePastel.wallColors.map(rgbBytes);
+
+/** Shift each channel by up to ±3 (of 255) from the building seed. */
+function jitterRgb(rgb: Pt3, seed: number): Pt3 {
+  const d = (salt: number) => ((Math.imul(seed ^ salt, 0x9e3779b1) >>> 0) % 7) - 3;
+  return [
+    Math.max(0, Math.min(255, rgb[0] + d(0x1b873593))),
+    Math.max(0, Math.min(255, rgb[1] + d(0x85ebca6b))),
+    Math.max(0, Math.min(255, rgb[2] + d(0xc2b2ae35))),
+  ];
+}
 const ROOFS = portuguesePastel.roofColors.map(rgbBytes);
 const GLASS_VARIANTS = portuguesePastel.windowColors.length;
 
@@ -373,6 +383,11 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
     crest: number; base: number; top: number; wall: Pt3; roof: Pt3; glass: number; recipe: BuildingRecipe;
   };
   const faces: Face[] = [];
+  /**
+   * Buildings with a parapet → its top. Its outer face is the wall going on up, emitted with
+   * the walls (pass 2) so it is cut where a neighbour's wall covers it; those walls get no roof lip.
+   */
+  const parapetOwners = new Map<string, number>();
 
   const vt = buffer instanceof VectorTile ? buffer : new VectorTile(new PbfReader(buffer));
   const layer = vt.layers.building;
@@ -530,6 +545,10 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
           wall = rgbBytes(recipe.colors.wall);
           roof = rgbBytes(recipe.colors.roof);
         }
+        // a barely visible per-building shade: the facade shader seeds each building's
+        // window rhythm and trim from its wall colour, and 8 palette colours alone would
+        // give whole streets the same facade
+        wall = jitterRgb(wall, seed);
         const shrunk: Pt[][] = [];
         for (let r = 0; r < rings.length; r++) {
           const source = rings[r];
@@ -596,8 +615,15 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
 
         // Pitched roof (as the detailed layer chose it), only for free-standing footprints.
         const points: RoofPoint[] = recipe ? outer.map((p) => ({ x: (p[0] * k - chunk.cx) * metersScale, z: (p[1] * k - chunk.cz) * metersScale })) : [];
-        const pitched = Boolean(recipe) && recipe!.roofKind !== 'flat' && !crowded.has(buildingId) && canPitch(simplifyRing(points));
-        const ridge = pitched ? buildRoof(points, top + ROOF_LIP - 0.04, recipe!.roofKind as 'gable' | 'hip' | 'tile') : null;
+        const roofKind = recipe?.roofKind ?? 'flat';
+        const wantsPitch = roofKind !== 'flat' && roofKind !== 'parapet';
+        const pitched = Boolean(recipe) && wantsPitch && !crowded.has(buildingId)
+          && (roofKind === 'compound' || canPitch(simplifyRing(points)));
+        const ridge = pitched ? buildRoof(points, top + ROOF_LIP - 0.04, roofKind as PitchedKind, recipe!.seed) : null;
+        // a low parapet round a flat roof: chosen ones, and some taller blocks whose footprint
+        // could not take the pitched roof they were given
+        const parapet = Boolean(recipe) && !ridge && !crowded.has(buildingId)
+          && (roofKind === 'parapet' || (clear >= 12 && recipe!.seed % 5 < 2));
 
         // Flat roof (not under a pitched one: the two would fight for the same pixels).
         const flat: number[] = [];
@@ -634,6 +660,35 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
             // three: front faces are CCW seen from +Y, i.e. cross (x,z) < 0
             if (cross < 0) chunk.index.push(start + p0, start + p1, start + p2);
             else chunk.index.push(start + p0, start + p2, start + p1);
+          }
+        }
+        if (parapet) {
+          // the wall going up past the roof: outer face in the wall's own plane from its top,
+          // a thin top and an inner face, in wall colour; the walls skip their roof lip
+          const ring = shrunk[0];
+          const sign = signedArea(rings[0]) > 0 ? 1 : -1;
+          const h = 0.55 + (recipe!.seed % 4) * 0.12;
+          const thick = 0.26 * toMerc;
+          const y1 = capY + h;
+          parapetOwners.set(key, y1);
+          const inner: Pt3 = [Math.round(wall[0] * 0.86), Math.round(wall[1] * 0.86), Math.round(wall[2] * 0.86)];
+          const g4: [number, number, number, number] = [crest, crest, crest, crest];
+          for (let i = 0; i < ring.length; i++) {
+            const a = ring[i], b = ring[(i + 1) % ring.length];
+            const ax = a[0] * k, az = a[1] * k, bx = b[0] * k, bz = b[1] * k;
+            const len = Math.hypot(bx - ax, bz - az);
+            if (len < 1e-3) continue;
+            const nx = sign * (bz - az) / len, nz = sign * -(bx - ax) / len;
+            const ox = 0, oz = 0, ix = -nx * thick, iz = -nz * thick;
+            chunk.quad(ax + ix, az + iz, bx + ix, bz + iz, capY - 0.02, y1, -nx, -nz, inner, 0, 0, 0, glassIndex, false, g4);
+            const v0 = chunk.vertex(ax + ox, y1, az + oz, 0, 1, 0, wall, SOLID_U, SOLID_V, glassIndex, crest);
+            chunk.vertex(bx + ox, y1, bz + oz, 0, 1, 0, wall, SOLID_U, SOLID_V, glassIndex, crest);
+            chunk.vertex(bx + ix, y1, bz + iz, 0, 1, 0, wall, SOLID_U, SOLID_V, glassIndex, crest);
+            chunk.vertex(ax + ix, y1, az + iz, 0, 1, 0, wall, SOLID_U, SOLID_V, glassIndex, crest);
+            // front faces are CCW seen from +Y (cross in x/z < 0)
+            const cross = (bx - ax) * (iz + az - az) - (bz - az) * (ix + ax - ax);
+            if (cross < 0) chunk.index.push(v0, v0 + 1, v0 + 2, v0, v0 + 2, v0 + 3);
+            else chunk.index.push(v0, v0 + 2, v0 + 1, v0, v0 + 3, v0 + 2);
           }
         }
         if (recipe) {
@@ -698,6 +753,11 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
       const v1 = grid ? (face.top - grid.v0) / grid.rowStep : 0;
       chunk.quad(ax, az, bx, bz, y0, face.top, face.nx, face.nz, face.wall, u1, v0, v1, face.glass, true, [ga, gb, face.crest, face.crest], u0);
       chunk.grid = [0, 0, 0, 0, 0, 0];
+      const parapetTop = parapetOwners.get(face.owner);
+      if (parapetTop != null) {
+        chunk.quad(ax, az, bx, bz, face.top, parapetTop, face.nx, face.nz, face.wall, 0, 0, 0, face.glass, false, [face.crest, face.crest, face.crest, face.crest]);
+        continue;
+      }
       chunk.quad(ax + face.nx * lip, az + face.nz * lip, bx + face.nx * lip, bz + face.nz * lip,
         face.top, face.top + ROOF_LIP, face.nx, face.nz, face.roof, 0, 0, 0, face.glass, false, [face.crest, face.crest, face.crest, face.crest]);
     }

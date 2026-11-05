@@ -39,10 +39,14 @@ export interface Net {
   traffic(cars: TrafficCar[]): void;
   /** our bullet hit a traffic car somebody else drives */
   trafficHit(id: string): void;
+  /** we hijacked a car somebody else parked */
+  take(id: string): void;
   /** the traffic another player drives */
   onTraffic: (from: string, cars: TrafficCar[]) => void;
   /** a bullet hit a traffic car we drive */
   onTrafficHit: (id: string) => void;
+  /** somebody hijacked a car we parked */
+  onTake: (id: string) => void;
   /** somebody was blown up by somebody (`mine`: by us) */
   onDown: (event: { id: string; name: string; by: string; byName: string; mine: boolean; me: boolean }) => void;
   close(): void;
@@ -134,6 +138,7 @@ export class SocketNet implements Net {
   onHit: Net['onHit'] = () => {};
   onTraffic: Net['onTraffic'] = () => {};
   onTrafficHit: Net['onTrafficHit'] = () => {};
+  onTake: Net['onTake'] = () => {};
   onDown: Net['onDown'] = () => {};
 
   constructor(private url: string, private name: string, private car: string) { this.open(); }
@@ -165,6 +170,7 @@ export class SocketNet implements Net {
       if (message.t === 'hit') { this.onHit(message.from, message.name, message.dmg); return; }
       if (message.t === 'traffic') { this.onTraffic(message.from, message.cars); return; }
       if (message.t === 'thit') { this.onTrafficHit(message.id); return; }
+      if (message.t === 'take') { this.onTake(message.id); return; }
       if (message.t === 'down') {
         this.onDown({ id: message.id, name: message.name, by: message.by, byName: message.byName, mine: message.by === this.id, me: message.id === this.id });
         return;
@@ -209,6 +215,7 @@ export class SocketNet implements Net {
   hit(id: string) { this.send({ t: 'hit', id }); }
   traffic(cars: TrafficCar[]) { this.send({ t: 'traffic', cars }); }
   trafficHit(id: string) { this.send({ t: 'thit', id }); }
+  take(id: string) { this.send({ t: 'take', id }); }
   down(by: string) { this.send({ t: 'down', by }); }
   players() { return this.playback.players(); }
 

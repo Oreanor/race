@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { VectorTile } from '@mapbox/vector-tile';
 import { PbfReader } from 'pbf';
-import { FuelTank, stationsFromFeatures, nearestStation, atStation, FUEL_PRICE } from '../src/game/Fuel.ts';
+import { FuelTank, stationsFromFeatures, nearestStation, atStation, FUEL_PRICE, policeFromFeatures, prisonsFromFeatures, courtsFromFeatures, hospitalsFromFeatures } from '../src/game/Fuel.ts';
 
 test('tank burns by distance, more with boost, never below zero', () => {
   const tank = new FuelTank({ tank: 40, perKm: 2 });
@@ -46,4 +46,14 @@ test('real Coimbra tile has fuel stations, deduplicated and searchable', () => {
   // street-side approach: still counts when a few dozen metres off the POI
   const beside: [number, number] = [near.station.position[0] + 0.00035, near.station.position[1]];
   assert.ok(atStation(beside, stations), 'reachable from the forecourt / street, not only on the shop point');
+});
+
+test('Coimbra tile has police, prison, court and hospital POIs', () => {
+  const vt = new VectorTile(new PbfReader(readFileSync(new URL('./fixtures/coimbra-14-7808-6190.pbf', import.meta.url))));
+  const poi = vt.layers.poi;
+  const features = Array.from({ length: poi.length }, (_, i) => poi.feature(i).toGeoJSON(7808, 6190, 14));
+  assert.ok(policeFromFeatures(features as never).length >= 1);
+  assert.ok(prisonsFromFeatures(features as never).length >= 1);
+  assert.ok(courtsFromFeatures(features as never).length >= 1);
+  assert.ok(hospitalsFromFeatures(features as never).length >= 1);
 });

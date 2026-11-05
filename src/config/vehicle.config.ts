@@ -4,6 +4,7 @@ export const vehicleConfig = { maxSpeed: 25, reverseSpeed: 25/3.6, acceleration:
 export const cars = [
   { id: '15', name: 'VW Beetle', label: 'Народный жук', path: '/models/vw-bug.glb', length: 4.0, yaw: Math.PI/2, color: '#e8c547', acceleration: 7.5, maxSpeed: 125 / 3.6, mass: 820, engine: 1.6, fuel: { tank: 40, perKm: 0.9 } },
   { id: '02', name: 'Ford 31', label: 'Другой взгляд на город', path: '/models/car-2.glb', length: 4.2, yaw: Math.PI/2, color: '#a4b9a0', acceleration: 12, maxSpeed: 140 / 3.6, mass: 1050, engine: 3.3, fuel: { tank: 55, perKm: 1.3 } },
+  { id: '17', name: 'Family Sedan', label: 'Розовый семейный седан', path: '/models/family-car.glb', length: 4.9, yaw: Math.PI/2, color: '#e89bb5', acceleration: 7.5, maxSpeed: 140 / 3.6, mass: 1500, engine: 3.7, fuel: { tank: 60, perKm: 1.6 } },
   { id: '16', name: 'ГАЗ-24 Милиция', label: 'Волга на страже порядка', path: '/models/gaz-24-militia.glb', length: 4.73, yaw: Math.PI/2, color: '#f2b705', acceleration: 7, maxSpeed: 145 / 3.6, mass: 1420, engine: 2.4, fuel: { tank: 55, perKm: 1.4 } },
   { id: '08', name: 'Ford 32 Tudor', label: 'Хот-род тридцатых', path: '/models/ford-32-tudor.glb', length: 4.1, yaw: Math.PI/2, color: '#7a2f2a', acceleration: 9, maxSpeed: 130 / 3.6, mass: 1100, engine: 3.6, fuel: { tank: 53, perKm: 1.5 } },
   { id: '10', name: 'Chevy Taxi', label: 'Такси по всему миру', path: '/models/chevy-taxi.glb', length: 4.9, yaw: Math.PI/2, color: '#f2c230', acceleration: 9, maxSpeed: 140 / 3.6, mass: 1500, engine: 3.9, fuel: { tank: 65, perKm: 1.7 } },
@@ -37,6 +38,7 @@ export const STARTING_CASH = 5000;
 /** Shelf prices pinned into the starter tier (≤ STARTING_CASH). */
 const STARTER_PRICE: Partial<Record<string, number>> = {
   '02': 4500, // Ford 31
+  '17': 4800, // Family Sedan
 };
 
 /**

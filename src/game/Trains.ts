@@ -90,10 +90,12 @@ type Train = {
   maxSpeed: number;
   deadEnd: boolean;
   stoppedFor: number;
+  /** seconds spent wholly inside the haze */
+  hazedFor: number;
 };
 
 const SPEC: Record<TrackKind, { carLength: number; gap: number; maxSpeed: number; cars: [number, number]; max: number }> = {
-  rail: { carLength: 13, gap: 0.35, maxSpeed: 22, cars: [4, 9], max: 1 }, // a locomotive and 3–8 wagons
+  rail: { carLength: 13, gap: 0.35, maxSpeed: 22, cars: [4, 9], max: 2 }, // a locomotive and 3–8 wagons
   tram: { carLength: 14, gap: 0.5, maxSpeed: 14, cars: [1, 2], max: 1 }, // one (sometimes two coupled) tram cars
 };
 const ACCEL = 0.8;
@@ -104,6 +106,8 @@ const FAR = 2400;
 /** behind the camera: born closer than this, retired further than the next (a gap, so they don't flicker in and out) */
 const HIDDEN_SPAWN = 900;
 const HIDDEN_RETIRE = 1000;
+/** a train this long (s) wholly in the haze has gone off somewhere: it frees its slot */
+const HAZED_RETIRE = 40;
 
 export class TrainTraffic {
   trains: Train[] = [];
@@ -252,7 +256,11 @@ export class TrainTraffic {
     // retire trains the player can't see any more
     this.trains = this.trains.filter((train) => {
       const ends = [this.at(train, train.head), this.at(train, train.head - this.length(train))];
-      const gone = ends.every((p) => meters(player, p) > FAR || (meters(player, p) > HIDDEN_RETIRE && hidden(p)));
+      // behind the camera and far enough, or past the haze; a train that stays in the haze
+      // (wherever the camera looks) for a while has gone away and frees its slot
+      const hazed = ends.every((p) => meters(player, p) > HIDDEN);
+      train.hazedFor = hazed ? train.hazedFor + dt : 0;
+      const gone = train.hazedFor > HAZED_RETIRE || ends.every((p) => meters(player, p) > FAR || (meters(player, p) > HIDDEN_RETIRE && hidden(p)));
       return !gone;
     });
     this.spawnClock -= dt;
@@ -280,7 +288,7 @@ export class TrainTraffic {
     const cars = spec.cars[0] + Math.floor(Math.random() * (spec.cars[1] - spec.cars[0] + 1));
     const train: Train = {
       id: `${kind}-${++this.serial}`, kind, path: [start.id, second], points: [], cum: [], head: 0, speed: spec.maxSpeed * 0.6,
-      cars, lengths: [], gap: spec.gap, maxSpeed: spec.maxSpeed, deadEnd: false, stoppedFor: 0,
+      cars, lengths: [], gap: spec.gap, maxSpeed: spec.maxSpeed, deadEnd: false, stoppedFor: 0, hazedFor: 0,
     };
     train.lengths = Array.from({ length: cars }, () => spec.carLength);
     this.syncLengths(train);

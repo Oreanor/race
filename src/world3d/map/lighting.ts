@@ -30,16 +30,18 @@ export type Lighting = {
 
 type Key = { h: number; sun: [number, number, number]; amb: [number, number, number]; sky: string };
 
-// sun altitude (degrees) → light; daylight values match the original fixed look
+// sun altitude (degrees) → light. By day the sun is the strong key and the sky light a
+// near-neutral, weaker fill: lit and shaded sides read apart without a blue cast; the
+// horizon haze is a light grey-blue, so distant blocks don't turn bluish
 const KEYS: Key[] = [
   { h: -18, sun: [0, 0, 0], amb: [0.1, 0.12, 0.2], sky: '#121827' },
   { h: -10, sun: [0, 0, 0], amb: [0.15, 0.17, 0.27], sky: '#1f2940' },
   { h: -4, sun: [0, 0, 0], amb: [0.3, 0.31, 0.43], sky: '#55628a' },
   { h: 0, sun: [0.58, 0.28, 0.14], amb: [0.45, 0.42, 0.5], sky: '#d99a86' },
   { h: 6, sun: [0.74, 0.5, 0.29], amb: [0.58, 0.56, 0.6], sky: '#efc9a8' },
-  { h: 15, sun: [0.7, 0.6, 0.47], amb: [0.68, 0.68, 0.7], sky: '#e7ddd2' },
-  { h: 30, sun: [0.64, 0.62, 0.57], amb: [0.72, 0.73, 0.75], sky: '#dfe6e6' },
-  { h: 90, sun: [0.64, 0.62, 0.58], amb: [0.73, 0.74, 0.76], sky: '#dce5e8' },
+  { h: 15, sun: [0.92, 0.78, 0.6], amb: [0.56, 0.56, 0.58], sky: '#dcdcd8' },
+  { h: 30, sun: [0.9, 0.86, 0.76], amb: [0.58, 0.59, 0.61], sky: '#d3d7d8' },
+  { h: 90, sun: [0.9, 0.87, 0.78], amb: [0.59, 0.6, 0.62], sky: '#d0d5d8' },
 ];
 
 const tmpA = new THREE.Color(), tmpB = new THREE.Color();
@@ -77,7 +79,7 @@ export function computeLighting(date: Date, lat: number, lng: number): Lighting 
     if (moonPos.altitude > 0) dir = new THREE.Vector3(...skyDirection(moonPos));
   }
   if (dir.y < 0.05) { dir.y = 0.05; dir.normalize(); } // light never comes from below the ground
-  const level = Math.min(1, (ambient.r + ambient.g + ambient.b) / 3 / 0.73);
+  const level = Math.min(1, (ambient.r + ambient.g + ambient.b) / 3 / 0.6); // full day = 1
   return { dir, sun, ambient, sky, night, sunPos, moonPos, moonPhase: phase, moonFraction: fraction, level };
 }
 

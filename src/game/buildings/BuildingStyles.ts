@@ -3,14 +3,18 @@ import type { Tone } from './pieces.ts';
 export type StyleId = 'european' | 'portuguese' | 'modern' | 'brick' | 'commercial';
 export type ArchitectureSetting = 'auto' | StyleId | 'mixed';
 export type BuildingDetail = 'off' | 'low' | 'medium' | 'high';
-export type RoofKind = 'flat' | 'gable' | 'hip' | 'tile';
+export type RoofKind = 'flat' | 'parapet' | 'gable' | 'hip' | 'tile' | 'mansard' | 'gableFront' | 'compound';
 export type WindowKind = 'eu' | 'narrow' | 'wide';
 
 export const portuguesePastel = {
   name: 'Portuguese Pastel',
-  wallColors: ['#F5E8DA', '#F0D8C8', '#DDE8D8', '#D8E2EC', '#F2DFAE', '#E9D6BD'],
-  roofColors: ['#D77A5B', '#C9684C', '#B85B43', '#994B39'],
-  windowColors: ['#70BCE8', '#4D9BD1'],
+  // muted Mediterranean stucco: lime white, warm cream, sand, light ochre, peach,
+  // dusty rose, sage, light grey-beige
+  wallColors: ['#F1EDE1', '#F2DFC0', '#DEC39B', '#E5C078', '#E8B09A', '#D4A09C', '#B9C5AE', '#C8C0B3'],
+  // terracotta and brown roofs
+  roofColors: ['#C8664A', '#B5573F', '#A9604A', '#8E4A3A', '#B87455'],
+  // one glass tone per building: sky blue, muted blue-grey, dark blue, grey-green
+  windowColors: ['#8EC3E0', '#6F8FA6', '#3E5A7A', '#7F9A8F'],
   frameColor: '#F4EEE3',
 } as const;
 
@@ -58,7 +62,7 @@ type StyleSpec = {
   trim: string;
   metal: string;
   accent: string;
-  roofs: Record<RoofKind, number>;
+  roofs: Partial<Record<RoofKind, number>>;
   chance: FeatureChances;
 };
 
@@ -163,19 +167,23 @@ export function chooseStyle(facts: BuildingFacts, setting: ArchitectureSetting, 
   return weights[weights.length - 1][0];
 }
 
+/**
+ * Roof shape from the map's tag, else by the building's proportions: tall blocks get a
+ * flat roof or a parapet, mid-rise ones mostly mansards or parapets, low houses spread
+ * over gable 30% (a third with a ridge cap), hip 25%, mansard 15%, parapet 15%, front
+ * gable 10%, compound 5%. Pitched shapes still need a footprint that takes them.
+ */
 function chooseRoof(style: StyleId, seed: number, roofShape: string, floors: number, height: number): RoofKind {
   const shape = roofShape.toLowerCase();
-  if (/flat|skillion/.test(shape)) return 'flat';
-  if (/hip/.test(shape)) return 'hip';
-  if (/gabled|gable/.test(shape)) return 'gable';
-  if (style === 'modern' || style === 'commercial' || floors >= 7 || height >= 26) return 'flat';
   const roll = unitRand(seed ^ 0x85ebca6b);
-  let cursor = roll;
-  for (const [kind, weight] of Object.entries(STYLES[style].roofs) as [RoofKind, number][]) {
-    cursor -= weight;
-    if (cursor <= 0) return kind;
-  }
-  return 'flat';
+  if (/mansard/.test(shape)) return 'mansard';
+  if (/flat|skillion/.test(shape)) return roll < 0.5 ? 'parapet' : 'flat';
+  if (/hip/.test(shape)) return 'hip';
+  if (/gabled|gable/.test(shape)) return roll < 0.25 ? 'gableFront' : 'gable';
+  if (style === 'modern' || style === 'commercial' || floors >= 9 || height >= 30) return roll < 0.55 ? 'parapet' : 'flat';
+  if (floors >= 5 || height >= 17) return roll < 0.35 ? 'mansard' : roll < 0.7 ? 'parapet' : roll < 0.85 ? 'hip' : 'flat';
+  return roll < 0.2 ? 'gable' : roll < 0.3 ? 'tile' : roll < 0.55 ? 'hip' : roll < 0.7 ? 'mansard'
+    : roll < 0.85 ? 'parapet' : roll < 0.95 ? 'gableFront' : 'compound';
 }
 
 export function createRecipe(facts: BuildingFacts, palette: readonly string[], setting: ArchitectureSetting, region: string): BuildingRecipe {

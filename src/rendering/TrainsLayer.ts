@@ -13,6 +13,12 @@ import type { Position } from '@/game/VehicleController';
 const MAX = 80;
 /** every rail car model is scaled to this height (they keep their proportions; lengths differ) */
 const RAIL_CAR_HEIGHT = 4.3;
+/**
+ * Models whose bounds reach above the car body: the modern locomotive's pantographs
+ * add about a fifth to its height, so fitted to RAIL_CAR_HEIGHT its body came out lower
+ * than the coaches behind it.
+ */
+const TALLER: Partial<Record<string, number>> = { lead: 1.2 };
 
 const MODELS = {
   lead: '/models/trains/train.glb',
@@ -56,8 +62,16 @@ function hash(text: string) {
  * (about one in three). Trains are passenger or freight with a locomotive;
  * trams use the same car model for every unit in the consist.
  */
+/** A vintage consist (old locomotive / wagons / tram): about one in three. */
+export function isVintageTrain(trainId: string) {
+  return ONLY_VINTAGE || hash(`${trainId}:age`) < 0.33;
+}
+
+/** for now every consist runs vintage (set false to bring the modern ones back, ~2 in 3) */
+const ONLY_VINTAGE = true;
+
 function modelFor(car: CarPose): ModelName {
-  const vintage = hash(`${car.trainId}:age`) < 0.33;
+  const vintage = isVintageTrain(car.trainId);
   if (car.kind === 'tram') return vintage ? 'tramOld' : 'tram';
   const passenger = hash(car.trainId) < 0.5;
   if (car.index === 0) return vintage ? 'leadOld' : 'lead';
@@ -98,6 +112,8 @@ export function trainsLayer(): MapLayer & {
   setCars: (cars: CarPose[], origin: Position, terrain: boolean) => void;
   /** a rail car's length as drawn, once its model is in (null before) */
   carLength: (trainId: string, index: number, kind: string) => number | null;
+  /** the ground under a car as last drawn (null before it was drawn) */
+  carAltitude: (trainId: string, index: number) => number | null;
 } {
   let map: ThreeMap | null = null;
   /** last drawn height of every car end (trainId:index + f/b) */
@@ -128,7 +144,7 @@ export function trainsLayer(): MapLayer & {
         const bounds = new THREE.Box3().setFromObject(root);
         const size = bounds.getSize(new THREE.Vector3());
         const center = bounds.getCenter(new THREE.Vector3());
-        const scale = RAIL_CAR_HEIGHT / size.y;
+        const scale = (RAIL_CAR_HEIGHT * (TALLER[name] ?? 1)) / size.y;
         // long side → +z (the car's forward), centred, standing on y = 0
         const normalise = new THREE.Matrix4()
           .makeRotationY((size.x >= size.z ? -Math.PI / 2 : 0) + (BACKWARDS.has(name) ? Math.PI : 0))
@@ -239,6 +255,11 @@ export function trainsLayer(): MapLayer & {
           mesh.instanceMatrix.needsUpdate = true;
         }
       }
+    },
+    carAltitude(trainId, index) {
+      const f = heights.get(`${trainId}:${index}f`), b = heights.get(`${trainId}:${index}b`);
+      if (f == null && b == null) return null;
+      return ((f ?? b!) + (b ?? f!)) / 2;
     },
     carLength(trainId, index, kind) {
       if (kind !== 'rail' && kind !== 'tram') return null;

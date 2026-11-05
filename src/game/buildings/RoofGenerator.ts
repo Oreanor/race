@@ -1,5 +1,5 @@
 export type RoofPoint = { x: number; z: number };
-export type RoofKind = 'gable' | 'hip' | 'tile';
+export type RoofKind = 'gable' | 'hip' | 'tile' | 'mansard' | 'gableFront' | 'compound';
 
 export function simplifyRing(points: RoofPoint[], tolerance = 0.45): RoofPoint[] {
   if (points.length <= 3) return points.slice();
@@ -79,18 +79,39 @@ export function roofClearanceAt(x: number, z: number, roof: RoofProfile) {
   return roof.peak - fall * (roof.peak - roof.eaves);
 }
 
-export function buildRoof(points: RoofPoint[], yBase: number, kind: RoofKind): RoofMesh | null {
+/**
+ * A low-poly roof over a footprint, or null when the shape doesn't take one.
+ * gable / tile (gable + ridge cap) / hip on near-rectangles; gableFront turns the ridge
+ * across (the gable end on the long side) on squat footprints; mansard has steep lower
+ * slopes all round, a low hip on top and, from `seed`, 0–2 small dormers; compound puts
+ * two crossing gables on an L-shaped footprint.
+ */
+export function buildRoof(points: RoofPoint[], yBase: number, kind: RoofKind, seed = 0): RoofMesh | null {
   const ring = simplifyRing(points);
+  if (kind === 'compound') return buildCompound(ring, yBase) ?? (canPitch(ring) ? pitched(ring, yBase, 'gable') : null);
   if (!canPitch(ring)) return null;
+  if (kind === 'mansard') return buildMansard(ring, yBase, seed);
+  if (kind === 'gableFront') {
+    const lens = ring.map((point, index) => edgeLength(point, ring[(index + 1) % 4]));
+    const ratio = Math.max(lens[0] + lens[2], lens[1] + lens[3]) / Math.max(1e-6, Math.min(lens[0] + lens[2], lens[1] + lens[3]));
+    // a ridge across a long block would tower over it: only squat footprints turn
+    return pitched(ring, yBase, 'gable', ratio < 1.5 ? 'short' : 'long');
+  }
+  return pitched(ring, yBase, kind);
+}
+
+/** Gable, tile or hip over a 4-corner ring; `axis` picks the ridge direction, `riseCap` limits its height. */
+function pitched(ring: RoofPoint[], yBase: number, kind: 'gable' | 'hip' | 'tile', axis: 'long' | 'short' | 'edge0' = 'long', riseCap = Infinity): RoofMesh {
   const lens = ring.map((point, index) => edgeLength(point, ring[(index + 1) % 4]));
-  const longIs0 = lens[0] + lens[2] >= lens[1] + lens[3];
+  const longest = lens[0] + lens[2] >= lens[1] + lens[3];
+  const longIs0 = axis === 'edge0' ? true : axis === 'long' ? longest : !longest;
   const eave1a = longIs0 ? ring[0] : ring[1];
   const eave1b = longIs0 ? ring[1] : ring[2];
   const eave2a = longIs0 ? ring[3] : ring[0];
   const eave2b = longIs0 ? ring[2] : ring[3];
   const length = edgeLength(eave1a, eave1b);
   const width = Math.hypot((eave1a.x + eave1b.x) / 2 - (eave2a.x + eave2b.x) / 2, (eave1a.z + eave1b.z) / 2 - (eave2a.z + eave2b.z) / 2);
-  const rise = Math.max(0.75, Math.min(3.3, width * (kind === 'hip' ? 0.34 : 0.38)));
+  const rise = Math.min(riseCap, Math.max(0.75, Math.min(3.3, width * (kind === 'hip' ? 0.34 : 0.38))));
   const positions: number[] = [];
   const normals: number[] = [];
   const center = {
@@ -131,6 +152,115 @@ export function buildRoof(points: RoofPoint[], yBase: number, kind: RoofKind): R
   }
   if (kind === 'tile') addRidge(positions, normals, ridgeA, ridgeB);
   return { positions, normals, ridgeY: y, eavesY: yBase, halfWidth: width / 2, ridgeA, ridgeB };
+}
+
+/** Mansard: steep lower slopes on all four sides, a low hip over them, a few dormers. */
+function buildMansard(ring: RoofPoint[], yBase: number, seed: number): RoofMesh {
+  const lens = ring.map((point, index) => edgeLength(point, ring[(index + 1) % 4]));
+  const d = Math.min(1.5, Math.min(...lens) * 0.2);
+  const h1 = Math.min(2.6, Math.max(1.6, d * 1.9));
+  const inner = ring.map((p, i) => {
+    const next = ring[(i + 1) % 4], prev = ring[(i + 3) % 4];
+    const ul = edgeLength(p, next) || 1, vl = edgeLength(p, prev) || 1;
+    return { x: p.x + ((next.x - p.x) / ul + (prev.x - p.x) / vl) * d, z: p.z + ((next.z - p.z) / ul + (prev.z - p.z) / vl) * d };
+  });
+  const positions: number[] = [];
+  const normals: number[] = [];
+  const y1 = yBase + h1;
+  for (let i = 0; i < 4; i++) {
+    const a = ring[i], b = ring[(i + 1) % 4], ib = inner[(i + 1) % 4], ia = inner[i];
+    pushTri(positions, normals, { x: a.x, y: yBase, z: a.z }, { x: b.x, y: yBase, z: b.z }, { x: ib.x, y: y1, z: ib.z }, true);
+    pushTri(positions, normals, { x: a.x, y: yBase, z: a.z }, { x: ib.x, y: y1, z: ib.z }, { x: ia.x, y: y1, z: ia.z }, true);
+  }
+  const innerLens = inner.map((point, index) => edgeLength(point, inner[(index + 1) % 4]));
+  const top = pitched(inner, y1, 'hip', 'long', Math.min(0.7, Math.min(...innerLens) * 0.12));
+  positions.push(...top.positions);
+  normals.push(...top.normals);
+  // dormers: small shed boxes on the two long lower slopes (none on a third of the roofs)
+  const count = seed % 3 === 0 ? 0 : (seed >> 3) % 2 + 1;
+  const longIs0 = lens[0] + lens[2] >= lens[1] + lens[3];
+  const cx = ring.reduce((s, p) => s + p.x, 0) / 4, cz = ring.reduce((s, p) => s + p.z, 0) / 4;
+  for (const e of longIs0 ? [0, 2] : [1, 3]) {
+    const a = ring[e], b = ring[(e + 1) % 4];
+    const len = edgeLength(a, b);
+    if (!count || len < 5) continue;
+    const ux = (b.x - a.x) / len, uz = (b.z - a.z) / len;
+    const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2;
+    // inward (toward the middle of the roof), across the edge
+    let nx = -uz, nz = ux;
+    if (nx * (cx - mx) + nz * (cz - mz) < 0) { nx = -nx; nz = -nz; }
+    const w = Math.min(0.75, len * 0.08);
+    const xf = d * 0.3;                                  // front face, in from the eaves
+    const yf = yBase + h1 * 0.3;                         // where the front meets the slope
+    const yt = Math.min(y1 - 0.15, yf + 1.05);           // flat top
+    const xb = d * (yt - yBase) / h1;                    // where the top meets the slope
+    for (let k = 0; k < count; k++) {
+      const t = count === 1 ? 0.5 : k === 0 ? 0.32 : 0.68;
+      const px = a.x + (b.x - a.x) * t, pz = a.z + (b.z - a.z) * t;
+      const P = (along: number, depth: number, y: number): V3 => ({ x: px + ux * along + nx * depth, y, z: pz + uz * along + nz * depth });
+      const dc = { x: px + nx * d * 2, y: yt, z: pz + nz * d * 2 };   // a point inside, for facing
+      // front
+      pushTri(positions, normals, P(-w, xf, yf), P(w, xf, yf), P(w, xf, yt), false, dc);
+      pushTri(positions, normals, P(-w, xf, yf), P(w, xf, yt), P(-w, xf, yt), false, dc);
+      // top
+      pushTri(positions, normals, P(-w, xf, yt), P(w, xf, yt), P(w, xb, yt), true);
+      pushTri(positions, normals, P(-w, xf, yt), P(w, xb, yt), P(-w, xb, yt), true);
+      // cheeks
+      pushTri(positions, normals, P(-w, xf, yf), P(-w, xf, yt), P(-w, xb, yt), false, P(0, xb, yt));
+      pushTri(positions, normals, P(w, xf, yf), P(w, xb, yt), P(w, xf, yt), false, P(0, xb, yt));
+    }
+  }
+  return { positions, normals, ridgeY: top.ridgeY, eavesY: yBase, halfWidth: Math.min(...lens) / 2, ridgeA: top.ridgeA, ridgeB: top.ridgeB };
+}
+
+/**
+ * Two crossing gables on an L-shaped footprint (6 right-angled corners): the long arm
+ * keeps its ridge along it, the short arm runs across and meets the main ridge, never higher.
+ */
+function buildCompound(ring: RoofPoint[], yBase: number): RoofMesh | null {
+  if (ring.length !== 6) return null;
+  const lens = ring.map((point, index) => edgeLength(point, ring[(index + 1) % 6]));
+  if (lens.some((l) => l < 2.5) || Math.max(...lens) > 44) return null;
+  let area = 0;
+  for (let i = 0; i < 6; i++) { const a = ring[i], b = ring[(i + 1) % 6]; area += a.x * b.z - b.x * a.z; }
+  const turn = (i: number) => {
+    const p = ring[(i + 5) % 6], c = ring[i], n = ring[(i + 1) % 6];
+    const ax = c.x - p.x, az = c.z - p.z, bx = n.x - c.x, bz = n.z - c.z;
+    const dot = (ax * bx + az * bz) / ((Math.hypot(ax, az) * Math.hypot(bx, bz)) || 1);
+    return { cross: ax * bz - az * bx, dot };
+  };
+  let reflex = -1;
+  for (let i = 0; i < 6; i++) {
+    const { cross, dot } = turn(i);
+    if (Math.abs(dot) > 0.2) return null;
+    if (cross * area < 0) { if (reflex >= 0) return null; reflex = i; }
+  }
+  if (reflex < 0) return null;
+  // local frame along the longest edge
+  const li = lens.indexOf(Math.max(...lens));
+  const ux = (ring[(li + 1) % 6].x - ring[li].x) / lens[li], uz = (ring[(li + 1) % 6].z - ring[li].z) / lens[li];
+  const vx = -uz, vz = ux;
+  const st = ring.map((p) => ({ s: p.x * ux + p.z * uz, t: p.x * vx + p.z * vz }));
+  const s0 = Math.min(...st.map((q) => q.s)), s1 = Math.max(...st.map((q) => q.s));
+  const t0 = Math.min(...st.map((q) => q.t)), t1 = Math.max(...st.map((q) => q.t));
+  const r = st[reflex];
+  const highS = r.s > (s0 + s1) / 2, highT = r.t > (t0 + t1) / 2;
+  // the main arm runs the full length; the short arm is the rest
+  const [at0, at1] = highT ? [t0, r.t] : [r.t, t1];
+  const [bs0, bs1] = highS ? [s0, r.s] : [r.s, s1];
+  const overlap = (at1 - at0) / 2;
+  const [bt0, bt1] = highT ? [r.t - overlap, t1] : [t0, r.t + overlap];
+  const back = (s: number, t: number): RoofPoint => ({ x: s * ux + t * vx, z: s * uz + t * vz });
+  const rectA = [back(s0, at0), back(s1, at0), back(s1, at1), back(s0, at1)];
+  const rectB = [back(bs0, bt0), back(bs0, bt1), back(bs1, bt1), back(bs1, bt0)];
+  if (s1 - s0 < 3.2 || at1 - at0 < 3.2 || bs1 - bs0 < 3.2) return null;
+  const main = pitched(rectA, yBase, 'gable', 'edge0');
+  const arm = pitched(rectB, yBase, 'gable', 'edge0', main.ridgeY - yBase);
+  return {
+    positions: [...main.positions, ...arm.positions],
+    normals: [...main.normals, ...arm.normals],
+    ridgeY: main.ridgeY, eavesY: yBase, halfWidth: main.halfWidth, ridgeA: main.ridgeA, ridgeB: main.ridgeB,
+  };
 }
 
 function pushTri(positions: number[], normals: number[], a: V3, b: V3, c: V3, upward: boolean, center?: V3) {

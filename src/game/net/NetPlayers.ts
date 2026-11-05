@@ -42,6 +42,8 @@ export type NetHost = {
   /** the traffic another player drives; a bullet hit one of ours */
   traffic(from: string, cars: TrafficCar[]): void;
   trafficHit(id: string): void;
+  /** somebody hijacked a car we parked */
+  trafficTaken(id: string): void;
 };
 
 const carOf = (id: string) => carsConfig.find((c) => c.id === id) ?? carsConfig[0];
@@ -72,6 +74,7 @@ export class NetPlayers {
     };
     this.net.onTraffic = (from, cars) => this.game.traffic(from, cars);
     this.net.onTrafficHit = (id) => this.game.trafficHit(id);
+    this.net.onTake = (id) => this.game.trafficTaken(id);
     this.net.onDown = (event) => {
       const text = event.me ? t('pvp.downMe', { by: event.byName })
         : event.mine ? t('pvp.downMine', { name: event.name })
@@ -90,6 +93,7 @@ export class NetPlayers {
   /** Send the traffic we drive; report a hit on somebody else's. */
   sendTraffic(cars: TrafficCar[]) { this.net?.traffic(cars); }
   hitTraffic(id: string) { this.net?.trafficHit(id); }
+  takeTraffic(id: string) { this.net?.take(id); }
 
   /** Our bullet hit another player's car (not one parked on a mission). */
   shot(id: string) {

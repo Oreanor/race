@@ -154,6 +154,41 @@ export class TrafficRoadNetwork {
       ?? pick(Math.min(90, minDistance * 0.4), maxDistance * 1.5, true);
   }
 
+  /**
+   * Places at the kerb every `spacing` m along the roads: `side` m right of the centre
+   * line, facing along it. Ids come from the rounded spot, the same for everybody.
+   */
+  kerbSpots(center: Position, radius = 600, spacing = 160, start = 55, side = 4.4): { id: string; position: Position; heading: number }[] {
+    const out: { id: string; position: Position; heading: number }[] = [];
+    const ids = new Set<string>();
+    for (const line of this.lines.values()) {
+      let traveled = 0;
+      let next = start;
+      for (let index = 1; index < line.length; index++) {
+        const from = line[index - 1];
+        const to = line[index];
+        const length = metersBetween(from, to);
+        while (next <= traveled + length) {
+          const fraction = length > 0 ? (next - traveled) / length : 0;
+          const on: Position = [from[0] + (to[0] - from[0]) * fraction, from[1] + (to[1] - from[1]) * fraction];
+          next += spacing;
+          if (metersBetween(center, on) > radius) continue;
+          const heading = headingTo(from, to);
+          const position: Position = [
+            on[0] + Math.cos(heading) * side / this.scaleX,
+            on[1] - Math.sin(heading) * side / METERS_PER_DEGREE,
+          ];
+          const id = `${Math.round(position[0] * this.scaleX / 10)}:${Math.round(position[1] * METERS_PER_DEGREE / 10)}`;
+          if (ids.has(id)) continue;
+          ids.add(id);
+          out.push({ id, position, heading });
+        }
+        traveled += length;
+      }
+    }
+    return out;
+  }
+
   /** Spots along the roads every ~75 m; `start` shifts the row (coins sit halfway between balls). */
   pickupLocations(center: Position, radius = 650, limit = 80, start = 37.5): RoadPickup[] {
     const candidates = new Map<string, Position>();

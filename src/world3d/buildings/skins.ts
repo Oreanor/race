@@ -32,10 +32,14 @@ export type Skin = {
 export const SKIN_DATA: Record<Exclude<SkinId, 'original'>, Skin> = {
   modern: {
     index: 1,
-    wall: [['#F0F0EA', 35], ['#D3D6D7', 25], ['#E7DFD3', 20], ['#C6CED1', 12], ['#B6B7B2', 8]],
-    roof: [['#353E48', 45], ['#5E6872', 30], ['#777F81', 15], ['#464B50', 10]],
-    secondary: ['#A8B1B6', '#B4A38D', '#AA8061', '#7F8C92'],
-    glass: ['#3D5867', '#668DA2', '#516C7A'],
+    // white, cream, beige / sand, light grey, warm concrete; sage comes in as a section colour
+    wall: [['#F0EEE6', 22], ['#EDE3CF', 26], ['#DFCFB2', 22], ['#D6D4CE', 14], ['#C2B8A9', 16]],
+    // warm roofs: terracotta, warm grey, light concrete, a little graphite and brown
+    roof: [['#B5654A', 26], ['#8C857C', 24], ['#BDB6AA', 24], ['#45484C', 14], ['#6E5444', 12]],
+    // large contrasting facade sections: graphite, warm dark grey, sand, warm concrete
+    secondary: ['#4A4B4D', '#6E6A64', '#CDBEA2', '#B8B2A8'],
+    // neutral glass (the shader picks it per building, blue on ~5% only)
+    glass: ['#454545', '#686662', '#89847B', '#777F76'],
     frame: ['#333B42', '#657077', '#F0F0E8'],
     trim: ['#E7E7E1', '#BBC0BE', '#747D80'],
     accent: ['#AA8061', '#607F8A', '#BEB2A0'],
@@ -60,7 +64,9 @@ export const SKIN_DATA: Record<Exclude<SkinId, 'original'>, Skin> = {
     // the shader paints five facade families of its own (stucco, muted brick, stone,
     // painted, brick + stucco); this wall palette is only the fallback
     wall: [['#D9CBB2', 35], ['#7A5444', 25], ['#C9BBA0', 10], ['#A7B59A', 20], ['#8A5A48', 10]],
-    roof: [['#3E4147', 48], ['#4A4D52', 25], ['#38393C', 20], ['#56595E', 7]],
+    // the shader picks victorian roofs by district (slate, warm graphite, grey-brown, faded
+    // terracotta, brick red, brown tile, grey-olive, light stone); this list is the fallback
+    roof: [['#555A5A', 30], ['#454441', 20], ['#A36B56', 20], ['#766B60', 15], ['#884F45', 15]],
     secondary: ['#8E8A82', '#A78062', '#E2CAA5', '#8E8A82'],
     glass: ['#56687A', '#4A5D68', '#5D6E68'],
     frame: ['#F2EEE4', '#EBE2CE', '#F2EEE4'],

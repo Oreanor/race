@@ -137,6 +137,22 @@ export class BuildingCollisions {
     return best;
   }
 
+  /** A building stands on the straight line between two points (sampled every 2 m; for shots). */
+  sightBlocked(from: Position, to: Position) {
+    const a = this.local(from), b = this.local(to);
+    const count = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / 2));
+    for (let step = 1; step < count; step++) {
+      const t = step / count;
+      const point: Point = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+      for (const polygon of this.polygons) {
+        const [x0, y0, x1, y1] = polygon.bounds;
+        if (point[0] < x0 || point[0] > x1 || point[1] < y0 || point[1] > y1) continue;
+        if (inside(point, polygon.rings[0] ?? []) && !polygon.rings.slice(1).some(ring => inside(point, ring))) return true;
+      }
+    }
+    return false;
+  }
+
   blocked(from: Position, to: Position, heading: number, scale = 1, altitude = -Infinity) {
     return this.hits(this.local(from), this.local(to), heading, scale, altitude);
   }

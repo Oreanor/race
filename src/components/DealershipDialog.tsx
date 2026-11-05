@@ -8,9 +8,9 @@ import CarCarousel from './CarCarousel';
 import Dialog from './ui/Dialog';
 
 /**
- * Car showroom: the same carousel as the menu, one model at a time with its
- * numbers, its price and what it costs after the trade-in (half the shelf price
- * of the car you came in).
+ * Car showroom: the same carousel as the menu, one model at a time with its numbers.
+ * A new car costs its full price and joins the garage (nothing is sold back); a car
+ * already in the garage is free to get into.
  */
 export default function DealershipDialog({ offer, onBuy, onLeave }: {
   offer: DealerOffer;
@@ -22,12 +22,10 @@ export default function DealershipDialog({ offer, onBuy, onLeave }: {
   const [index, setIndex] = useState(() => Math.max(0, cars.findIndex((car) => car.id === offer.currentId)));
   const car = cars[index];
   const price = carPrice(car);
-  const net = price - offer.tradeIn;
   const current = car.id === offer.currentId;
-  const affordable = current || net <= offer.money;
-  const deal = current ? t('dealer.yours')
-    : net >= 0 ? t('dealer.pay', { cost: formatNumber(net) })
-      : t('dealer.refund', { gain: formatNumber(-net) });
+  const owned = offer.owned.includes(car.id);
+  const affordable = current || owned || price <= offer.money;
+  const deal = current ? t('dealer.yours') : owned ? t('dealer.owned') : t('dealer.pay', { cost: formatNumber(price) });
 
   return (
     <Dialog
@@ -35,7 +33,7 @@ export default function DealershipDialog({ offer, onBuy, onLeave }: {
       actions={<>
         <button type="button" className="ui-btn" disabled={current || !affordable} onClick={() => onBuy(car.id)}
           title={current ? t('dealer.yours') : affordable ? t('dealer.buy', { car: car.name }) : t('dialog.broke')}>
-          {current ? t('dealer.yours') : t('dealer.buy', { car: car.name })}
+          {current ? t('dealer.yours') : owned ? t('dealer.drive', { car: car.name }) : t('dealer.buy', { car: car.name })}
         </button>
         <button type="button" className="ui-btn is-ghost" onClick={onLeave}>{t('dialog.leave')}</button>
       </>}
@@ -47,7 +45,7 @@ export default function DealershipDialog({ offer, onBuy, onLeave }: {
           <strong className={affordable ? 'ui-coins' : 'ui-coins is-broke'}>{deal}</strong>
         </div>
       </CarCarousel>
-      <p className="ui-text">{t('dealer.tradeIn')}: <span className="ui-coins"><i className="money-coin" aria-hidden="true" />{formatNumber(offer.tradeIn)}</span></p>
+      <p className="ui-text">{t('dealer.garage', { n: offer.owned.length })}</p>
     </Dialog>
   );
 }

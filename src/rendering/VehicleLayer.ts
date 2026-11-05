@@ -14,7 +14,11 @@ export type TargetVehicle = { id: string; driver: string; car: Car; position: Po
 /** Another player's car (multiplayer): drawn only, never shot or hit here. Altitude in meters as drawn. */
 export type RemoteCar = { id: string; car: Car; position: Position; heading: number; altitude: number; pitch: number; roll: number; hp?: number };
 export type TargetHealth = { id: string; driver: string; color: string; hp: number; maxHp: number };
-export type PickupVisual = { id: string; position: Position; color: string; kind?: 'ball' | 'coin' };
+/** `drop`: a coin thrown out of a wreck — it flies from `from` to `position` from time `at`, bouncing */
+export type PickupVisual = { id: string; position: Position; color: string; kind?: 'ball' | 'coin' | 'cash'; drop?: { from: Position; at: number; up?: number } };
+
+/** how long a coin from a wreck bounces and rolls before it lies still (ms) */
+export const DROP_MS = 1300;
 type DeathPhase = 'tumble' | 'burn' | 'wreck';
 type CharMat = { material: THREE.MeshPhongMaterial; r: number; g: number; b: number };
 type TargetState = TargetVehicle & {
@@ -51,6 +55,10 @@ export type VehicleSceneLayer = MapLayer & {
   setAim: (aim: AimPoint | null) => void;
   setFiring: (firing: boolean) => void;
   flashPlayer: (duration: number) => void;
+  /** a hunting target fires at our car: muzzle flash, a tracer, and sparks on us or beside us */
+  enemyShot: (fromId: string, hit: boolean) => void;
+  /** our engine is on fire (a disabled car): smoke and sparks from the hood, call every frame */
+  burnPlayer: () => void;
   setCar: (next: Car) => void;
   setTargets: (vehicles: TargetVehicle[]) => void;
   /** targets beside the missions' (shared traffic, test cars): by id, never counted for a mission */
@@ -62,6 +70,10 @@ export type VehicleSceneLayer = MapLayer & {
   extraHealth: () => (TargetHealth & { position: Position })[];
   /** our bullet hit a target */
   onTargetHit: (id: string) => void;
+  /** any target blew up (shot, rammed, or reported by its owner) */
+  onTargetDestroyed: (id: string, position: Position) => void;
+  /** our bullet hit a vintage train here */
+  onTrainCoin: (point: Position, altitude: number) => void;
   /** other players, every frame; cars come and go with the list */
   setRemotes: (cars: RemoteCar[]) => void;
   /** our bullet hit another player's car */
@@ -75,7 +87,12 @@ export type VehicleSceneLayer = MapLayer & {
   isTargetAlive: (id: string) => boolean;
   targetHealth: () => TargetHealth[];
   setPickups: (pickups: PickupVisual[]) => void;
-  setMissionBeacons: (beacons: { id: string; kind: 'arena' | 'race' | 'bounty'; position: Position }[]) => void;
+  setMissionBeacons: (beacons: {
+    id: string;
+    position: Position;
+    kind?: 'arena' | 'race' | 'bounty';
+    colors?: { pole: string; glow: string; orb: string };
+  }[]) => void;
   setRaceFinish: (goal: Position | null) => void;
   /** the J ramp: low edge at `position`, rising along `heading`; null takes it away */
   setRamp: (ramp: { position: Position; heading: number; ground: number; tilt: number; length: number; height: number; width: number } | null) => void;
@@ -85,6 +102,7 @@ export function disposeObject(object: THREE.Object3D) {
   object.traverse((child) => {
     if (!(child instanceof THREE.Mesh)) return;
     child.geometry.dispose();
+    if (child.userData.beacon) return; // police lamps share their materials
     const materials = Array.isArray(child.material) ? child.material : [child.material];
     for (const material of materials) {
       for (const value of Object.values(material)) if (value instanceof THREE.Texture) value.dispose();
@@ -131,7 +149,63 @@ export async function loadCar(car: Car) {
   root.add(group);
   root.rotation.y = car.yaw;
   polish(root);
+  addBeacons(root, car, size, scale);
   return root;
+}
+
+/**
+ * Police lights on the roof: the Chevy (Fleetline Police) one red lamp in the middle, the
+ * Volga (GAZ-24 militia) the red one plus a blue on each side. Red and blue take turns.
+ */
+const POLICE_LIGHTS: Record<string, ('red' | 'blue')[]> = { '09': ['red'], '16': ['blue', 'red', 'blue'] };
+const beaconMats = {
+  red: new THREE.MeshBasicMaterial({ color: '#ff2a1f', transparent: true }),
+  blue: new THREE.MeshBasicMaterial({ color: '#2f6dff', transparent: true }),
+};
+const haloTexture = (() => {
+  if (typeof document === 'undefined') return null;
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const g = c.getContext('2d')!;
+  const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grad.addColorStop(0, 'rgba(255,255,255,1)');
+  grad.addColorStop(0.35, 'rgba(255,255,255,0.45)');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(c);
+})();
+const haloMats = {
+  red: new THREE.SpriteMaterial({ map: haloTexture, color: '#ff3b2e', transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }),
+  blue: new THREE.SpriteMaterial({ map: haloTexture, color: '#3d7bff', transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }),
+};
+/** on/off of each colour now: red and blue alternate, ~2.5 flashes a second */
+function beaconLevel(color: 'red' | 'blue') {
+  const t = performance.now() / 400;
+  const phase = (t % 1) < 0.5;
+  return (color === 'red') === phase ? 1 : 0.08;
+}
+function addBeacons(root: THREE.Group, car: Car, size: THREE.Vector3, scale: number) {
+  const lights = POLICE_LIGHTS[car.id];
+  if (!lights) return;
+  // the model before the yaw: its long side along x or z; across it is the other one
+  const alongX = size.x >= size.z;
+  const top = size.y * scale + 0.06;
+  const spread = Math.min(size.x, size.z) * scale * 0.26;
+  lights.forEach((color, i) => {
+    const offset = (i - (lights.length - 1) / 2) * spread;
+    const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.14, 0.2), beaconMats[color]);
+    lamp.position.set(alongX ? 0 : offset, top, alongX ? offset : 0);
+    lamp.userData.beacon = true;
+    lamp.onBeforeRender = () => { beaconMats[color].opacity = 0.35 + 0.65 * beaconLevel(color); };
+    const halo = new THREE.Sprite(haloMats[color]);
+    halo.scale.setScalar(1.6);
+    halo.position.copy(lamp.position);
+    halo.renderOrder = 9;
+    halo.userData.beacon = true;
+    halo.onBeforeRender = () => { haloMats[color].opacity = beaconLevel(color); };
+    root.add(lamp, halo);
+  });
 }
 
 function fallbackCar(color: string) {
@@ -204,6 +278,8 @@ export function vehicleLayer(
   status: (text: string) => void,
   resolveShot: (cam: Position, camAlt: number, ground: Position, groundAlt: number, mark?: boolean) => { point: Position; altitude: number } | null = () => null,
   markGround: (point: Position, altitude: number) => void = () => {},
+  /** a train car along a shot (from → to): where, and whether it is a vintage one that pays out */
+  resolveTrain: (from: Position, fromAlt: number, to: Position, toAlt: number) => { point: Position; altitude: number; vintage: boolean } | null = () => null,
 ): VehicleSceneLayer {
   const scene = new THREE.Scene();
   const camera = new THREE.Camera();
@@ -236,7 +312,7 @@ export function vehicleLayer(
   let lastFrame = 0;
   const tireTracks = new TireTracks(scene);
   const targets = new Map<string, TargetState>();
-  const pickups = new Map<string, { position: Position; mesh: THREE.Object3D; phase: number; coin: boolean; ground: number | null }>();
+  const pickups = new Map<string, { position: Position; mesh: THREE.Object3D; phase: number; coin: boolean; ground: number | null; drop?: { from: Position; at: number; up?: number } }>();
   const pickupGeometry = new THREE.SphereGeometry(0.38, 16, 12);
   // a gold coin 1 m across, standing on its edge: disc, raised rim, a star on both faces
   const coinParts = (() => {
@@ -293,7 +369,20 @@ export function vehicleLayer(
     scene.add(group);
     return { group, tip: core };
   }
-  const missionBeacons = new Map<string, { kind: 'arena' | 'race' | 'bounty'; position: Position; visual: ReturnType<typeof makeBeacon> }>();
+  const missionBeacons = new Map<string, {
+    kind?: 'arena' | 'race' | 'bounty';
+    position: Position;
+    visual: ReturnType<typeof makeBeacon>;
+  }>();
+  function colorsForBeacon(beacon: {
+    kind?: 'arena' | 'race' | 'bounty';
+    colors?: { pole: string; glow: string; orb: string };
+  }) {
+    if (beacon.colors) return beacon.colors;
+    if (beacon.kind === 'arena') return { pole: '#2f7dff', glow: '#1a4fb8', orb: '#6eb6ff' };
+    if (beacon.kind === 'bounty') return { pole: '#d63a2f', glow: '#8a1c14', orb: '#ff8a7a' };
+    return { pole: '#ff7a1a', glow: '#b84a00', orb: '#ffb86b' };
+  }
   const raceFinish = new THREE.Group();
   const finishPole = new THREE.Mesh(
     new THREE.CylinderGeometry(0.08, 0.1, 3.2, 8),
@@ -359,8 +448,9 @@ export function vehicleLayer(
     }
     for (const pickup of next) {
       if (pickups.has(pickup.id)) continue;
-      const coin = pickup.kind === 'coin';
-      const mesh = coin ? makeCoin() : new THREE.Mesh(pickupGeometry, pickupMaterial(pickup.color));
+      // coins and cash bundles share the hover / bounce; balls are the old score orbs
+      const coin = pickup.kind === 'coin' || pickup.kind === 'cash';
+      const mesh = pickup.kind === 'cash' ? makeCash() : coin ? makeCoin() : new THREE.Mesh(pickupGeometry, pickupMaterial(pickup.color));
       mesh.frustumCulled = false;
       mesh.renderOrder = 8;
       scene.add(mesh);
@@ -370,11 +460,26 @@ export function vehicleLayer(
         phase: Math.random() * Math.PI * 2,
         coin,
         ground: null,
+        drop: pickup.drop ? { from: [...pickup.drop.from] as Position, at: pickup.drop.at, up: pickup.drop.up } : undefined,
       });
     }
   }
 
-  function setMissionBeacons(beacons: { id: string; kind: 'arena' | 'race' | 'bounty'; position: Position }[]) {
+  /** A bundle of banknotes: a green brick with a paper band round its middle. */
+  function makeCash() {
+    const group = new THREE.Group();
+    const notes = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.36, 0.55), new THREE.MeshLambertMaterial({ color: '#3f8f4e' }));
+    const band = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.38, 0.57), new THREE.MeshLambertMaterial({ color: '#f1ead2' }));
+    group.add(notes, band);
+    return group;
+  }
+
+  function setMissionBeacons(beacons: {
+    id: string;
+    position: Position;
+    kind?: 'arena' | 'race' | 'bounty';
+    colors?: { pole: string; glow: string; orb: string };
+  }[]) {
     const active = new Set(beacons.map(beacon => beacon.id));
     for (const [id, entry] of missionBeacons) {
       if (active.has(id)) continue;
@@ -384,11 +489,8 @@ export function vehicleLayer(
     for (const beacon of beacons) {
       let entry = missionBeacons.get(beacon.id);
       if (!entry) {
-        const visual = beacon.kind === 'arena'
-          ? makeBeacon('#2f7dff', '#1a4fb8', '#6eb6ff', '#1e3a66')
-          : beacon.kind === 'bounty'
-            ? makeBeacon('#d63a2f', '#8a1c14', '#ff8a7a', '#5a1510')
-            : makeBeacon('#ff7a1a', '#b84a00', '#ffb86b', '#6a3110');
+        const colors = colorsForBeacon(beacon);
+        const visual = makeBeacon(colors.pole, colors.glow, colors.orb, colors.glow);
         entry = { kind: beacon.kind, position: [...beacon.position], visual };
         missionBeacons.set(beacon.id, entry);
       }
@@ -512,6 +614,9 @@ export function vehicleLayer(
 
   function destroyTarget(target: TargetState, now: number, here: Position, heading: number) {
     target.destroyed = true;
+    // a wreck's police lights go out
+    target.root.traverse((child) => { if (child.userData.beacon) child.visible = false; });
+    targetDestroyedHandler(target.id, [...target.position] as Position);
     target.deathPhase = 'tumble';
     target.root.visible = true;
     target.explodedAt = now;
@@ -544,6 +649,9 @@ export function vehicleLayer(
   let remoteHitHandler: (id: string) => void = () => {};
   /** set by the game: our bullet hit a target */
   let targetHitHandler: (id: string) => void = () => {};
+  let targetDestroyedHandler: (id: string, position: Position) => void = () => {};
+  let hoodSmokeAt = 0;
+  let trainCoinHandler: (point: Position, altitude: number) => void = () => {};
   /** 0 by day … 1 at night: other players' headlight beams */
   let night = 0;
   // one soft light cone for every other player's car: bright at the lamps, gone 18 m ahead
@@ -725,22 +833,74 @@ export function vehicleLayer(
     if (!aim || !map || now - lastShot < 50) return;
     lastShot = now;
     const carAlt = height();
-    const cam = cameraPose(here, carAlt);
     const groundAlt = map.groundAt(aim.ground) ?? carAlt;
     const ground = eastNorth(here, aim.ground);
-    const dx = ground.east - cam.east;
-    const dy = (groundAlt - carAlt) - cam.up;
-    const dz = ground.north - cam.north;
+    const radius = 2.15;
+    /** first car (target or another player) an upright-cylinder test finds along a ray, before maxT */
+    const firstCar = (oe: number, ou: number, on: number, ue: number, uu: number, un: number, maxT: number) => {
+      let best: { t: number; up: number } | null = null;
+      const test = (position: Position, rel: number) => {
+        const delta = eastNorth(here, position);
+        const ox = oe - delta.east, oz = on - delta.north;
+        const a = ue * ue + un * un;
+        if (a < 1e-8) return;
+        const b = 2 * (ox * ue + oz * un), c = ox * ox + oz * oz - radius * radius;
+        const disc = b * b - 4 * a * c;
+        if (disc < 0) return;
+        const t = (-b - Math.sqrt(disc)) / (2 * a);
+        if (t < 1.2 || t > (best?.t ?? maxT)) return;
+        const up = ou + uu * t;
+        if (up < rel - 0.4 || up > rel + 2.6) return;
+        best = { t, up: Math.max(rel + 0.35, Math.min(rel + 1.6, up)) };
+      };
+      for (const target of targets.values()) if (!target.destroyed) test(target.position, targetLift(target));
+      for (const remote of remotes.values()) test(remote.spec.position, remote.spec.altitude - carAlt);
+      return best as { t: number; up: number } | null;
+    };
+
+    // 1. What the cursor points at, as the camera sees it: the first wall or car on its
+    //    ray, else the ground. Moving the mouse up a wall moves the aim up the wall.
+    let aimE = ground.east, aimN = ground.north, aimU = groundAlt - carAlt, aimGround = true;
+    {
+      const view = cameraPose(here, carAlt);
+      const vx = ground.east - view.east, vy = aimU - view.up, vz = ground.north - view.north;
+      const vl = Math.hypot(vx, vy, vz);
+      if (vl > 1) {
+        let near = vl;
+        const car = firstCar(view.east, view.up, view.north, vx / vl, vy / vl, vz / vl, vl);
+        if (car) {
+          near = car.t;
+          aimE = view.east + vx / vl * car.t; aimN = view.north + vz / vl * car.t; aimU = car.up;
+          aimGround = false;
+        }
+        const w = resolveShot(view.position, view.altitude, aim.ground, groundAlt, false);
+        if (w) {
+          const d = eastNorth(here, w.point);
+          const wt = ((d.east - view.east) * vx + (w.altitude - carAlt - view.up) * vy + (d.north - view.north) * vz) / vl;
+          if (wt > 1 && wt < near) { aimE = d.east; aimN = d.north; aimU = w.altitude - carAlt; aimGround = false; }
+        }
+      }
+    }
+
+    // 2. The bullet leaves our gun (the car's nose, 0.85 m up) for that point and flies on
+    //    past it: whatever stands between the car and the aim takes it.
+    const gunEast = Math.sin(heading) * 1.7, gunNorth = Math.cos(heading) * 1.7;
+    const cam = { position: offsetPosition(here, gunEast, gunNorth) as Position, altitude: carAlt + 0.85, east: gunEast, north: gunNorth, up: 0.85 };
+    const dx = aimE - cam.east;
+    const dy = aimU - cam.up;
+    const dz = aimN - cam.north;
     const rayLen = Math.hypot(dx, dy, dz);
     if (rayLen < 1) return;
     const ux = dx / rayLen;
     const uy = dy / rayLen;
     const uz = dz / rayLen;
+    const reach = aimGround ? Math.min(rayLen * 1.02, 160) : 160;
+    const far = offsetPosition(here, cam.east + ux * reach, cam.north + uz * reach) as Position;
+    const farAlt = carAlt + cam.up + uy * reach;
 
-    let bestT = Math.min(rayLen * 1.02, 160);
+    let bestT = reach;
     let hit: TargetState | null = null;
     let hitUp = cam.up + uy * bestT;
-    const radius = 2.15;
     for (const target of targets.values()) {
       if (target.destroyed) continue;
       const delta = eastNorth(here, target.position);
@@ -785,7 +945,7 @@ export function vehicleLayer(
       hitUp = Math.max(rel + 0.35, Math.min(rel + 1.6, up));
     }
 
-    const wall = resolveShot(cam.position, cam.altitude, aim.ground, groundAlt, false);
+    const wall = resolveShot(cam.position, cam.altitude, far, farAlt, false);
     let wallHit = false;
     let groundHit = false;
     if (wall) {
@@ -797,10 +957,24 @@ export function vehicleLayer(
         bestT = wallT;
         hitUp = wall.altitude - carAlt;
         wallHit = true;
-        resolveShot(cam.position, cam.altitude, aim.ground, groundAlt, true);
+        resolveShot(cam.position, cam.altitude, far, farAlt, true);
       }
     }
-    if (!hit && !wallHit && !remoteHit) {
+    // trains: hard to the bullet, nothing to break; a vintage one coughs up a coin
+    let trainHit: { vintage: boolean } | null = null;
+    const train = resolveTrain(cam.position, cam.altitude, far, farAlt);
+    if (train) {
+      const td = eastNorth(here, train.point);
+      const tt = (td.east - cam.east) * ux + (train.altitude - carAlt - cam.up) * uy + (td.north - cam.north) * uz;
+      if (tt > 1 && tt < bestT) {
+        hit = null; remoteHit = null; wallHit = false;
+        bestT = tt;
+        hitUp = train.altitude - carAlt;
+        trainHit = { vintage: train.vintage };
+        if (train.vintage) trainCoinHandler(train.point, train.altitude);
+      }
+    }
+    if (!hit && !wallHit && !remoteHit && !trainHit && aimGround) {
       bestT = Math.min(bestT, rayLen);
       hitUp = groundAlt - carAlt;
       groundHit = true;
@@ -857,6 +1031,9 @@ export function vehicleLayer(
         hit.flashUntil = now + 130;
         fx.impact(here, hitAt, bounce, now, { scale: 1 });
       }
+    } else if (trainHit) {
+      // a vintage train gives a coin instead of a scar; a modern one just sparks
+      if (!trainHit.vintage) fx.impact(here, hitAt, bounce, now, { scale: 0.8 });
     } else if (wallHit || groundHit) {
       const normal: Enu = groundHit ? { e: bounce.e * 0.4, n: bounce.n * 0.4, u: 1 } : bounce;
       fx.impact(here, hitAt, normal, now, { scale: groundHit ? 0.7 : 0.9, dust: true });
@@ -947,6 +1124,40 @@ export function vehicleLayer(
     setAim(next) { aim = next; },
     setFiring(value) { firing = value; },
     flashPlayer(duration) { playerFlashUntil = Math.max(playerFlashUntil, performance.now() + duration); },
+    burnPlayer() {
+      const now = performance.now();
+      if (now - hoodSmokeAt < 40 || !map) return;
+      hoodSmokeAt = now;
+      const h = vehicle.heading;
+      fx.altitude = height();
+      fx.burning(vehicle.position, { e: Math.sin(h) * 1.5, n: Math.cos(h) * 1.5, u: 0.95 }, 0.8, now);
+    },
+    enemyShot(fromId, hit) {
+      const target = targets.get(fromId);
+      if (!target || target.destroyed || !map) return;
+      const now = performance.now();
+      const here = vehicle.position;
+      const o = eastNorth(here, target.position);
+      const lift = targetLift(target);
+      const muzzleAt: Enu = { e: o.east + Math.sin(target.heading) * 1.9, n: o.north + Math.cos(target.heading) * 1.9, u: lift + 0.9 };
+      // on us: somewhere on the body; a miss lands a couple of metres to the side
+      const spread = hit ? 0.6 : 2 + Math.random() * 2.5;
+      const side = Math.random() < 0.5 ? -1 : 1;
+      const dx = -muzzleAt.e, dn = -muzzleAt.n;
+      const len = Math.hypot(dx, dn) || 1;
+      const hitAt: Enu = {
+        e: (Math.random() - 0.5) * 0.8 + (-dn / len) * spread * side * (hit ? 0.5 : 1),
+        n: (Math.random() - 0.5) * 0.8 + (dx / len) * spread * side * (hit ? 0.5 : 1),
+        u: hit ? 0.5 + Math.random() * 0.6 : 0.05,
+      };
+      const shotLen = Math.hypot(hitAt.e - muzzleAt.e, hitAt.n - muzzleAt.n, hitAt.u - muzzleAt.u) || 1;
+      const dir: Enu = { e: (hitAt.e - muzzleAt.e) / shotLen, n: (hitAt.n - muzzleAt.n) / shotLen, u: (hitAt.u - muzzleAt.u) / shotLen };
+      fx.altitude = height();
+      fx.muzzle(here, muzzleAt, dir, now);
+      fx.tracer(here, muzzleAt, hitAt, now);
+      if (hit) fx.impact(here, hitAt, { e: -dir.e, n: -dir.n, u: Math.max(0.35, -dir.u) }, now, { scale: 0.9 });
+      else fx.impact(here, hitAt, { e: 0, n: 0, u: 1 }, now, { scale: 0.6, dust: true });
+    },
     get onRemoteHit() { return remoteHitHandler; },
     set onRemoteHit(handler: (id: string) => void) { remoteHitHandler = handler; },
     explodePlayer() {
@@ -978,6 +1189,10 @@ export function vehicleLayer(
     },
     get onTargetHit() { return targetHitHandler; },
     set onTargetHit(handler: (id: string) => void) { targetHitHandler = handler; },
+    get onTrainCoin() { return trainCoinHandler; },
+    set onTrainCoin(handler: (point: Position, altitude: number) => void) { trainCoinHandler = handler; },
+    get onTargetDestroyed() { return targetDestroyedHandler; },
+    set onTargetDestroyed(handler: (id: string, position: Position) => void) { targetDestroyedHandler = handler; },
     setRemotes,
     updateTargets,
     flashTarget(id, duration) {
@@ -1156,7 +1371,18 @@ export function vehicleLayer(
         // stand on the ground under the pickup, not at the car's height
         if (pickup.ground == null) pickup.ground = map.groundAt(pickup.position);
         const lift = (pickup.ground ?? height()) - height();
-        if (pickup.coin) {
+        if (pickup.coin && pickup.drop && now < pickup.drop.at + DROP_MS) {
+          // thrown out of a wreck: rolls out a couple of metres, three bounces getting lower
+          const t = Math.max(0, (now - pickup.drop.at) / DROP_MS);
+          const roll = 1 - (1 - t) ** 3;
+          const { from } = pickup.drop;
+          const at: Position = [from[0] + (pickup.position[0] - from[0]) * roll, from[1] + (pickup.position[1] - from[1]) * roll];
+          const hop = 1.5 * Math.abs(Math.sin(Math.PI * 3 * t)) * (1 - t) ** 1.6
+            // thrown from up on a train car: falls from there first
+            + Math.max(0, (pickup.drop.up ?? 0) - 0.62) * Math.max(0, 1 - t * 3) ** 2;
+          pickup.mesh.position.copy(scenePoint(here, at, heading, lift + 0.62 + hop));
+          pickup.mesh.rotation.y = now * 0.012 + pickup.phase;
+        } else if (pickup.coin) {
           // 1 m coin hovering just above the road, turning about its upright axis
           pickup.mesh.position.copy(scenePoint(here, pickup.position, heading, lift + 0.62 + Math.sin(now * 0.0018 + pickup.phase) * 0.08));
           pickup.mesh.rotation.y = now * 0.0032 + pickup.phase;

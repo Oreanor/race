@@ -154,6 +154,9 @@ export class ThreeMap {
     this.canvas.style.height = '100%';
     this.canvas.style.display = 'block';
     this.canvas.style.touchAction = 'none';
+    // a light grade over the whole picture (world, sky, cars): richer colour, a touch more
+    // contrast. Done by the compositor, so it costs next to nothing
+    this.canvas.style.filter = 'saturate(1.12) contrast(1.06)';
     this.container.appendChild(this.canvas);
     this.markerLayer = document.createElement('div');
     this.markerLayer.style.cssText = 'position:absolute;inset:0;overflow:hidden;pointer-events:none;z-index:2';
@@ -379,7 +382,10 @@ export class ThreeMap {
       const dx = to[0] - from[0], dy = to[1] - from[1];
       const wallT = hit ? ((hit.point[0] - from[0]) * dx + (hit.point[1] - from[1]) * dy) / (dx * dx + dy * dy || 1) : Infinity;
       if (prop.t < wallT) {
-        if (mark) { this.world.topple(prop, performance.now()); this.triggerRepaint(); }
+        if (mark) {
+          if (this.world.topple(prop, performance.now())) this.emit('topple', { point: prop.point });
+          this.triggerRepaint();
+        }
         return { point: prop.point, altitude: prop.altitude };
       }
     }
@@ -394,7 +400,7 @@ export class ThreeMap {
   knockDown(from: [number, number], to: [number, number], altitude: number, halfWidth = 0.9) {
     const prop = this.world.raycastProps(from, altitude + 0.6, to, altitude + 0.6, this.exaggeration, halfWidth);
     if (!prop) return false;
-    this.world.topple(prop, performance.now());
+    if (this.world.topple(prop, performance.now())) this.emit('topple', { point: prop.point });
     this.triggerRepaint();
     return true;
   }

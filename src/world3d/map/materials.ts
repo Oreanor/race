@@ -349,6 +349,8 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
       uMask: { value: mask },
       uGlass0: { value: hex(portuguesePastel.windowColors[0]) },
       uGlass1: { value: hex(portuguesePastel.windowColors[1]) },
+      uGlass2: { value: hex(portuguesePastel.windowColors[2]) },
+      uGlass3: { value: hex(portuguesePastel.windowColors[3]) },
       uFrame: { value: hex(portuguesePastel.frameColor) },
     },
     vertexShader: /* glsl */ `
@@ -385,6 +387,8 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
       uniform sampler2D uMask;
       uniform vec3 uGlass0;
       uniform vec3 uGlass1;
+      uniform vec3 uGlass2;
+      uniform vec3 uGlass3;
       uniform vec3 uFrame;
       uniform vec3 uCar;
       uniform float uXray;
@@ -425,6 +429,99 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
       float box(vec2 p, vec2 h, vec2 aa) {
         vec2 q = smoothstep(h + aa, h - aa, abs(p));
         return q.x * q.y;
+      }
+      // ---- the city's own look (skin 0): one facade archetype per building, all from its seed.
+      // Archetypes: 0 plain stucco (sparse windows), 1 Italian (framed, cornice), 2 Portuguese
+      // (contrasting frames, now and then shutters), 3 southern urban (wide windows, marked
+      // ground floor), 4 old European (tall windows, a belt course).
+      // Window kinds: 0 plain, 1 tall and narrow, 2 framed, 3 shutters, 4 French (to the floor).
+      struct CityWin { vec2 size; vec2 off; float open; float share; float kind; };
+      float cityArch() { float r = seeded(vColor, 31.3); return r < 0.3 ? 0.0 : r < 0.5 ? 1.0 : r < 0.7 ? 2.0 : r < 0.85 ? 3.0 : 4.0; }
+      CityWin cityWindow(vec2 cell, vec2 cellM, vec2 pane, float cols) {
+        float arch = cityArch();
+        float hr = seeded(vColor, 17.9), hk = seeded(vColor, 23.3);
+        CityWin w;
+        // kind: mostly the archetype's own, shutters and French windows only on a few houses
+        float kind = arch == 1.0 ? 2.0 : arch == 4.0 ? 1.0 : 0.0;
+        if (arch == 2.0) kind = hk < 0.3 ? 3.0 : 2.0;
+        if (hk > 0.88 && arch != 0.0) kind = 4.0;
+        // rhythm, symmetric about the middle of the wall: all bays, every other bay with
+        // wider windows, pairs, or groups of three; the plain stucco houses never get all bays
+        float c = min(cell.x, cols - 1.0 - cell.x);
+        float rhythm = arch == 0.0 ? 1.0 + floor(hr * 2.999) : hr < 0.45 ? 0.0 : hr < 0.65 ? 1.0 : hr < 0.85 ? 2.0 : 3.0;
+        if (cols < 3.0) rhythm = 0.0;
+        float open = 1.0, share = 1.0, widen = 1.0;
+        if (rhythm == 1.0) { open = 1.0 - mod(c, 2.0); share = 0.55; widen = 1.3; }
+        else if (rhythm == 2.0) { open = step(0.5, abs(mod(c, 3.0) - 2.0)); share = 0.67; }
+        else if (rhythm == 3.0) { open = mod(c, 4.0) == 3.0 ? 0.0 : 1.0; share = 0.75; }
+        vec2 h = pane * 0.5 * vec2(widen, 1.0);
+        if (kind == 1.0) h *= vec2(0.75, 1.15);
+        if (arch == 3.0) h.x *= 1.25;
+        h = min(h, cellM * vec2(0.42, 0.42));
+        w.off = vec2(0.0);
+        if (kind == 4.0 && cell.y > 0.0) {
+          // French window: from just above the floor to the usual head height
+          float top = h.y, bottom = -cellM.y * 0.5 + 0.12;
+          h.y = (top - bottom) * 0.5;
+          w.off.y = (top + bottom) * 0.5;
+        }
+        w.size = h; w.open = open; w.share = share; w.kind = kind;
+        return w;
+      }
+      // ---- modern skin (1): one building type per house, each with its own window scheme.
+      // Types: 0 residential, 1 office, 2 commercial, 3 apart-hotel, 4 public.
+      // Schemes: 0 vertical, 1 horizontal, 2 pairs, 3 ribbon, 4 groups with blank wall.
+      // Kinds: 0 window, 1 ribbon band, 2 loggia (dark recess), 3 shopfront.
+      struct ModWin { vec2 size; vec2 off; float open; float share; float kind; };
+      // modern glass: neutral graphite / warm greys / grey-olive / near black; blue on ~5% only
+      vec3 modGlass(float r) {
+        if (r < 0.05) return toLinear(vec3(0.37, 0.5, 0.6));
+        float k = floor((r - 0.05) / 0.95 * 5.999);
+        return toLinear(k < 1.0 ? vec3(0.271) : k < 2.0 ? vec3(0.408, 0.4, 0.384) : k < 3.0 ? vec3(0.537, 0.518, 0.482)
+          : k < 4.0 ? vec3(0.702, 0.678, 0.635) : k < 5.0 ? vec3(0.467, 0.498, 0.463) : vec3(0.216, 0.216, 0.208));
+      }
+      // warm facades on ~28% of modern buildings: light ochre, sand, soft terracotta, muted peach
+      vec3 modWarm(float r) { return toLinear(r < 0.25 ? vec3(0.886, 0.769, 0.557) : r < 0.5 ? vec3(0.863, 0.776, 0.627) : r < 0.75 ? vec3(0.827, 0.604, 0.494) : vec3(0.89, 0.725, 0.627)); }
+      float modType() { float r = seeded(vColor, 51.7); return r < 0.4 ? 0.0 : r < 0.6 ? 1.0 : r < 0.75 ? 2.0 : r < 0.9 ? 3.0 : 4.0; }
+      ModWin modernWindow(vec2 cell, vec2 cellM, vec2 pane, float cols) {
+        float type = modType();
+        float hs = seeded(vColor, 61.3), hl = seeded(vColor, 67.9);
+        float scheme;
+        // residential: single windows with wall between (tall, pairs, groups, a few wide);
+        // offices: ribbons on about a third, and then not on every facade
+        if (type == 0.0) scheme = hs < 0.4 ? 0.0 : hs < 0.7 ? 2.0 : hs < 0.9 ? 4.0 : 1.0;
+        else if (type == 1.0) scheme = hs < 0.35 ? 3.0 : hs < 0.7 ? 1.0 : 2.0;
+        else if (type == 2.0) scheme = hs < 0.6 ? 1.0 : 2.0;
+        else if (type == 3.0) scheme = hs < 0.6 ? 0.0 : 2.0;
+        else scheme = 4.0;
+        if (scheme == 3.0 && (cols < 4.0 || seeded(vColor + vNormal * 0.37, 5.3) < 0.4)) scheme = 1.0;
+        float c = min(cell.x, cols - 1.0 - cell.x);   // symmetric about the wall's middle
+        ModWin w;
+        w.off = vec2(0.0); w.open = 1.0; w.share = 1.0; w.kind = 0.0;
+        vec2 h = pane * 0.5;
+        if (scheme == 0.0) h *= vec2(type == 0.0 ? 0.62 : 0.72, 1.12);
+        else if (scheme == 1.0) h *= vec2(1.45, 0.72);
+        else if (scheme == 2.0) { w.open = step(0.5, abs(mod(c, 3.0) - 2.0)); w.share = 0.67; }
+        else if (scheme == 3.0) { h = vec2(cellM.x * 0.5 + 0.02, pane.y * 0.4); w.kind = 1.0; }
+        else { w.open = mod(c, 4.0) < 2.0 ? 1.0 : 0.0; w.share = 0.5; h *= vec2(1.2, 1.0); }
+        if (scheme != 3.0) h.x = min(h.x, cellM.x * 0.45);
+        h.y = min(h.y, cellM.y * 0.44);
+        // short (side) walls: mostly blank, one window column in the middle
+        if (cols <= 3.0 && hl < 0.6 && scheme != 3.0) { w.open *= step(abs(cell.x - (cols - 1.0) * 0.5), 0.1); w.share *= 0.4; }
+        // a loggia instead of the window in some bays of a few residential houses
+        if (type == 0.0 && hl > 0.7 && cell.y > 0.0 && scheme != 3.0 && mod(c, 3.0) == 1.0) {
+          w.kind = 2.0; w.open = 1.0;
+          h = vec2(cellM.x * 0.4, cellM.y * 0.38);
+          w.off.y = -cellM.y * 0.06;
+        }
+        // shops: one big shopfront per bay on the ground floor
+        if (cell.y == 0.0 && (type == 2.0 || (type == 1.0 && hl < 0.5))) {
+          w.kind = 3.0; w.open = 1.0; w.share = 1.0;
+          h = vec2(cellM.x * 0.44, cellM.y * 0.36);
+          w.off.y = -cellM.y * 0.06;
+        }
+        w.size = h;
+        return w;
       }
       // 4×4 ordered dither: screen-door transparency without sorting
       float bayer(vec2 p) {
@@ -502,6 +599,20 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
           if (roofFace) {
             albedo = pickRoof(hb) * (1.0 + (hb2 - 0.5) * 2.0 * uSkinRoofRange);
             if (skin > 2.5) {
+              // victorian roofs: each district (~260 m) keeps one family of three tones, so
+              // neighbours agree without matching; one roof in ten takes any of the eight
+              float fd = seeded(vec3(floor(vWorld.xz / 260.0), 5.0), 2.9);
+              vec3 ra = fd < 0.4 ? vec3(0.333, 0.353, 0.353) : fd < 0.75 ? vec3(0.639, 0.42, 0.337) : vec3(0.463, 0.42, 0.376);
+              vec3 rb = fd < 0.4 ? vec3(0.271, 0.267, 0.255) : fd < 0.75 ? vec3(0.533, 0.31, 0.271) : vec3(0.455, 0.471, 0.427);
+              vec3 rc = fd < 0.4 ? vec3(0.6, 0.576, 0.545) : fd < 0.75 ? vec3(0.463, 0.337, 0.278) : vec3(0.333, 0.353, 0.353);
+              vec3 tone = hb < 0.5 ? ra : hb < 0.8 ? rb : rc;
+              if (hb3 < 0.1) {
+                float k = floor(hb2 * 7.999);
+                tone = k < 1.0 ? vec3(0.333, 0.353, 0.353) : k < 2.0 ? vec3(0.271, 0.267, 0.255) : k < 3.0 ? vec3(0.463, 0.42, 0.376)
+                  : k < 4.0 ? vec3(0.639, 0.42, 0.337) : k < 5.0 ? vec3(0.533, 0.31, 0.271) : k < 6.0 ? vec3(0.463, 0.337, 0.278)
+                  : k < 7.0 ? vec3(0.455, 0.471, 0.427) : vec3(0.6, 0.576, 0.545);
+              }
+              albedo = toLinear(tone) * (1.0 + (hb2 - 0.5) * 2.0 * uSkinRoofRange);
               // slate: courses along the slope, faint, fading out with distance
               float rows = step(0.44, abs(fract(vWorld.y / 0.32) - 0.5));
               albedo *= 1.0 - 0.07 * rows * (1.0 - smoothstep(0.02, 0.06, fwidth(vWorld.y)));
@@ -510,11 +621,27 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
           } else {
             albedo = pickWall(hb) * (1.0 + (hb2 - 0.5) * 2.0 * uSkinOpt.w);
             if (skin < 1.5) {
-              // modern: wood panels on a few buildings, faint panel seams on others
-              if (hb3 < uSkinOpt.y && vWin.x > 0.5 && mod(floor(vFacade.x), 5.0) == 2.0) albedo = toLinear(vec3(0.667, 0.502, 0.38));
-              if (hb2 < uSkinOpt.z) {
-                vec2 seam = abs(fract(wallM / vec2(3.0, 1.5)) - 0.5);
-                albedo *= 1.0 - 0.06 * step(0.485, max(seam.x, seam.y));
+              // modern: one large colour move per facade at most — a vertical section (one or
+              // two wide strips), the top third in another shade, or a marked ground floor
+              if (seeded(vColor, 88.8) < 0.28) albedo = modWarm(seeded(vColor, 91.1));
+              if (vWin.x > 0.5) {
+                float type = modType();
+                float hv = seeded(vColor, 77.7);
+                vec3 sec = slot(0, hb3);
+                float fx = vFacade.x, fy = vFacade.y, cols = vWin.x;
+                if (hv < 0.18 && cols >= 4.0) {
+                  float inside = step(0.0, fx) * step(fx, cols);
+                  float strip = hv < 0.1
+                    ? step(abs(fx - cols * 0.5), 1.0)                                   // the middle two bays
+                    : step(min(fx, cols - fx), 1.0) * inside;                          // both end bays
+                  albedo = mix(albedo, sec, strip);
+                } else if (hv < 0.32 && vWin.y >= 4.0) {
+                  albedo = mix(albedo, sec, step(vWin.y * 0.67, fy));                  // the top third
+                } else if (hv < 0.55 || type == 2.0) {
+                  float detail = 1.0 - smoothstep(0.04, 0.12, fwidth(fy * vWin.w));
+                  if (type == 2.0 || hv < 0.42) albedo = mix(albedo, toLinear(vec3(0.23, 0.24, 0.25)), step(abs(fy - 1.0) * vWin.w, 0.2) * detail);
+                  else if (fy < 1.0) albedo *= 0.8;                                  // a darker ground floor
+                }
               }
             } else if (skin > 2.5) {
               // victorian: five facade families; joints are large and faint, and fade out
@@ -538,11 +665,43 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
             }
           }
         }
+        if (skin < 0.5 && !roofFace && vWin.x > 0.5) {
+          // the city's own look: at most one division per facade, on about a third of the houses -
+          // a cornice under the roof, a belt over the ground floor, a darker plinth band or a
+          // marked ground floor; each archetype has its own
+          float arch = cityArch();
+          float hd = seeded(vColor, 41.9);
+          float fy = vFacade.y;                       // floors from the window grid's foot
+          float detail = 1.0 - smoothstep(0.04, 0.12, fwidth(fy * vWin.w));
+          vec3 trim = toLinear(uFrame) * 0.97;
+          if (hd < 0.34) {
+            float pick = arch == 1.0 ? 0.0 : arch == 4.0 ? 1.0 : arch == 3.0 ? 3.0 : arch == 2.0 ? 2.0 : floor(hd * 11.99);
+            if (pick == 0.0) {
+              // a flat cornice just under the roof (above the top row of windows)
+              float band = step(vWin.y + 0.02, fy) * step(fy, vWin.y + 0.2);
+              albedo = mix(albedo, trim, band * mix(0.6, 1.0, detail));
+            } else if (pick == 1.0) {
+              // a belt course between the ground and first floor
+              float band = step(abs(fy - 1.0) * vWin.w, 0.1);
+              albedo = mix(albedo, trim, band * detail);
+            } else if (pick == 2.0) {
+              // a contrasting plinth band along the foot
+              albedo = mix(albedo, albedo * vec3(0.72, 0.7, 0.68), step(fy * vWin.w, 0.85));
+            } else {
+              // the ground floor marked: a touch darker, with a line above it
+              if (fy < 1.0) albedo *= 0.88;
+              albedo = mix(albedo, trim, step(abs(fy - 1.0) * vWin.w, 0.08) * detail);
+            }
+          }
+        }
         if (vWin.x > 0.5) {
           vec2 uv = vFacade.xy;
           if (uv.x >= 0.0 && uv.x < vWin.x && uv.y >= 0.0 && uv.y < vWin.y) {
             vec3 frame = skin > 0.5 ? skinFrame : toLinear(uFrame);
-            vec3 glass = skin > 0.5 ? skinGlass * 0.85 : toLinear(mix(uGlass0, uGlass1, vFacade.z)) * 0.85;
+            float hg = seeded(vColor, 13.3);
+            vec3 cityGlass = hg < 0.3 ? uGlass0 : hg < 0.6 ? uGlass1 : hg < 0.8 ? uGlass3 : uGlass2;
+            vec3 glass = skin > 0.5 ? skinGlass * 0.85 : toLinear(cityGlass) * 0.85;
+            if (skin > 0.5 && skin < 1.5) glass = modGlass(seeded(vColor, 13.3)) * 0.9;
             vec2 cellM = vWin.zw;                      // cell size in meters
             vec2 p = (fract(uv) - 0.5) * cellM;        // meters from the pane centre
             vec2 aa = max(fwidth(uv) * cellM, vec2(1e-4)) * 0.75;
@@ -578,7 +737,56 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
               if (hb3 < uSkinOpt.y && fract(uv.y) < 0.035) albedo = slot(16, hb);
               f = box(p, vWinSize * 0.47, aa);
             } else if (skin > 0.5) {
-              f = box(p, vWinSize * 0.48, aa); // thin frames
+              ModWin mw = modernWindow(floor(uv), cellM, vWinSize, vWin.x);
+              vec2 q = p - mw.off;
+              g = box(q, mw.size, aa) * mw.open;
+              f = mw.kind == 0.0 ? box(q, mw.size + 0.04, aa) * mw.open : 0.0; // slim frames on plain windows
+              if (mw.kind == 2.0) {
+                // loggia: a dark recess with a light slab and a railing line at its foot
+                vec3 recess = albedo * 0.3;
+                float slab = step(q.y, -mw.size.y + 0.1);
+                float rail = step(abs(q.y + mw.size.y - 1.0), 0.035);
+                glass = mix(mix(recess, albedo * 0.9, slab), frame, rail);
+              } else if (mw.kind == 3.0) {
+                glass *= 0.62;                                   // shopfronts read darker
+              }
+              // a rare balcony on residential houses: a slab and a simple railing, middle bay only
+              float hbal = seeded(vColor, 71.1);
+              if (modType() == 0.0 && hbal < 0.1 && floor(uv.y) > 0.0 && mw.kind == 0.0 && mw.open > 0.5
+                  && abs(floor(uv.x) - (vWin.x - 1.0) * 0.5) < 0.6) {
+                vec2 bal = vec2(mw.size.x + 0.35, 0.07);
+                float plate = box(q - vec2(0.0, -mw.size.y - 0.05), bal, aa);
+                float railing = box(q - vec2(0.0, -mw.size.y + 0.9), vec2(bal.x, 0.03), aa)
+                  + box(vec2(abs(q.x) - bal.x, q.y + mw.size.y - 0.45), vec2(0.03, 0.47), aa);
+                albedo = mix(albedo, frame, max(plate, min(1.0, railing)));
+                glass = mix(glass, frame, min(1.0, railing));
+              }
+            } else {
+              // the city's own look: the building's archetype sets size, rhythm and kind
+              CityWin cw = cityWindow(floor(uv), cellM, vWinSize, vWin.x);
+              vec2 q = p - cw.off;
+              g = box(q, cw.size, aa) * cw.open;
+              float kind = cw.kind;
+              float hk = seeded(vColor, 23.3);
+              // frames: framed windows get a broad light or dark surround, the rest a slim one
+              if (kind == 2.0) {
+                f = box(q, cw.size + 0.11, aa) * cw.open;
+                if (hk < 0.12) frame = albedo * 0.55;
+              } else {
+                f = box(q, cw.size + 0.045, aa) * cw.open;
+              }
+              if (kind == 3.0) {
+                // shutters: two flat coloured leaves beside the pane
+                vec3 leaf = toLinear(hk < 0.075 ? vec3(0.37, 0.48, 0.35) : hk < 0.15 ? vec3(0.31, 0.42, 0.49) : hk < 0.22 ? vec3(0.48, 0.34, 0.25) : vec3(0.55, 0.54, 0.37));
+                float sw = cw.size.x * 0.55;
+                float leaves = box(vec2(abs(q.x) - (cw.size.x + 0.06 + sw), q.y), vec2(sw, cw.size.y + 0.04), aa) * cw.open;
+                albedo = mix(albedo, leaf, leaves);
+              }
+              if (kind == 4.0 && floor(uv.y) > 0.0) {
+                // French window: a thin dark railing across its lower part
+                float rail = step(abs(q.y + cw.size.y - 0.95), 0.035) + step(abs(q.y + cw.size.y - 0.08), 0.03);
+                glass = mix(glass, toLinear(vec3(0.16, 0.17, 0.18)), min(1.0, rail));
+              }
             }
             vec3 crack = cracked(uv, cellM, vWinSize * 0.46, normalize(vNormal));
             broken = crack.z * g;
@@ -590,6 +798,15 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
             // far away a cell covers few pixels: use its average colour (no moiré)
             float fa = clamp(vWinSize.x * vWinSize.y / (cellM.x * cellM.y), 0.0, 1.0);
             float ga = fa * 0.8464;
+            if (skin < 0.5) {
+              CityWin cwa = cityWindow(floor(uv), cellM, vWinSize, vWin.x);
+              ga = clamp(4.0 * cwa.size.x * cwa.size.y / (cellM.x * cellM.y), 0.0, 1.0) * cwa.share;
+              fa = min(1.0, ga * 1.25);
+            } else if (skin < 1.5) {
+              ModWin mwa = modernWindow(floor(uv), cellM, vWinSize, vWin.x);
+              ga = clamp(4.0 * mwa.size.x * mwa.size.y / (cellM.x * cellM.y), 0.0, 1.0) * mwa.share;
+              fa = min(1.0, ga * 1.1);
+            }
             vec3 average = albedo * (1.0 - fa) + frame * (fa - ga) + glass * ga;
             float far = smoothstep(0.18, 0.45, max(fwidth(uv.x), fwidth(uv.y)));
             albedo = mix(sharp, average, far);
@@ -679,11 +896,11 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
           mirror *= 1.0 - broken;
         }
         vec3 n = normalize(vNormal);
-        // flat, comic-like light; by day it matches the old fixed look exactly
+        // comic-like light, but sunlit walls stand clearly apart from the shaded ones
         float d = max(dot(n, uSun), 0.0);
         vec3 light = n.y > 0.5
           ? (uAmbient + uSunColor * d) / 1.2
-          : (uAmbient + uSunColor * 0.22 * d) / 0.84;
+          : (uAmbient + uSunColor * 0.5 * d) / 0.84;
         // street light reaches the lower floors of the walls, not the roofs
         vec3 color = albedo * (light + headlight(vWorld, n) + lampLight() * (n.y > 0.5 ? 0.0 : 1.0 - smoothstep(1.5, 9.0, vHeight)));
         if (mirror > 0.0) {
@@ -709,8 +926,18 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
             vec2 p = (fract(uv) - 0.5) * vWin.zw;
             vec2 aa = max(fwidth(uv) * vWin.zw, vec2(1e-4)) * 0.75;
             float g = box(p, vWinSize * 0.46, aa);
+            float full = vWinSize.x * vWinSize.y / (vWin.z * vWin.w) * 0.85;
+            if (skin < 0.5) {
+              CityWin cw = cityWindow(cell, vWin.zw, vWinSize, vWin.x);
+              g = box(p - cw.off, cw.size, aa) * cw.open;
+              full = 4.0 * cw.size.x * cw.size.y / (vWin.z * vWin.w) * cw.share;
+            } else if (skin < 1.5) {
+              ModWin mw = modernWindow(cell, vWin.zw, vWinSize, vWin.x);
+              g = box(p - mw.off, mw.size, aa) * mw.open * (mw.kind == 2.0 ? 0.0 : 1.0);
+              full = 4.0 * mw.size.x * mw.size.y / (vWin.z * vWin.w) * mw.share;
+            }
             float far = smoothstep(0.18, 0.45, max(fwidth(uv.x), fwidth(uv.y)));
-            float share = mix(g, vWinSize.x * vWinSize.y / (vWin.z * vWin.w) * 0.85, far);
+            float share = mix(g, full, far);
             vec3 warm = mix(vec3(1.0, 0.72, 0.38), vec3(1.0, 0.86, 0.6), fract(h * 7.0));
             if (skin > 0.5) warm = mix(uSkinColors[20], uSkinColors[21], fract(h * 7.0));
             float litShare = skin > 0.5 ? uSkinOpt.x : 0.38;

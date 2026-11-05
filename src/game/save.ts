@@ -10,6 +10,10 @@ export type GameSave = {
   place: { name: string; country: string; coords: [number, number] };
   /** road coin ids already taken — stay gone after reload */
   collected?: string[];
+  /** owed to the bank */
+  loan?: number;
+  /** ids of the cars we own */
+  garage?: string[];
 };
 
 const STORE = 'cityRider.save';
