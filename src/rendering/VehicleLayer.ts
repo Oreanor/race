@@ -15,7 +15,7 @@ export type TargetVehicle = { id: string; driver: string; car: Car; position: Po
 export type RemoteCar = { id: string; car: Car; position: Position; heading: number; altitude: number; pitch: number; roll: number; hp?: number };
 export type TargetHealth = { id: string; driver: string; color: string; hp: number; maxHp: number };
 /** `drop`: a coin thrown out of a wreck — it flies from `from` to `position` from time `at`, bouncing */
-export type PickupVisual = { id: string; position: Position; color: string; kind?: 'ball' | 'coin' | 'cash'; drop?: { from: Position; at: number; up?: number } };
+export type PickupVisual = { id: string; position: Position; color: string; kind?: 'ball' | 'coin' | 'cash' | 'box'; drop?: { from: Position; at: number; up?: number } };
 
 /** how long a coin from a wreck bounces and rolls before it lies still (ms) */
 export const DROP_MS = 1300;
@@ -77,7 +77,8 @@ export type VehicleSceneLayer = MapLayer & {
   /** other players, every frame; cars come and go with the list */
   setRemotes: (cars: RemoteCar[]) => void;
   /** our bullet hit another player's car */
-  onRemoteHit: (id: string) => void;
+  /** true when the hit counts (no damage, e.g. on a player busy on a mission: no red flash) */
+  onRemoteHit: (id: string) => boolean;
   /** our own car blows up (another player got us): a burst on the spot */
   explodePlayer: () => void;
   updateTargets: (vehicles: TargetVehicle[]) => void;
@@ -449,8 +450,8 @@ export function vehicleLayer(
     for (const pickup of next) {
       if (pickups.has(pickup.id)) continue;
       // coins and cash bundles share the hover / bounce; balls are the old score orbs
-      const coin = pickup.kind === 'coin' || pickup.kind === 'cash';
-      const mesh = pickup.kind === 'cash' ? makeCash() : coin ? makeCoin() : new THREE.Mesh(pickupGeometry, pickupMaterial(pickup.color));
+      const coin = pickup.kind === 'coin' || pickup.kind === 'cash' || pickup.kind === 'box';
+      const mesh = pickup.kind === 'cash' ? makeCash() : pickup.kind === 'box' ? makeBox() : coin ? makeCoin() : new THREE.Mesh(pickupGeometry, pickupMaterial(pickup.color));
       mesh.frustumCulled = false;
       mesh.renderOrder = 8;
       scene.add(mesh);
@@ -463,6 +464,15 @@ export function vehicleLayer(
         drop: pickup.drop ? { from: [...pickup.drop.from] as Position, at: pickup.drop.at, up: pickup.drop.up } : undefined,
       });
     }
+  }
+
+  /** A cardboard box with a strip of tape over the top (the box hunt). */
+  function makeBox() {
+    const group = new THREE.Group();
+    const box = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.7, 0.9), new THREE.MeshLambertMaterial({ color: '#b8742a' }));
+    const tape = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.72, 0.92), new THREE.MeshLambertMaterial({ color: '#e8d8a8' }));
+    group.add(box, tape);
+    return group;
   }
 
   /** A bundle of banknotes: a green brick with a paper band round its middle. */
@@ -646,7 +656,7 @@ export function vehicleLayer(
   // ---- other players ------------------------------------------------------
   const remotes = new Map<string, { spec: RemoteCar; root: THREE.Group; body: THREE.Group; beam: THREE.Mesh; path: string; flashUntil: number; flashing: boolean }>();
   /** set by the game: our bullet hit another player's car */
-  let remoteHitHandler: (id: string) => void = () => {};
+  let remoteHitHandler: (id: string) => boolean = () => false;
   /** set by the game: our bullet hit a target */
   let targetHitHandler: (id: string) => void = () => {};
   let targetDestroyedHandler: (id: string, position: Position) => void = () => {};
@@ -885,6 +895,23 @@ export function vehicleLayer(
     // 2. The bullet leaves our gun (the car's nose, 0.85 m up) for that point and flies on
     //    past it: whatever stands between the car and the aim takes it.
     const gunEast = Math.sin(heading) * 1.7, gunNorth = Math.cos(heading) * 1.7;
+
+    // Spread: the farther the aim, the wider the bullets scatter round it. A car is ~2 m
+    // across: up close every shot lands, at 80 m nearly all do, at 150 m about two in three.
+    {
+      const d = Math.hypot(aimE - gunEast, aimN - gunNorth);
+      const scatter = 0.1 + d * 0.008 + d * d * 0.00005;
+      // two randoms averaged: most shots near the middle, a few wide
+      const r = scatter * (Math.random() + Math.random());
+      const angle = Math.random() * Math.PI * 2;
+      const side = d > 1e-3 ? { e: -(aimN - gunNorth) / d, n: (aimE - gunEast) / d } : { e: 1, n: 0 };
+      // on the ground the scatter lies flat on it (short and long), on a car or wall it goes up and down
+      const across = Math.cos(angle) * r, other = Math.sin(angle) * r * 0.5;
+      aimE += side.e * across;
+      aimN += side.n * across;
+      if (aimGround) { aimE += side.n * other; aimN -= side.e * other; } else aimU += other;
+    }
+    const groundMark = aimGround ? offsetPosition(here, aimE, aimN) as Position : aim.ground;
     const cam = { position: offsetPosition(here, gunEast, gunNorth) as Position, altitude: carAlt + 0.85, east: gunEast, north: gunNorth, up: 0.85 };
     const dx = aimE - cam.east;
     const dy = aimU - cam.up;
@@ -978,7 +1005,7 @@ export function vehicleLayer(
       bestT = Math.min(bestT, rayLen);
       hitUp = groundAlt - carAlt;
       groundHit = true;
-      markGround(aim.ground, groundAlt);
+      markGround(groundMark, groundAlt);
     }
 
     const end = offsetPosition(here, cam.east + ux * bestT, cam.north + uz * bestT);
@@ -1019,9 +1046,8 @@ export function vehicleLayer(
     tracer.visible = false; // the particle streak replaces the 1px line
     if (remoteHit) {
       fx.impact(here, hitAt, bounce, now, { scale: 1 });
-      remoteHitHandler(remoteHit);
       const struck = remotes.get(remoteHit);
-      if (struck) struck.flashUntil = now + 130;
+      if (remoteHitHandler(remoteHit) && struck) struck.flashUntil = now + 130;
     } else if (hit) {
       targetHitHandler(hit.id);
       hit.hp = Math.max(0, hit.hp - targetDamagePerShot);
@@ -1159,7 +1185,7 @@ export function vehicleLayer(
       else fx.impact(here, hitAt, { e: 0, n: 0, u: 1 }, now, { scale: 0.6, dust: true });
     },
     get onRemoteHit() { return remoteHitHandler; },
-    set onRemoteHit(handler: (id: string) => void) { remoteHitHandler = handler; },
+    set onRemoteHit(handler: (id: string) => boolean) { remoteHitHandler = handler; },
     explodePlayer() {
       const here = vehicle.position;
       const now = performance.now();

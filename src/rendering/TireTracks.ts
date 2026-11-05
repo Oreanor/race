@@ -4,6 +4,8 @@ import { ribbonEdges } from '@/game/trailGeometry';
 
 type Sample = { position: Position; elevation: number; stroke: number; width: number };
 const M=111319.49;
+/** how far behind the car the tracks reach (m), and the points kept per wheel (one per 0.35 m or more) */
+const LENGTH=56, KEEP=192;
 function local(origin: Position,p: Position){return {x:(p[0]-origin[0])*M*Math.cos(origin[1]*Math.PI/180),y:(p[1]-origin[1])*M};}
 export class TireTracks {
   private samples: Sample[][]=[[],[]];
@@ -14,9 +16,9 @@ export class TireTracks {
   private material=new THREE.MeshBasicMaterial({color:'#302e2a',vertexColors:true,transparent:true,depthWrite:false,side:THREE.DoubleSide,polygonOffset:true,polygonOffsetFactor:-6,polygonOffsetUnits:-12});
   private meshes=[0,1].map(()=>{
     const geo=new THREE.BufferGeometry();
-    geo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(96*2*3),3).setUsage(THREE.DynamicDrawUsage));
-    geo.setAttribute('color',new THREE.BufferAttribute(new Float32Array(96*2*4),4).setUsage(THREE.DynamicDrawUsage));
-    geo.setIndex(new THREE.BufferAttribute(new Uint16Array(95*6),1));geo.setDrawRange(0,0);
+    geo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(KEEP*2*3),3).setUsage(THREE.DynamicDrawUsage));
+    geo.setAttribute('color',new THREE.BufferAttribute(new Float32Array(KEEP*2*4),4).setUsage(THREE.DynamicDrawUsage));
+    geo.setIndex(new THREE.BufferAttribute(new Uint16Array((KEEP-1)*6),1));geo.setDrawRange(0,0);
     const mesh=new THREE.Mesh(geo,this.material);mesh.frustumCulled=false;mesh.renderOrder=1;return mesh;
   });
   constructor(scene: THREE.Scene){for(const mesh of this.meshes)scene.add(mesh);}
@@ -32,14 +34,15 @@ export class TireTracks {
         const side=(wheel===0?-0.85:0.85)*scale,back=carLength*0.31*scale;
         const position=offsetPosition(here,-Math.sin(heading)*back+Math.cos(heading)*side,-Math.cos(heading)*back-Math.sin(heading)*side);
         const elevation=ground(position);
-        if(elevation==null){this.stroke++;continue;}
+        // off the ground (a jump) leaves no mark: the track breaks and starts again on landing
+        if(elevation==null||carAltitude-elevation>0.4){this.stroke++;continue;}
         const list=this.samples[wheel];list.push({position,elevation,stroke:this.stroke,width:0.13*scale});
-        if(list.length>96)list.shift();
+        if(list.length>KEEP)list.shift();
       }
     }
     for(let wheel=0;wheel<2;wheel++){
       const list=this.samples[wheel];
-      while(list.length&&Math.hypot(...Object.values(local(here,list[0].position)))>14*scale)list.shift();
+      while(list.length&&Math.hypot(...Object.values(local(here,list[0].position)))>LENGTH*scale)list.shift();
       const mesh=this.meshes[wheel],geo=mesh.geometry,positions=geo.getAttribute('position') as THREE.BufferAttribute,colors=geo.getAttribute('color') as THREE.BufferAttribute,index=geo.index!;
       let count=0;
       for(let start=0;start<list.length;){
@@ -48,7 +51,7 @@ export class TireTracks {
         const edges=ribbonEdges(centers,list[start].width);
         for(let j=0;j<edges.length;j++){
           const sample=list[start+j],dist=Math.hypot(centers[j].x,centers[j].y);
-          const fade=Math.max(0,Math.min(1,(14*scale-dist)/(8*scale)));
+          const fade=Math.max(0,Math.min(1,(LENGTH*scale-dist)/(LENGTH*0.57*scale)));
           for(let side=0;side<2;side++){
             const p=edges[j][side],v=(start+j)*2+side;
             positions.setXYZ(v,(p.y*Math.sin(heading)-p.x*Math.cos(heading))/scale,(sample.elevation+0.19-carAltitude)/scale,(p.y*Math.cos(heading)+p.x*Math.sin(heading))/scale);

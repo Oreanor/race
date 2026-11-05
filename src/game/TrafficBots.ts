@@ -435,6 +435,10 @@ export type TrafficBot = {
   repathAt: number;
   goal: Position | null;
   money: number;
+  /** traffic: how long somebody has stood in its way (s) */
+  blockedFor?: number;
+  /** driving straight at something it can see, off the roads */
+  cutting?: boolean;
   mood: BotMood;
   huntId: string | null;
   huntRange: number;
@@ -629,9 +633,57 @@ export function advanceTrafficBot(
   network: TrafficRoadNetwork,
   config: Parameters<VehicleController['step']>[2],
   peers: TrafficPeer[] = [],
+  /** traffic gives way to these (players' cars): brakes, and after a moment goes round */
+  obstacles: Position[] = [],
+  /** in plain sight: drive straight here across lawns, squares and yards, not round by the roads */
+  direct: Position | null = null,
 ) {
   steerTrafficBot(bot, network, peers);
-  bot.controller.step(dt, trafficBotKeys(bot, network), config);
+  if (direct) {
+    bot.route = [[...bot.position] as Position, [...direct] as Position];
+    bot.routeIndex = 1;
+    bot.repathAt = performance.now() + 300;
+    bot.cutting = true;
+  } else if (bot.cutting) {
+    // lost sight: back onto the roads
+    bot.cutting = false;
+    bot.route = [];
+    bot.routeIndex = 1;
+  }
+  let keys = trafficBotKeys(bot, network);
+  let step = config;
+  const block = bot.mood === 'hunt' ? null : inTheWay(bot, obstacles);
+  if (block) {
+    bot.blockedFor = (bot.blockedFor ?? 0) + dt;
+    if (bot.blockedFor < 1.5) {
+      // brake to a stop, never back into the car behind
+      keys = new Set(bot.controller.speed > 0.4 ? ['KeyS'] : []);
+    } else {
+      // creep round it on the freer side
+      keys = new Set(['KeyW', block.side > 0 ? 'KeyA' : 'KeyD']);
+      step = { ...config, maxSpeed: Math.min(config.maxSpeed, 4.5) };
+    }
+  } else if (bot.blockedFor) bot.blockedFor = Math.max(0, bot.blockedFor - dt * 2);
+  bot.controller.step(dt, keys, step);
   bot.position = [...bot.controller.position];
   bot.heading = bot.controller.heading;
+}
+
+/**
+ * The nearest of `obstacles` standing in the bot's way: up to ~14 m ahead, within its
+ * lane. `side` > 0: it is to the right of the bot's line (so go round on the left).
+ */
+function inTheWay(bot: TrafficBot, obstacles: Position[]) {
+  let best: { ahead: number; side: number } | null = null;
+  const h = bot.heading;
+  const kx = METERS_PER_DEGREE * Math.cos(bot.position[1] * Math.PI / 180);
+  for (const o of obstacles) {
+    const e = (o[0] - bot.position[0]) * kx, n = (o[1] - bot.position[1]) * METERS_PER_DEGREE;
+    const ahead = e * Math.sin(h) + n * Math.cos(h);
+    const side = e * Math.cos(h) - n * Math.sin(h);
+    const reach = 6 + Math.max(0, bot.controller.speed) * 0.9;
+    if (ahead < 0.5 || ahead > Math.min(14, reach) || Math.abs(side) > 2.6) continue;
+    if (!best || ahead < best.ahead) best = { ahead, side };
+  }
+  return best;
 }

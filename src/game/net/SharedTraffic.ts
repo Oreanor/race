@@ -230,7 +230,8 @@ export class SharedTraffic {
         hp: Math.round(layer?.targetHp(p.id) ?? 1000), pk: 1 as const,
       })),
     ];
-    this.host.send(cars);
+    // the server drops the connection on an oversized message
+    this.host.send(cars.slice(0, TRAFFIC_MAX));
   }
 
   /** Another player's traffic, as they last sent it. */
@@ -286,7 +287,8 @@ export class SharedTraffic {
     for (const d of this.driven) {
       if (d.deadAt) continue;
       const config = { ...vehicleConfig, acceleration: Math.min(d.bot.car.acceleration, 9), maxSpeed: Math.min(d.bot.car.maxSpeed, TOP_SPEED) };
-      advanceTrafficBot(d.bot, dt, this.host.network, config);
+      // give way to us and the other players: brake, then go round — no ramming
+      advanceTrafficBot(d.bot, dt, this.host.network, config, [], [here, ...this.host.others().map((p) => p.position)]);
     }
   }
 

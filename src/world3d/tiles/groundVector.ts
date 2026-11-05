@@ -401,6 +401,22 @@ export function buildGround(vt: VectorTile, span: number, grid: number, dem: Flo
 
   flattenUnderRoads(H, grid, onRoad, wet);
 
+  // ---- the cells a shoreline runs through, with the shore segments in each ----
+  // The 20 m grid can't follow a bank: a slope between a dry and a wet grid point
+  // meets the water somewhere inside the cell, in teeth along the diagonals. Those
+  // cells are cut along the shoreline instead (below), the water side kept under it.
+  const shoreCells = new Map<number, [Pt, Pt][]>();
+  for (const w of waters) for (const ring of w.rings) for (let r = 0; r < ring.length; r++) {
+    const a = ring[r], b = ring[(r + 1) % ring.length];
+    const i0 = Math.max(0, Math.floor(Math.min(a[0], b[0]) / cs)), i1 = Math.min(grid - 1, Math.floor(Math.max(a[0], b[0]) / cs));
+    const j0 = Math.max(0, Math.floor(Math.min(a[1], b[1]) / cs)), j1 = Math.min(grid - 1, Math.floor(Math.max(a[1], b[1]) / cs));
+    for (let cj = j0; cj <= j1; cj++) for (let ci = i0; ci <= i1; ci++) {
+      const key = cj * grid + ci;
+      const list = shoreCells.get(key);
+      if (list) list.push([a, b]); else shoreCells.set(key, [[a, b]]);
+    }
+  }
+
   // ---- terrain: grid with a stony bank colour next to water ----------------
   const terrain = new Builder();
   {
@@ -418,6 +434,7 @@ export function buildGround(vt: VectorTile, span: number, grid: number, dem: Flo
       colors.push(c[0], c[1], c[2]);
     }
     for (let j = 0; j < grid; j++) for (let i = 0; i < grid; i++) {
+      if (shoreCells.has(j * grid + i)) continue; // cut along the shore below
       const a = j * n + i, b = a + 1, c = a + n, d = c + 1;
       index.push(a, c, b, b, c, d);
     }
@@ -479,6 +496,105 @@ export function buildGround(vt: VectorTile, span: number, grid: number, dem: Flo
     return upper ? hd + (hc - hd) * (1 - u) + (hb - hd) * (1 - v) : ha + (hb - ha) * u + (hc - ha) * v;
   };
 
+  // ---- shore cells: each terrain triangle split along the shore lines in it -----
+  // Every piece then lies wholly on land or wholly in the water: land keeps the
+  // terrain, the water side is held just under the surface, and where the bank
+  // stands higher a wall drops from it straight to the water, right on the shoreline.
+  {
+    const level = (x: number, z: number) => {
+      let out = Number.NaN;
+      for (const w of waters) {
+        const [x0, z0, x1, z1] = w.box;
+        if (x < x0 || x > x1 || z < z0 || z > z1 || !inside(x, z, w.rings)) continue;
+        out = Number.isFinite(out) ? Math.max(out, w.level) : w.level;
+      }
+      return out;
+    };
+    const area = (poly: Pt[]) => {
+      let sum = 0;
+      for (let i = 0; i < poly.length; i++) { const p = poly[i], q = poly[(i + 1) % poly.length]; sum += p[0] * q[1] - q[0] * p[1]; }
+      return Math.abs(sum) / 2;
+    };
+    const tiny = cs * cs * 1e-6;
+    const split = (pieces: Pt[][], [p, q]: [Pt, Pt]) => {
+      const nx = p[1] - q[1], nz = q[0] - p[0], len = Math.hypot(nx, nz);
+      if (len < 1e-9) return pieces;
+      const a = nx / len, b = nz / len, c = -(a * p[0] + b * p[1]);
+      const out: Pt[][] = [];
+      for (const piece of pieces) {
+        const one = clipHalf(piece, a, b, c), two = clipHalf(piece, -a, -b, -c);
+        if (one.length >= 3 && area(one) > tiny) out.push(one);
+        if (two.length >= 3 && area(two) > tiny) out.push(two);
+      }
+      return out;
+    };
+    const { positions, ground, colors, index } = terrain;
+    const bank = hex(BANK);
+    const vertex = (p: Pt, h: number) => {
+      positions.push(p[0], 0, p[1]);
+      ground.push(h);
+      colors.push(bank[0], bank[1], bank[2]);
+      return positions.length / 3 - 1;
+    };
+    const nudge = cs * 1e-3;
+    // the land side sees no river bed: a wet grid point stands at the height of the dry
+    // ones round it, so the bank runs level to the shoreline and drops there in one wall
+    // (not a slope into the water first, and a second step at the shore)
+    const dry = Float32Array.from(H);
+    for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+      const k = j * n + i;
+      if (!wet[k]) continue;
+      let sum = 0, count = 0;
+      for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+        const ii = i + di, jj = j + dj;
+        if (ii < 0 || jj < 0 || ii >= n || jj >= n || wet[jj * n + ii]) continue;
+        sum += H[jj * n + ii];
+        count++;
+      }
+      const surface = Number.isFinite(waterLevel[k]) ? waterLevel[k] : H[k];
+      dry[k] = count ? Math.max(sum / count, surface) : surface;
+    }
+    const dryPlane = (p: Pt, ci: number, cj: number, upper: boolean) => {
+      const u = p[0] / cs - ci, v = p[1] / cs - cj;
+      const ha = dry[cj * n + ci], hb = dry[cj * n + ci + 1], hc = dry[(cj + 1) * n + ci], hd = dry[(cj + 1) * n + ci + 1];
+      return upper ? hd + (hc - hd) * (1 - u) + (hb - hd) * (1 - v) : ha + (hb - ha) * u + (hc - ha) * v;
+    };
+    for (const [key, segments] of shoreCells) {
+      const ci = key % grid, cj = Math.floor(key / grid), x0 = ci * cs, z0 = cj * cs;
+      // the two triangles of the cell, wound as in the grid index above
+      const halves: [Pt[], boolean][] = [
+        [[[x0, z0], [x0, z0 + cs], [x0 + cs, z0]], false],
+        [[[x0 + cs, z0], [x0, z0 + cs], [x0 + cs, z0 + cs]], true],
+      ];
+      for (const [triangle, upper] of halves) {
+        let pieces: Pt[][] = [triangle];
+        for (const segment of segments) pieces = split(pieces, segment);
+        for (const piece of pieces) {
+          let cx = 0, cz = 0;
+          for (const p of piece) { cx += p[0]; cz += p[1]; }
+          const surface = level(cx / piece.length, cz / piece.length);
+          const wet = Number.isFinite(surface);
+          const land = piece.map((p) => dryPlane(p, ci, cj, upper));
+          const heights = wet ? piece.map((p) => Math.min(plane(p, ci, cj, upper), surface - 0.05)) : land;
+          const ids = piece.map((p, i) => vertex(p, heights[i]));
+          for (let i = 1; i + 1 < ids.length; i++) index.push(ids[0], ids[i], ids[i + 1]);
+          if (!wet) continue;
+          // a wall where this water piece meets land standing above it
+          for (let i = 0; i < piece.length; i++) {
+            const k = (i + 1) % piece.length, p = piece[i], q = piece[k];
+            if (land[i] - heights[i] < 0.02 && land[k] - heights[k] < 0.02) continue;
+            const dx = q[0] - p[0], dz = q[1] - p[1], len = Math.hypot(dx, dz);
+            if (len < 1e-9) continue;
+            const mx = (p[0] + q[0]) / 2, mz = (p[1] + q[1]) / 2, ox = -dz / len * nudge, oz = dx / len * nudge;
+            if (Number.isFinite(level(mx + ox, mz + oz)) && Number.isFinite(level(mx - ox, mz - oz))) continue; // water on both sides
+            const a = vertex(p, heights[i]), b = vertex(q, heights[k]), c = vertex(p, land[i]), d = vertex(q, land[k]);
+            index.push(a, b, c, b, d, c, a, c, b, b, c, d);
+          }
+        }
+      }
+    }
+  }
+
   // ---- land-use overlays, bottom to top ------------------------------------
   const layers: GroundMesh[] = [];
   for (const name of ['landuse', 'landcover', 'park']) {
@@ -506,10 +622,8 @@ export function buildGround(vt: VectorTile, span: number, grid: number, dem: Flo
     }
     const shoreOf = (p: Pt) => shore.distance(p[0], p[1]) * metersScale;
     const rgb: Rgb = w.pool ? [1, 0, 0] : [0, 0, 0]; // kind in the colour channel
-    // the surface is flat at the water level: where the ground in a terrain triangle rises above
-    // it (banks finer than the grid) the water follows it at most a hand's width up, then the
-    // ground comes out of the water instead of the river rising over it in humps
-    drape(w.rings, (piece, ci, cj, upper) => water.polygon(piece.map((p) => [p[0], p[1], Math.max(w.level, Math.min(plane(p, ci, cj, upper) + 0.05, w.level + 0.15))]), rgb, piece.map(shoreOf)));
+    // flat at the water level: the terrain is cut along the shore and kept under it
+    drape(w.rings, (piece) => water.polygon(piece.map((p) => [p[0], p[1], w.level]), rgb, piece.map(shoreOf)));
   });
 
   return { heights: H, waterLevel, terrain: terrain.done(), layers, water: water.done(true) };

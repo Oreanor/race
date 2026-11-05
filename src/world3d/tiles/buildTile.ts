@@ -735,8 +735,9 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
   // roof lip only where the wall really reaches its own top.
   if (faces.length) {
     const lip = 0.08 * toMerc;
-    // tolerance ~6 cm in tile units (mercator meters)
-    for (const { wall: face, t0, t1 } of cutCoveredWalls(faces, 0.06 * toMerc)) {
+    // walls up to 40 cm apart are one wall: OSM neighbours rarely share their vertices
+    // exactly, and two faces that close flicker through each other from any distance
+    for (const { wall: face, t0, t1 } of cutCoveredWalls(faces, 0.4 * toMerc)) {
       const chunk = face.chunk;
       chunk.cx = face.cx;
       chunk.cz = face.cz;

@@ -6,7 +6,7 @@ import { NetHud, type NetFeed } from './NetHud';
 import ServerStatus from './ServerStatus';
 import { findPlaces } from '@/game/findPlaces';
 import { healthColor } from '@/game/health';
-import { GameEngine, type BountyOffer, type DealerOffer, type EventResult, type FuelHud, type HudParticipant, type PlayerCarry, type BankOffer, type ServiceOffer, type Settings, type Theme, type TravelOffer } from '@/game/GameEngine';
+import { GameEngine, type BountyOffer, type DealerOffer, type EventOffer, type EventResult, type FuelHud, type HudParticipant, type PlayerCarry, type BankOffer, type ServiceOffer, type Settings, type Theme, type TravelOffer } from '@/game/GameEngine';
 import { EVACUATION_COST } from '@/game/Fuel';
 import { clearSave, loadSave, writeSave, type GameSave } from '@/game/save';
 import { formatNumber, getLang, LANGS, setLang, t, type Lang, type MessageKey } from '@/i18n';
@@ -242,7 +242,7 @@ export default function Game() {
   const [looking, setLooking] = useState(false);
   const [searchFailed, setSearchFailed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [eventOffer, setEventOffer] = useState<'arena' | 'race' | null>(null);
+  const [eventOffer, setEventOffer] = useState<EventOffer | null>(null);
   const [eventResult, setEventResult] = useState<EventResult | null>(null);
   const [status, setStatus] = useState(() => t('loading.city'));
   const [statusToast, setStatusToast] = useState('');
@@ -426,7 +426,7 @@ export default function Game() {
       };
       game.onBountyOffer = (offer) => setBountyOffer(offer);
       game.onSpawnSet = (pos) => setSpawnPin(pos);
-      game.onEventOffer = (kind) => setEventOffer(kind);
+      game.onEventOffer = (offer) => setEventOffer(offer);
       game.onEventResult = (result) => setEventResult(result);
       game.onFuel = (fuel) => fuelListener.current?.(fuel);
       game.onOnline = (players) => netFeed.current?.online(players);
@@ -916,19 +916,27 @@ export default function Game() {
 
       {eventOffer && !settingsOpen && !eventResult && (
         <Dialog
-          title={eventOffer === 'arena' ? t('event.arena') : t('event.race')}
+          title={t(`event.${eventOffer.kind}`)}
           actions={<>
-            <button type="button" className="ui-btn" onClick={() => engine.current?.acceptEvent()}>{t('event.play')}</button>
+            <button type="button" className="ui-btn" onClick={() => engine.current?.acceptEvent()}>
+              {eventOffer.kind === 'delivery' || eventOffer.kind === 'collect' ? t('event.take') : t('event.play')}
+            </button>
             <button type="button" className="ui-btn is-ghost" onClick={() => engine.current?.declineEvent()}>{t('event.later')}</button>
           </>}
         >
-          <p className="ui-text">{eventOffer === 'arena' ? t('event.arena.text') : t('event.race.text')}</p>
+          <p className="ui-text">
+            {eventOffer.kind === 'delivery'
+              ? t('event.delivery.text', { item: t(`item.${eventOffer.item ?? 'box'}`), km: formatNumber(eventOffer.km ?? 0), reward: formatNumber(eventOffer.reward ?? 0) })
+              : eventOffer.kind === 'collect'
+                ? t('event.collect.text', { n: eventOffer.boxes ?? 10, reward: formatNumber(eventOffer.reward ?? 0) })
+                : t(`event.${eventOffer.kind}.text`)}
+          </p>
         </Dialog>
       )}
 
       {eventResult && driving && !settingsOpen && (
         <Dialog
-          title={eventResult.kind === 'heist' ? t('heist.title') : eventResult.kind === 'arena' ? t('event.arena') : t('event.race')}
+          title={eventResult.kind === 'hijack' ? t('hijack.title') : eventResult.kind === 'heist' ? t('heist.title') : t(`event.${eventResult.kind}`)}
           tone={eventResult.won ? 'default' : 'alert'}
           onBackdrop={() => setEventResult(null)}
           actions={
@@ -936,7 +944,13 @@ export default function Game() {
           }
         >
           <p className="ui-text">
-            {eventResult.kind === 'heist'
+            {eventResult.kind === 'delivery'
+              ? t('delivery.won', { item: eventResult.name ?? '', reward: formatNumber(eventResult.cash ?? 0) })
+              : eventResult.kind === 'collect'
+              ? t('collect.won', { reward: formatNumber(eventResult.cash ?? 0) })
+              : eventResult.kind === 'hijack'
+              ? t('hijack.sold', { car: eventResult.name ?? '', cash: formatNumber(eventResult.cash ?? 0) })
+              : eventResult.kind === 'heist'
               ? t('heist.escaped', { cash: formatNumber(eventResult.cash ?? 0) })
               : eventResult.kind === 'arena'
                 ? (eventResult.won ? t('arena.won') : t('arena.lost'))

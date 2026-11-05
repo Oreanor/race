@@ -5,13 +5,14 @@ import type { Position } from '../VehicleController';
 // Health bars hovering over the cars on screen: us, mission bots, other players,
 // shared traffic and test cars alike. One list a frame says who has one and where.
 
-export type Meter = { id: string; name: string; hp: number; maxHp: number; position: Position };
+/** `color`: the name goes above the bar in this colour (the car's marker colour); none, no name */
+export type Meter = { id: string; name: string; hp: number; maxHp: number; position: Position; color?: string };
 
 const FILL = { green: '#25e35b', yellow: '#ffe000', red: '#ff3030' } as const;
 
 export class HealthMeters {
   private layer: HTMLElement | null = null;
-  private meters = new Map<string, { element: HTMLElement; fill: HTMLElement }>();
+  private meters = new Map<string, { element: HTMLElement; fill: HTMLElement; label: HTMLElement }>();
 
   constructor(private host: HTMLElement) {}
 
@@ -39,11 +40,18 @@ export class HealthMeters {
       meter.element.style.left = `${point.x}px`;
       meter.element.style.top = `${point.y - 52}px`;
       meter.element.style.display = 'block';
+      if (entry.color) {
+        if (meter.label.textContent !== entry.name) meter.label.textContent = entry.name;
+        meter.label.style.color = entry.color;
+        meter.label.style.left = `${point.x}px`;
+        meter.label.style.top = `${point.y - 58}px`;
+        meter.label.style.display = 'block';
+      }
     }
   }
 
   hide() {
-    for (const meter of this.meters.values()) meter.element.style.display = 'none';
+    for (const meter of this.meters.values()) { meter.element.style.display = 'none'; meter.label.style.display = 'none'; }
   }
 
   dispose() {
@@ -64,6 +72,7 @@ export class HealthMeters {
     for (const [id, meter] of this.meters) {
       if (active.has(id)) continue;
       meter.element.remove();
+      meter.label.remove();
       this.meters.delete(id);
     }
     for (const entry of list) {
@@ -80,8 +89,15 @@ export class HealthMeters {
       const fill = document.createElement('span');
       Object.assign(fill.style, { display: 'block', height: '100%', transition: 'width .12s' });
       element.appendChild(fill);
+      const label = document.createElement('div');
+      label.className = 'overhead-health-name';
+      Object.assign(label.style, {
+        position: 'absolute', display: 'none', transform: 'translate(-50%, -100%)', whiteSpace: 'nowrap',
+        font: '700 12px/1.1 system-ui, sans-serif', textShadow: '0 0 3px #000, 0 1px 2px #000',
+      });
+      this.layer.appendChild(label);
       this.layer.appendChild(element);
-      this.meters.set(entry.id, { element, fill });
+      this.meters.set(entry.id, { element, fill, label });
     }
   }
 }

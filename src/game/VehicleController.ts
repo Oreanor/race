@@ -3,6 +3,15 @@ const radius = 6378137;
 export function offsetPosition(origin: Position, east: number, north: number): Position { return [origin[0]+east/(radius*Math.cos(origin[1]*Math.PI/180))*180/Math.PI, origin[1]+north/radius*180/Math.PI]; }
 export type VehicleBody = { position: Position; heading: number; speed: number; length: number };
 
+/**
+ * Health a knock between two cars takes (out of 1000), from their speeds added up
+ * (m/s), growing with the square: a nudge scrapes a little (20 m/s: ~20), a crash
+ * hurts (60 m/s: ~150), the worst head-on (~400 km/h together) takes half.
+ */
+export function bumpDamage(impact: number) {
+  return Math.round(Math.min(500, 3 + impact * impact * 0.041));
+}
+
 export function resolveVehicleCollision(a: VehicleBody, b: VehicleBody, scale = 1) {
   const latitude = (a.position[1] + b.position[1]) * 0.5 * Math.PI / 180;
   const delta: [number, number] = [

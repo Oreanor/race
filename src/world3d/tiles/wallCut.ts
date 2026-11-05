@@ -14,6 +14,8 @@ export type CutWall = {
 export type WallPiece<T> = { wall: T; t0: number; t1: number };
 
 const CELL = 48;
+/** walls this far off parallel (sine of the angle, ~3°) still count as one */
+const MAX_SKEW = 0.05;
 
 /**
  * Splits walls into the pieces that are not covered by a higher-priority wall on
@@ -54,15 +56,21 @@ export function cutCoveredWalls<T extends CutWall>(walls: T[], tolerance = 0.06)
         seen.add(j);
         const o = walls[j];
         if (!beats(o, w)) continue;
-        // the other wall must cover this one's height and lie on the same line
+        // the other wall must cover this one's height and run along it
         if (o.y0 > w.y0 + 0.08 || o.y1 < w.y1 - 0.08) continue;
+        const ol = Math.hypot(o.bx - o.ax, o.bz - o.az);
+        if (ol < 1e-6 || Math.abs(((o.bx - o.ax) * uz - (o.bz - o.az) * ux) / ol) > MAX_SKEW) continue;
         const da = (o.ax - w.ax) * uz - (o.az - w.az) * ux;
         const db = (o.bx - w.ax) * uz - (o.bz - w.az) * ux;
-        if (Math.abs(da) > tolerance || Math.abs(db) > tolerance) continue;
         const pa = ((o.ax - w.ax) * ux + (o.az - w.az) * uz) / len;
         const pb = ((o.bx - w.ax) * ux + (o.bz - w.az) * uz) / len;
         const lo = Math.max(0, Math.min(pa, pb)), hi = Math.min(1, Math.max(pa, pb));
-        if (hi - lo > 1e-4) covered.push([lo, hi]);
+        if (hi - lo <= 1e-4) continue;
+        // how far apart they are where they overlap (not at the other's far ends:
+        // a long neighbour a hair off parallel would miss the tolerance out there)
+        const gap = (p: number) => pb === pa ? da : da + (db - da) * (p - pa) / (pb - pa);
+        if (Math.abs(gap(lo)) > tolerance || Math.abs(gap(hi)) > tolerance) continue;
+        covered.push([lo, hi]);
       }
     }
     covered.sort((a, b) => a[0] - b[0]);

@@ -5,8 +5,8 @@ import { BuildingCollisions } from './BuildingCollisions';
 import { WaterCollisionController, type MapFeature } from './WaterCollisionController';
 import { mapConfig, cars as carsConfig, carPrice, STARTING_CASH, type City, type Car, vehicleConfig } from '@/config/vehicle.config';
 import { cameraConfig, lookAheadFor, zoomForDistance } from '@/config/camera.config';
-import { VehicleController, offsetPosition, resolveVehicleCollision, type Position } from './VehicleController';
-import { DROP_MS, vehicleLayer, type VehicleSceneLayer } from '@/rendering/VehicleLayer';
+import { VehicleController, bumpDamage, offsetPosition, resolveVehicleCollision, type Position } from './VehicleController';
+import { DROP_MS, vehicleLayer, type PickupVisual, type VehicleSceneLayer } from '@/rendering/VehicleLayer';
 import type { ArchitectureSetting, BuildingDetail } from './buildings/BuildingStyles';
 import type { SkinId } from '@/world3d/buildings/skins';
 import type { ChatLine, NetNotice } from '@/net/NetClient';
@@ -15,14 +15,14 @@ import { mercatorX, mercatorY } from '@/world3d/mercator';
 
 /** tiles this close to the car feed gameplay (the world's feature radius, plus slack) */
 const NEAR_TILE_METERS = 2600;
-import { NetPlayers, type OnlinePlayer } from './net/NetPlayers';
+import { NetPlayers, PLAYER_MARKER_COLOR, type OnlinePlayer } from './net/NetPlayers';
 import { SharedTraffic } from './net/SharedTraffic';
-import { HealthMeters } from './hud/HealthMeters';
+import { HealthMeters, type Meter } from './hud/HealthMeters';
 import { TestTargets } from './TestTargets';
 import { HIT_DAMAGE, PLAYER_HP } from '@/net/protocol';
 import { MARKER_PIN_METERS, nameIndicator, placeIndicator } from './hud/indicators';
 import { advanceTrafficBot, createTrafficBot, TrafficRoadNetwork, type TrafficBot } from './TrafficBots';
-import { formatNumber, t } from '@/i18n';
+import { formatNumber, onLangChange, t } from '@/i18n';
 import { ThreeMap, ThreeMarker } from '@/world3d/map/ThreeMap';
 import { atStation, banksFromFeatures, courtsFromFeatures, dealershipsFromFeatures, EVACUATION_COST, FuelTank, FUEL_PRICE, hospitalsFromFeatures, metersBetween, nearestStation, policeFromFeatures, prisonsFromFeatures, repairShopsFromFeatures, REPAIR_PRICE, stationsFromFeatures, type CivicKind, type Station } from './Fuel';
 import { fuelStationsLayer } from '@/rendering/FuelStationsLayer';
@@ -31,6 +31,7 @@ import { RailNetwork, TrainTraffic } from './Trains';
 import { hubAt, hubsFromFeatures, kilometres, nearestHub, ticketPrice, type Hub, type HubKind } from './Travel';
 import { bearingTo, BOUNTY_RANGE_KM, loadBounty, makeBounty, saveBounty, type Bounty } from './Bounty';
 import type { GameSave } from './save';
+import { BOX_REACH_M, COLLECT_BOXES, COLLECT_REWARD, deliveryReward, DELIVERY_MAX_M, DELIVERY_MIN_M, DELIVERY_REACH_M, randomItem, scatterBoxes, type DeliveryItem, type Errand } from './Errands';
 
 export type FuelHud = { level: number; tank: number; rpm: number; refuelling: boolean; station: number | null; money: number; hub: { kind: HubKind; distance: number } | null };
 /** What a player takes along to another city (ticket) or restores on page reload. */
@@ -56,7 +57,10 @@ export type TravelOffer = { kind: HubKind; from: [number, number]; money: number
 /** A wanted driver somewhere in the world, offered as a job. */
 export type BountyOffer = { name: string; car: string; place: string; country: string; km: number; reward: number };
 /** Arena/race finished — UI shows a result dialog. */
-export type EventResult = { kind: 'arena' | 'race' | 'heist'; won: boolean; name?: string; cash?: number };
+export type MissionKind = 'arena' | 'race' | 'delivery' | 'collect';
+export type EventResult = { kind: MissionKind | 'heist' | 'hijack'; won: boolean; name?: string; cash?: number };
+/** What the marker's dialog offers; a delivery says what, how far and for how much. */
+export type EventOffer = { kind: MissionKind; item?: DeliveryItem; km?: number; reward?: number; boxes?: number };
 /** Arrived at a fuel station or a car service: what the dialog needs to show. */
 export type ServiceOffer =
   | { kind: 'fuel'; level: number; tank: number; money: number; price: number }
@@ -72,6 +76,13 @@ export const ARENA_FEE = 2500;
 export const ARENA_PRIZE = 10000;
 /** how close to a mission marker the offer opens (m) */
 const MISSION_PICKUP_M = 6;
+/** missions on the map at once: one of each kind */
+const MISSION_COUNT = 4;
+/** 3D markers of the errands: green for a delivery, cardboard brown for the boxes */
+const ERRAND_BEACONS = {
+  delivery: { pole: '#2fae5a', glow: '#16703a', orb: '#7fe0a0' },
+  collect: { pole: '#b8742a', glow: '#6e4212', orb: '#f0b878' },
+} as const;
 const NO_FUEL_KEYS = new Set(['KeyW', 'Space']);
 
 type MapMarker = {
@@ -109,6 +120,8 @@ const MISSION_COLORS = {
   race: { main: '#ff7a1a', soft: '#ffb86b' },
   bounty: { main: '#d63a2f', soft: '#ff8a7a' },
   finish: { main: '#c9a227', soft: '#ffe56a' },
+  delivery: { main: '#2fae5a', soft: '#7fe0a0' },
+  collect: { main: '#b8742a', soft: '#f0b878' },
 } as const;
 /** Custom M-map pins: colours not used by missions / traffic bots. Max 3 pins. */
 const CUSTOM_PIN_COLORS = [
@@ -144,6 +157,8 @@ const ARREST_COSTS: Record<CivicKind, number> = {
 };
 /** Fallback if no civic POI is loaded yet */
 const ARREST_FINE = 20000;
+/** Our car blown up outside a fight: the bill where we come to (stretcher and repair, or tow and repair). */
+const WRECK_COSTS = { hospital: 1500, station: 1000, here: 1000 } as const;
 /** shooting at a bank this long (ms, in one go) cracks it */
 const BANK_CRACK_MS = 3000;
 /** police that far behind give up the chase (m) */
@@ -159,10 +174,6 @@ function randomDriverNames(count: number) {
   }
   return names.slice(0, count);
 }
-
-/** other players' name tags and roster lines (as their pointers on screen) */
-const PLAYER_MARKER_COLOR = '#7cf0b0';
-
 
 export class GameEngine {
   collisions = new BuildingCollisions();
@@ -246,15 +257,22 @@ export class GameEngine {
   /** health bars over the cars on screen */
   private healthMeters!: HealthMeters;
   private mode: 'roam' | 'arena' | 'race' = 'roam';
-  private missions: { id: string; kind: 'arena' | 'race'; label: string; position: [number, number] }[] = [];
+  /** `n`: the mission's number in its kind, for its label in any language */
+  private missions: { id: string; kind: MissionKind; label: string; n: number; position: [number, number] }[] = [];
+  /** a delivery or box hunt under way */
+  private errand: Errand | null = null;
+  /** a delivery prepared for the offer on screen */
+  private offeredDelivery: { item: DeliveryItem; goal: Position; reward: number } | null = null;
+  private errandMarkers = new Map<string, MapMarker>();
+  private errandIndicator: { element: HTMLElement; arrow: HTMLElement; distance: HTMLElement; title?: HTMLElement } | null = null;
   private missionFocus = 0;
-  private missionSeq = { arena: 0, race: 0 };
+  private missionSeq: Record<MissionKind, number> = { arena: 0, race: 0, delivery: 0, collect: 0 };
   private activeMissionId: string | null = null;
   private missionRespawnAt = 0;
-  private lastCompletedKind: 'arena' | 'race' | null = null;
+  private lastCompletedKind: MissionKind | null = null;
   private lastCompletedAt: [number, number] | null = null;
   private raceGoal: [number, number] | null = null;
-  private eventOffer: 'arena' | 'race' | null = null;
+  private eventOffer: MissionKind | null = null;
   /** bounty hunt: the active job (kept across trips), the offer on screen, the fight */
   private bounty: Bounty | null = loadBounty();
   private bountyPending: Bounty | null = null;
@@ -269,6 +287,10 @@ export class GameEngine {
   private players!: NetPlayers;
   private bountyIndicator: { element: HTMLElement; arrow: HTMLElement; title: HTMLElement; distance: HTMLElement } | null = null;
   private bountyMarker: MapMarker | null = null;
+  /** us on the map (M): a dot with an arrow along our heading */
+  private selfMarker: MapMarker | null = null;
+  /** a new language: every map label and marker title says it again */
+  private offLang = onLangChange(() => this.relabel());
   onBountyOffer: (offer: BountyOffer | null) => void = () => {};
   /** trains and trams on the real tracks */
   private rails = new RailNetwork();
@@ -292,7 +314,7 @@ export class GameEngine {
     indicator: { element: HTMLElement; arrow: HTMLElement; title: HTMLElement; distance: HTMLElement };
   }> = [];
   private customPinSeq = 0;
-  onEventOffer: (kind: 'arena' | 'race' | null) => void = () => {};
+  onEventOffer: (offer: EventOffer | null) => void = () => {};
   onEventResult: (result: EventResult | null) => void = () => {};
   /** fuel gauge data, ~10 times a second */
   onFuel: (fuel: FuelHud) => void = () => {};
@@ -328,6 +350,8 @@ export class GameEngine {
    * police to send (a downed car calls two more), a touch or a wrecked car = arrest.
    */
   private heist: { cash: number; reinforce: number; sent: number; caught: boolean; stolen?: { carId: string; previousId: string; owned: boolean } } | null = null;
+  /** each chasing bot's last look at its target: is the way clear of houses (checked every 300 ms) */
+  private botSight = new Map<string, { at: number; clear: boolean }>();
   /** when each police car fell that far behind (it gives up after POLICE_GIVE_UP_MS) */
   private policeFar = new Map<string, number>();
   /** parking lots from the POI layer */
@@ -453,6 +477,7 @@ export class GameEngine {
       notice: (notice) => this.onNetNotice(notice),
       hitBy: (name, damage) => this.hitByPlayer(name, damage),
       hp: () => this.playerHp,
+      bumped: (damage) => this.damagePlayer(damage, 180),
       news: (text) => this.say(text, true),
       traffic: (from, cars) => this.sharedTraffic.receive(from, cars),
       trafficHit: (id) => this.sharedTraffic.hitByOther(id),
@@ -881,7 +906,7 @@ export class GameEngine {
       money: Math.floor(this.playerMoney),
       fuel: this.fuel.ratio,
       hp: this.playerHp,
-      carId: this.car.id,
+      carId: this.heist?.stolen?.previousId ?? this.car.id, // a stolen car is never kept
       position: [...this.vehicle.position] as [number, number],
       heading: this.vehicle.heading,
       place: { name: place.name, country: place.country, coords: [...place.coords] as [number, number] },
@@ -930,6 +955,7 @@ export class GameEngine {
     this.trafficBots = [];
     this.hunterGuns.clear();
     this.policeFar.clear();
+    this.botSight.clear();
     this.raceStartAt = 0;
     this.combatLayer?.setTargets([]);
     this.ensureTrafficMarkers();
@@ -958,13 +984,13 @@ export class GameEngine {
     return offsetPosition(position, Math.sin(heading + side) * (420 + (seed % 260)), Math.cos(heading + side) * (420 + (seed % 260))) as [number, number];
   }
 
-  private nextMissionLabel(kind: 'arena' | 'race') {
+  private nextMissionLabel(kind: MissionKind) {
     this.missionSeq[kind] += 1;
-    return kind === 'arena' ? t('mission.arena', { n: this.missionSeq[kind] }) : t('mission.race', { n: this.missionSeq[kind] });
+    return t(`mission.${kind}`, { n: this.missionSeq[kind] });
   }
 
   private createMission(
-    kind: 'arena' | 'race',
+    kind: MissionKind,
     position: [number, number],
     heading: number,
     seed: number,
@@ -977,11 +1003,13 @@ export class GameEngine {
     const spot = this.pickBeaconSpot(position, heading, seed, avoid, band);
     const id = `${kind}-${this.missionSeq[kind] + 1}-${seed & 0xffff}`;
     const label = this.nextMissionLabel(kind);
-    return { id, kind, label, position: spot };
+    return { id, kind, label, n: this.missionSeq[kind], position: spot };
   }
 
   private syncMissionVisuals(showWorld = this.mode === 'roam') {
-    const visible = showWorld ? this.missions : [];
+    // on a mission the others are out of sight (and out of reach) until it is over
+    const free = showWorld && !this.onMission();
+    const visible = free ? this.missions : [];
     const beacons: {
       id: string;
       position: [number, number];
@@ -989,11 +1017,15 @@ export class GameEngine {
       colors?: { pole: string; glow: string; orb: string };
     }[] = visible.map(mission => ({
       id: mission.id,
-      kind: mission.kind,
+      kind: mission.kind === 'arena' || mission.kind === 'race' ? mission.kind : undefined,
+      colors: mission.kind === 'delivery' || mission.kind === 'collect' ? ERRAND_BEACONS[mission.kind] : undefined,
       position: mission.position,
     }));
-    if (showWorld && !this.bountyFight) {
-      if (this.bountyPending && this.bountyPickup) {
+    const errand = this.errand;
+    if (errand?.kind === 'delivery') beacons.push({ id: 'errand-goal', position: errand.goal, colors: ERRAND_BEACONS.delivery });
+    if (errand?.kind === 'collect') for (const box of errand.boxes) beacons.push({ id: `errand-${box.id}`, position: box.position, colors: ERRAND_BEACONS.collect });
+    if (showWorld && !this.bountyFight && !errand) {
+      if (this.bountyPending && this.bountyPickup && free) {
         beacons.push({ id: 'bounty-pickup', kind: 'bounty', position: this.bountyPickup });
       } else if (this.bounty?.spot) {
         beacons.push({ id: 'bounty', kind: 'bounty', position: this.bounty.spot });
@@ -1015,17 +1047,17 @@ export class GameEngine {
   /** Arena/race missions plus the wanted job (pending pickup or accepted hunt). */
   private focusGoals() {
     const goals: Array<
-      | { kind: 'mission'; id: string; missionKind: 'arena' | 'race'; label: string; position: [number, number] }
+      | { kind: 'mission'; id: string; missionKind: MissionKind; label: string; position: [number, number] }
       | { kind: 'bounty'; label: string; position: [number, number] | null }
-    > = this.missions.map(mission => ({
+    > = (this.onMission() ? [] : this.missions).map(mission => ({
       kind: 'mission' as const,
       id: mission.id,
       missionKind: mission.kind,
       label: mission.label,
       position: mission.position,
     }));
-    if (this.bountyFight) return goals;
-    if (this.bountyPending && this.bountyPickup) {
+    if (this.bountyFight || this.errand) return goals;
+    if (this.bountyPending && this.bountyPickup && !this.onMission()) {
       goals.push({ kind: 'bounty', label: t('bounty.goal'), position: this.bountyPickup });
     } else if (this.bounty) {
       goals.push({
@@ -1041,15 +1073,16 @@ export class GameEngine {
     for (const marker of this.missionMarkers.values()) marker.remove();
     this.missionMarkers.clear();
     this.missions = [];
-    this.missionSeq = { arena: 0, race: 0 };
+    this.missionSeq = { arena: 0, race: 0, delivery: 0, collect: 0 };
+    this.clearErrand();
     this.missionFocus = 0;
     this.activeMissionId = null;
     this.missionRespawnAt = 0;
     this.lastCompletedKind = null;
     this.lastCompletedAt = null;
     const seed = Math.round(position[0] * 1e5) ^ Math.round(position[1] * 1e5) ^ 42011;
-    const kinds: Array<'arena' | 'race'> = ['race', 'race', 'arena'];
-    for (let index = 0; index < 3; index++) {
+    const kinds: MissionKind[] = ['race', 'arena', 'delivery', 'collect'];
+    for (let index = 0; index < kinds.length; index++) {
       this.missions.push(this.createMission(kinds[index], position, heading, seed + index * 1301));
     }
     this.syncMissionVisuals(true);
@@ -1084,19 +1117,17 @@ export class GameEngine {
   }
 
   private refillMissions() {
-    if (this.mode !== 'roam' || this.missions.length >= 3) return;
+    if (this.mode !== 'roam' || this.missions.length >= MISSION_COUNT) return;
     if (!this.missionRespawnAt || performance.now() < this.missionRespawnAt) return;
     const center = this.vehicle.position as [number, number];
     const heading = this.vehicle.heading;
     const seed = Math.round(center[0] * 1e5) ^ Math.round(center[1] * 1e5) ^ (performance.now() | 0);
-    const races = this.missions.filter(mission => mission.kind === 'race').length;
-    const arenas = this.missions.filter(mission => mission.kind === 'arena').length;
-    // Prefer the other type than the one just finished, and keep a mix on the map.
-    let kind: 'arena' | 'race' = this.lastCompletedKind === 'race' ? 'arena' : 'race';
-    if (kind === 'race' && races >= 2) kind = 'arena';
-    if (kind === 'arena' && arenas >= 2) kind = 'race';
+    // one of each kind on the map: bring back a missing one, not the one just finished if another is missing too
+    const kinds: MissionKind[] = ['race', 'arena', 'delivery', 'collect'];
+    const missing = kinds.filter(kind => !this.missions.some(mission => mission.kind === kind));
+    const kind = missing.find(k => k !== this.lastCompletedKind) ?? missing[0] ?? kinds[Math.abs(seed) % kinds.length];
     this.missions.push(this.createMission(kind, center, heading, seed ^ 0x9e37, { min: 450, max: 1400 }));
-    this.missionRespawnAt = this.missions.length >= 3 ? 0 : performance.now() + 30000;
+    this.missionRespawnAt = this.missions.length >= MISSION_COUNT ? 0 : performance.now() + 30000;
     this.syncMissionVisuals(true);
     const added = this.missions[this.missions.length - 1];
     this.say(t('mission.new', { label: added.label }), true);
@@ -1165,24 +1196,19 @@ export class GameEngine {
         const key = `${a.id}:${b.id}`;
         if (now - (this.vehicleContactTimes.get(key) ?? 0) < 280) continue;
         this.vehicleContactTimes.set(key, now);
-        const flash = (participant: typeof a) => {
-          if (participant.id === 'player') this.combatLayer?.flashPlayer(180);
-          else this.combatLayer?.flashTarget(participant.id, 180);
-        };
-        if (collision.slower === 'a' || collision.slower === 'both') flash(a);
-        if (collision.slower === 'b' || collision.slower === 'both') flash(b);
+        // every knock that flashes a car red takes health off it: the slower side takes
+        // the knock, a hunting bot ramming at speed hurts whoever it rams, and harder
         const impact = Math.abs(a.controller.speed) + Math.abs(b.controller.speed);
-        if (impact > 6) {
-          const ramDamage = Math.min(55, 12 + impact * 2.2);
-          const hunterHits = (attackerId: string, victimId: string) => {
-            const hunter = this.trafficBots.find(bot => bot.id === attackerId);
-            if (!hunter || hunter.mood !== 'hunt') return;
-            if (victimId === 'player') this.damagePlayer(ramDamage);
-            else this.combatLayer?.damageTarget(victimId, ramDamage);
-          };
-          hunterHits(a.id, b.id);
-          hunterHits(b.id, a.id);
-        }
+        const ramming = (id: string) => impact > 6 && this.trafficBots.some(bot => bot.id === id && bot.mood === 'hunt');
+        const hurt = (victim: typeof a, attacker: typeof a, slower: boolean) => {
+          const rammed = ramming(attacker.id);
+          if (!slower && !rammed) return;
+          const amount = rammed ? Math.max(bumpDamage(impact), Math.min(55, 12 + impact * 2.2)) : bumpDamage(impact);
+          if (victim.id === 'player') this.damagePlayer(amount, 180);
+          else this.combatLayer?.damageTarget(victim.id, amount);
+        };
+        hurt(a, b, collision.slower === 'a' || collision.slower === 'both');
+        hurt(b, a, collision.slower === 'b' || collision.slower === 'both');
       }
     }
 
@@ -1245,9 +1271,7 @@ export class GameEngine {
     const now = performance.now();
     if (now - this.hitNoticeAt > 3000) { this.hitNoticeAt = now; this.say(t('pvp.hit', { name })); }
     if (this.playerHp > 0) return false;
-    this.combatLayer?.explodePlayer();
-    this.vehicle.speed = 0;
-    this.playerHp = this.playerMaxHp;
+    this.wreck();
     return true;
   }
 
@@ -1317,10 +1341,89 @@ export class GameEngine {
     }
   }
 
-  private damagePlayer(amount: number) {
-    if (this.mode !== 'arena' || amount <= 0 || this.playerHp <= 0) return;
+  /**
+   * Health off our car. In a fight (arena, bounty, chase) zero ends it there; anywhere
+   * else at zero we blow up, stop dead and come back with full health.
+   */
+  private damagePlayer(amount: number, flash = 220) {
+    if (!this.driving || amount <= 0 || this.playerHp <= 0) return;
     this.playerHp = Math.max(0, this.playerHp - amount);
-    this.combatLayer?.flashPlayer(220);
+    this.combatLayer?.flashPlayer(flash);
+    // a bank job ends in an arrest (updateHeist), with its own place and bill
+    if (this.playerHp > 0 || this.heist) return;
+    this.wreck();
+  }
+
+  /**
+   * Our car blew up: the mission we were on is lost, and we come to at the nearest
+   * hospital or filling station, whichever is closer, with the bill for it.
+   */
+  private wreck() {
+    this.combatLayer?.explodePlayer();
+    const failed = this.failMission();
+    this.playerHp = this.playerMaxHp;
+    const drop = this.nearestRescue();
+    const kind = drop?.kind ?? 'here';
+    const fine = WRECK_COSTS[kind];
+    this.playerMoney = Math.max(0, this.playerMoney - fine);
+    if (drop && this.mapLoaded) this.placeCarAt(drop.position);
+    else { this.vehicle.speed = 0; this.vehicle.throttle = 0; }
+    const bill = t(`wreck.${kind}`, { fine: formatNumber(fine) });
+    this.say(failed ? `${t('mission.failed')} · ${bill}` : bill, true);
+  }
+
+  /** Lose whatever mission we are on (a wreck). True if there was one. */
+  private failMission() {
+    if (this.errand) {
+      this.clearErrand();
+      this.completeActiveMission();
+      this.eventCooldown = performance.now() + 8000;
+      return true;
+    }
+    if (this.bountyFight || this.bounty) {
+      if (this.bountyFight) this.endBounty(false);
+      // the job is off: a new one is offered in a while
+      this.bounty = null;
+      saveBounty(null);
+      this.bountyOfferAt = performance.now() + 60000;
+      return true;
+    }
+    if (this.mode === 'arena') { this.endArena(false); return true; }
+    if (this.mode === 'race') {
+      // the bot closest to the finish takes it
+      const goal = this.raceGoal;
+      const leader = [...this.trafficBots].sort((a, b) => (goal ? metersBetween(a.position, goal) - metersBetween(b.position, goal) : 0))[0];
+      this.endRace(leader?.id ?? '', leader?.driver ?? '');
+      return true;
+    }
+    return false;
+  }
+
+  /** The closest hospital or filling station to us. */
+  private nearestRescue(): { kind: 'hospital' | 'station'; position: Position } | null {
+    const here = this.vehicle.position;
+    let best: { kind: 'hospital' | 'station'; position: Position; distance: number } | null = null;
+    const consider = (kind: 'hospital' | 'station', position: Position) => {
+      const distance = metersBetween(here, position);
+      if (!best || distance < best.distance) best = { kind, position, distance };
+    };
+    for (const civic of this.civics.values()) if (civic.kind === 'hospital') consider('hospital', civic.position);
+    for (const station of this.stations.values()) consider('station', station.place ?? station.position);
+    return best;
+  }
+
+  /** Our car, standing still on the road nearest `position` (or right on it). */
+  private placeCarAt(position: Position) {
+    const start = roadStart(this.map, position, (p, heading) => this.collisions.blocked(p, p, heading));
+    this.vehicle.position = start ? [...start.position] : [...position];
+    if (start) this.vehicle.heading = start.heading;
+    this.vehicle.speed = 0;
+    this.vehicle.throttle = 0;
+    this.bearing = this.vehicle.heading * 180 / Math.PI;
+    this.renderVehicle.reset(this.vehicle);
+    this.accumulator = 0;
+    this.collisionDirty = true;
+    this.syncedAt = null;
   }
 
   acceptEvent() {
@@ -1329,6 +1432,7 @@ export class GameEngine {
     const nearby = this.missions.find(mission => mission.kind === kind && metersBetween(this.vehicle.position, mission.position) <= 18)
       ?? this.missions.find(mission => mission.kind === kind)
       ?? null;
+    if (kind === 'delivery' || kind === 'collect') { this.startErrand(kind, nearby); return; }
     // everyone chips in to start; the winner takes the prize
     const fee = kind === 'arena' ? ARENA_FEE : RACE_FEE;
     if (this.playerMoney < fee) {
@@ -1345,6 +1449,7 @@ export class GameEngine {
 
   declineEvent() {
     this.eventOffer = null;
+    this.offeredDelivery = null;
     this.activeMissionId = null;
     this.eventCooldown = performance.now() + 14000;
     this.onEventOffer(null);
@@ -1518,16 +1623,17 @@ export class GameEngine {
   }
 
   /** Everybody with a health meter over the car: us, mission bots, other players, shared traffic and test cars. */
-  private meterTargets(): { id: string; name: string; hp: number; maxHp: number; position: Position }[] {
+  private meterTargets(): Meter[] {
     const layer = this.combatLayer;
-    const out = [{ id: 'player', name: t('you'), hp: this.playerHp, maxHp: this.playerMaxHp, position: this.renderVehicle.position }];
-    for (const p of this.players.others()) out.push({ id: `net:${p.id}`, name: p.name, hp: p.hp, maxHp: PLAYER_HP, position: p.position });
+    const out: Meter[] = [{ id: 'player', name: t('you'), hp: this.playerHp, maxHp: this.playerMaxHp, position: this.renderVehicle.position }];
+    // named cars carry their name above the bar, in their marker's colour
+    for (const p of this.players.others()) out.push({ id: `net:${p.id}`, name: p.name, hp: p.hp, maxHp: PLAYER_HP, position: p.position, color: PLAYER_MARKER_COLOR });
     const health = new Map((layer?.targetHealth() ?? []).map((h) => [h.id, h]));
-    for (const bot of this.trafficBots) {
-      if (layer && !layer.isTargetAlive(bot.id)) continue;
+    this.trafficBots.forEach((bot, index) => {
+      if (layer && !layer.isTargetAlive(bot.id)) return;
       const h = health.get(bot.id);
-      out.push({ id: bot.id, name: bot.driver, hp: h?.hp ?? 1000, maxHp: h?.maxHp ?? 1000, position: bot.position });
-    }
+      out.push({ id: bot.id, name: bot.driver, hp: h?.hp ?? 1000, maxHp: h?.maxHp ?? 1000, position: bot.position, color: TRAFFIC_MARKER_COLORS[index % TRAFFIC_MARKER_COLORS.length] });
+    });
     for (const e of layer?.extraHealth() ?? []) {
       if (e.id.includes(':k') && e.hp >= e.maxHp) continue; // a parked car shows no meter until it is hit
       out.push({ id: e.id, name: e.driver, hp: e.hp, maxHp: e.maxHp, position: e.position });
@@ -1563,14 +1669,18 @@ export class GameEngine {
     this.combatLayer?.setPickups(this.pickupVisuals());
   }
 
-  private pickupVisuals() {
-    return [...this.pickups].map(([id, pickup]) => ({
-      id,
-      position: pickup.position,
-      color: pickup.color,
-      kind: pickup.kind,
-      drop: pickup.drop,
-    }));
+  private pickupVisuals(): PickupVisual[] {
+    const boxes = this.errand?.kind === 'collect' ? this.errand.boxes : [];
+    return [
+      ...[...this.pickups].map(([id, pickup]) => ({
+        id,
+        position: pickup.position,
+        color: pickup.color,
+        kind: pickup.kind,
+        drop: pickup.drop,
+      })),
+      ...boxes.map((box) => ({ id: `errand-${box.id}`, position: box.position, color: ERRAND_BEACONS.collect.pole, kind: 'box' as const })),
+    ];
   }
 
   private dropSerial = 0;
@@ -1660,7 +1770,7 @@ export class GameEngine {
 
   /** A bullet hit a wall: on a bank's house, three seconds of fire crack it open. */
   private bankShot(point: [number, number]) {
-    if (this.mode !== 'roam' || this.bountyFight || !this.driving) return;
+    if (this.mode !== 'roam' || this.bountyFight || !this.driving || this.onMission()) return;
     const now = performance.now();
     let bank: Station | null = null;
     for (const candidate of this.banks.values()) {
@@ -1716,16 +1826,17 @@ export class GameEngine {
   /** H beside a parked car (ours or somebody else's): get in and drive off — the police come. */
   private tryHijack() {
     if (!this.driving || this.paused || this.mode !== 'roam' || this.bountyFight) return;
+    if (this.onMission()) { this.say(t('mission.busy'), true); return; }
     const near = this.sharedTraffic.parkedNear(this.vehicle.position, 4.5);
     if (!near) { this.say(t('hijack.none'), true); return; }
     if (Math.abs(this.vehicle.speed) > 2.5) { this.say(t('hijack.slow'), true); return; }
     this.sharedTraffic.takeParked(near.id);
     const previous = this.car;
+    // a stolen car never joins the garage: get away and it goes to the black market
     const owned = this.garage.has(near.car.id);
-    this.garage.add(near.car.id);
     this.setCar(near.car);
     this.onCarBought(near.car);
-    // we sit in it where it stood; our own car stays in the garage
+    // we sit in it where it stood; our own car waits in the garage
     this.vehicle.position = [...near.position] as [number, number];
     this.vehicle.heading = near.heading;
     this.vehicle.speed = 0;
@@ -1739,11 +1850,33 @@ export class GameEngine {
 
   /** A word when we stop beside a parked car. */
   private hijackHint() {
-    if (!this.driving || this.mode !== 'roam' || Math.abs(this.vehicle.speed) > 2.5) return;
+    if (!this.driving || this.mode !== 'roam' || this.onMission() || Math.abs(this.vehicle.speed) > 2.5) return;
     const near = this.sharedTraffic.parkedNear(this.vehicle.position, 4.5);
     if (!near || near.id === this.hijackHintFor) return;
     this.hijackHintFor = near.id;
     this.say(t('hijack.hint', { car: near.car.name }), true);
+  }
+
+  /**
+   * Where a bot may cut straight to, off the roads: a hunter (police, arena, the wanted car)
+   * at its prey, a racer at the flag — when it is within 350 m and no house stands between.
+   * At us it leads the shot a little (where we will be in half a second).
+   */
+  private botShortcut(bot: { id: string; mood: string; goal: Position | null; huntId: string | null; position: Position }, now: number): Position | null {
+    const racing = this.mode === 'race' && Boolean(bot.goal);
+    if (bot.mood !== 'hunt' && !racing) return null;
+    let target = bot.goal;
+    if (bot.mood === 'hunt' && bot.huntId === 'player') {
+      const v = this.vehicle.speed * 0.5;
+      target = offsetPosition(this.vehicle.position, Math.sin(this.vehicle.heading) * v, Math.cos(this.vehicle.heading) * v) as Position;
+    }
+    if (!target || metersBetween(bot.position, target) > 350) return null;
+    let sight = this.botSight.get(bot.id);
+    if (!sight || now - sight.at > 300) {
+      sight = { at: now, clear: !this.collisions.sightBlocked(bot.position, target) && !this.water.covers(target) };
+      this.botSight.set(bot.id, sight);
+    }
+    return sight.clear ? target : null;
   }
 
   /**
@@ -1822,9 +1955,15 @@ export class GameEngine {
     this.clearEventBots();
     this.showEventBeacons();
     this.eventCooldown = performance.now() + 8000;
-    // a hijack got away: the car is ours now
-    if (stolen) this.say(t('hijack.escaped', { car: this.car.name }), true);
-    else this.onEventResult({ kind: 'heist', won: true, cash });
+    if (stolen) {
+      // got away in a stolen car: the black market takes it for half its price; we're back in ours
+      const sold = carsConfig.find((car) => car.id === stolen.carId);
+      const price = sold ? Math.round(carPrice(sold) / 2) : 0;
+      this.playerMoney += price;
+      const previous = carsConfig.find((car) => car.id === stolen.previousId);
+      if (previous) { this.setCar(previous); this.onCarBought(previous); }
+      this.onEventResult({ kind: 'hijack', won: true, cash: price, name: sold?.name ?? '' });
+    } else this.onEventResult({ kind: 'heist', won: true, cash });
   }
 
   /** Arrested: car blows up; wake at the nearest police / prison / court / hospital with a fat bill. */
@@ -1833,7 +1972,6 @@ export class GameEngine {
     const stolen = heist.cash;
     // a hijacked car goes back to its owner; we are in our own again
     if (heist.stolen) {
-      if (!heist.stolen.owned) this.garage.delete(heist.stolen.carId);
       const previous = carsConfig.find((car) => car.id === heist.stolen!.previousId);
       if (previous) { this.setCar(previous); this.onCarBought(previous); }
     }
@@ -1851,18 +1989,13 @@ export class GameEngine {
     const fine = (kind ? ARREST_COSTS[kind] : ARREST_FINE) + stolen;
     this.playerMoney = Math.max(0, this.playerMoney - fine);
     this.playerHp = this.playerMaxHp;
-    if (drop && this.mapLoaded) {
-      const start = roadStart(this.map, drop.station.position, (position, heading) => this.collisions.blocked(position, position, heading));
-      this.vehicle.position = start ? [...start.position] : [...drop.station.position];
-      if (start) this.vehicle.heading = start.heading;
+    if (drop && this.mapLoaded) this.placeCarAt(drop.station.position);
+    else {
+      this.vehicle.speed = 0;
+      this.vehicle.throttle = 0;
+      this.renderVehicle.reset(this.vehicle);
+      this.accumulator = 0;
     }
-    this.vehicle.speed = 0;
-    this.vehicle.throttle = 0;
-    this.bearing = this.vehicle.heading * 180 / Math.PI;
-    this.renderVehicle.reset(this.vehicle);
-    this.accumulator = 0;
-    this.collisionDirty = true;
-    this.syncedAt = null;
     const messages = {
       police: 'heist.arrested.police',
       prison: 'heist.arrested.prison',
@@ -2010,14 +2143,193 @@ export class GameEngine {
       if (winner) this.endRace(winner.id, winner.driver);
       return;
     }
+    if (this.errand) { this.updateErrand(); return; }
     this.refillMissions();
-    if (this.eventOffer || performance.now() < this.eventCooldown) return;
+    // one mission at a time: none offered while another is on
+    if (this.onMission() || this.eventOffer || performance.now() < this.eventCooldown) return;
     // the offer opens only right at the marker, not from the street beside it
     const nearby = this.missions.find(mission => metersBetween(this.vehicle.position, mission.position) <= MISSION_PICKUP_M);
     if (!nearby) return;
+    const offer = this.offerFor(nearby);
+    if (!offer) {
+      this.eventCooldown = performance.now() + 8000;
+      this.say(t('delivery.unavailable'), true);
+      return;
+    }
     this.eventOffer = nearby.kind;
     this.activeMissionId = nearby.id;
-    this.onEventOffer(nearby.kind);
+    this.onEventOffer(offer);
+  }
+
+  /** On a mission of any kind (arena, race, chase, a hunt, an errand): nothing else is offered or shown. */
+  private onMission() {
+    return this.mode !== 'roam' || Boolean(this.heist) || this.bountyFight || Boolean(this.bounty) || Boolean(this.errand);
+  }
+
+  /** What the marker's dialog says; a delivery picks its address and pay here. Null: no address to go to. */
+  private offerFor(mission: { kind: MissionKind; position: [number, number] }): EventOffer | null {
+    if (mission.kind === 'delivery') {
+      const seed = (performance.now() | 0) ^ Math.round(mission.position[0] * 1e5);
+      const node = this.trafficNetwork.randomAway(mission.position, new Set(), DELIVERY_MIN_M, DELIVERY_MAX_M, seed);
+      const meters = node ? metersBetween(node.position, mission.position) : 0;
+      if (!node || meters < DELIVERY_MIN_M * 0.6 || meters > DELIVERY_MAX_M * 1.3) return null;
+      const item = randomItem(seed >> 3);
+      const reward = deliveryReward(meters);
+      this.offeredDelivery = { item, goal: [...node.position] as Position, reward };
+      return { kind: 'delivery', item, km: Math.round(meters / 100) / 10, reward };
+    }
+    if (mission.kind === 'collect') return { kind: 'collect', boxes: COLLECT_BOXES, reward: COLLECT_REWARD };
+    return { kind: mission.kind };
+  }
+
+  /** Took the errand at its marker: the address, or ten boxes about the area. */
+  private startErrand(kind: 'delivery' | 'collect', mission: { id: string; position: [number, number] } | null) {
+    this.activeMissionId = mission?.id ?? null;
+    this.eventOffer = null;
+    this.onEventOffer(null);
+    if (kind === 'delivery') {
+      const offered = this.offeredDelivery;
+      this.offeredDelivery = null;
+      if (!offered) return;
+      this.errand = { kind: 'delivery', ...offered };
+      this.say(t('delivery.start', { item: t(`item.${offered.item}`) }), true);
+    } else {
+      const center = mission?.position ?? [...this.vehicle.position] as [number, number];
+      const seed = Math.round(center[0] * 1e5) ^ Math.round(center[1] * 1e5) ^ (performance.now() | 0);
+      const boxes = scatterBoxes(center, seed, (min, max, at) => this.trafficNetwork.randomAway(center, new Set(), min, max, at)?.position ?? null);
+      this.errand = { kind: 'collect', center, boxes, total: boxes.length, reward: COLLECT_REWARD };
+      this.say(t('collect.start', { n: boxes.length }), true);
+    }
+    this.syncMissionVisuals(true);
+    this.syncErrandMarkers();
+    this.combatLayer?.setPickups(this.pickupVisuals());
+  }
+
+  /** Every frame on an errand: arrived at the address, or drove over a box. */
+  private updateErrand() {
+    const errand = this.errand!;
+    const here = this.vehicle.position;
+    if (errand.kind === 'delivery') {
+      if (metersBetween(here, errand.goal) > DELIVERY_REACH_M) return;
+      const item = t(`item.${errand.item}`);
+      this.finishErrand(errand.reward, t('delivery.done', { reward: formatNumber(errand.reward) }), { kind: 'delivery', won: true, cash: errand.reward, name: item });
+      return;
+    }
+    const got = errand.boxes.filter(box => metersBetween(here, box.position) <= BOX_REACH_M);
+    if (!got.length) return;
+    errand.boxes = errand.boxes.filter(box => !got.includes(box));
+    const n = errand.total - errand.boxes.length;
+    if (!errand.boxes.length) {
+      this.finishErrand(errand.reward, t('collect.done', { total: errand.total, reward: formatNumber(errand.reward) }), { kind: 'collect', won: true, cash: errand.reward });
+      return;
+    }
+    this.say(t('collect.got', { n, total: errand.total }), true);
+    this.syncMissionVisuals(true);
+    this.syncErrandMarkers();
+    this.combatLayer?.setPickups(this.pickupVisuals());
+  }
+
+  private finishErrand(reward: number, text: string, result: EventResult) {
+    this.playerMoney += reward;
+    this.addWin('player');
+    this.clearErrand();
+    this.completeActiveMission();
+    this.eventCooldown = performance.now() + 8000;
+    this.say(text, true);
+    this.onEventResult(result);
+  }
+
+  /** No errand any more (done, lost, or a new drive): its markers and boxes go. */
+  private clearErrand() {
+    this.errand = null;
+    this.offeredDelivery = null;
+    this.syncErrandMarkers();
+    if (this.errandIndicator) this.errandIndicator.element.style.display = 'none';
+    this.combatLayer?.setPickups(this.pickupVisuals());
+  }
+
+  /** Map labels of the errand: the address, or a box over each box. */
+  private syncErrandMarkers() {
+    const errand = this.errand;
+    const wanted = new Map<string, { position: [number, number]; className: string; text: string }>();
+    if (errand?.kind === 'delivery') wanted.set('goal', { position: errand.goal, className: 'delivery-goal-marker', text: t('delivery.goal') });
+    if (errand?.kind === 'collect') for (const box of errand.boxes) wanted.set(box.id, { position: box.position, className: 'collect-box-marker', text: t('collect.box') });
+    for (const [id, marker] of this.errandMarkers) {
+      if (wanted.has(id)) continue;
+      marker.remove();
+      this.errandMarkers.delete(id);
+    }
+    for (const [id, spec] of wanted) {
+      if (this.errandMarkers.has(id)) continue;
+      this.errandMarkers.set(id, this.marker({ element: this.makeMapLabel(spec.className, spec.text, spec.text), anchor: 'bottom' }).setLngLat(spec.position).addTo(this.map));
+    }
+  }
+
+  /** Where the errand points now: the address, or the nearest box left. */
+  private errandTarget(): { position: [number, number]; label: string; kind: 'delivery' | 'collect' } | null {
+    const errand = this.errand;
+    if (!errand) return null;
+    if (errand.kind === 'delivery') return { position: errand.goal, label: t('delivery.goal'), kind: 'delivery' };
+    const here = this.vehicle.position;
+    let best: { position: Position; distance: number } | null = null;
+    for (const box of errand.boxes) {
+      const distance = metersBetween(here, box.position);
+      if (!best || distance < best.distance) best = { position: box.position, distance };
+    }
+    const done = errand.total - errand.boxes.length;
+    return best ? { position: best.position as [number, number], label: t('collect.goal', { n: done, total: errand.total }), kind: 'collect' } : null;
+  }
+
+  /** Where we are, on the map view: shown while looking at the map, pointing the way the car faces. */
+  private updateSelfMarker() {
+    if (!this.mapInspecting()) {
+      if (this.selfMarker) this.selfMarker.getElement().style.display = 'none';
+      return;
+    }
+    if (!this.selfMarker) {
+      const element = document.createElement('div');
+      element.className = 'self-map-marker';
+      element.setAttribute('aria-label', t('you'));
+      element.append(document.createElement('i'));
+      this.selfMarker = this.marker({ element, anchor: 'center' }).addTo(this.map);
+    }
+    const element = this.selfMarker.getElement();
+    element.style.display = '';
+    this.selfMarker.setLngLat(this.renderVehicle.position as [number, number]);
+    const arrow = element.firstElementChild as HTMLElement | null;
+    if (arrow) arrow.style.transform = `rotate(${(this.renderVehicle.heading * 180 / Math.PI - this.map.getBearing()).toFixed(1)}deg)`;
+  }
+
+  /** The language changed: labels made once (services, hubs, missions, pins, goals) are made again. */
+  private relabel() {
+    if (!this.ready) return;
+    for (const marker of this.serviceMarkers.values()) marker.remove();
+    this.serviceMarkers.clear();
+    this.labelServices();
+    for (const marker of this.hubMarkers.values()) marker.remove();
+    this.hubMarkers.clear();
+    this.collectHubs([]);
+    for (const mission of this.missions) mission.label = t(`mission.${mission.kind}`, { n: mission.n });
+    for (const marker of this.errandMarkers.values()) marker.remove();
+    this.errandMarkers.clear();
+    this.syncErrandMarkers();
+    this.bountyMarker?.remove();
+    this.bountyMarker = null;
+    this.raceGoalMarker?.remove();
+    this.raceGoalMarker = null;
+    this.raceGoalIndicator?.element.remove();
+    this.raceGoalIndicator = null;
+    this.ensureRaceGoalMarker();
+    if (this.focusIndicator) this.focusIndicator.element.setAttribute('aria-label', t('marker.target'));
+    this.selfMarker?.getElement().setAttribute('aria-label', t('you'));
+    for (const pin of this.customPins) {
+      const text = t('marker.pin');
+      const span = pin.marker.getElement()?.querySelector('span');
+      if (span) span.textContent = text;
+      pin.marker.getElement()?.setAttribute('aria-label', text);
+    }
+    this.syncMissionVisuals();
+    this.updateEventMarkers();
   }
 
   private makeMapLabel(className: string, text: string, label: string) {
@@ -2161,7 +2473,7 @@ export class GameEngine {
       this.eventIndicatorLayer.className = 'mission-indicators';
       this.host.appendChild(this.eventIndicatorLayer);
     }
-    const roaming = this.mode === 'roam' && this.driving;
+    const roaming = this.mode === 'roam' && this.driving && !this.onMission();
     const active = new Set(this.missions.map(mission => mission.id));
     for (const [id, marker] of this.missionMarkers) {
       if (active.has(id)) continue;
@@ -2171,7 +2483,7 @@ export class GameEngine {
     for (const mission of this.missions) {
       let marker = this.missionMarkers.get(mission.id);
       if (!marker) {
-        const className = mission.kind === 'arena' ? 'arena-map-marker' : 'race-map-marker';
+        const className = `${mission.kind}-map-marker`;
         marker = this.marker({ element: this.makeMapLabel(className, mission.label, mission.label), anchor: 'bottom' })
           .setLngLat(mission.position)
           .addTo(this.map);
@@ -2237,7 +2549,7 @@ export class GameEngine {
     const now = performance.now();
     const here = this.vehicle.position;
     if (this.bountyPending && !this.bounty) {
-      if (this.mode !== 'roam' || this.bountyFight) return;
+      if (this.mode !== 'roam' || this.bountyFight || this.errand) return;
       if (
         this.bountyPickup
         && !this.bountyOfferShown
@@ -2255,7 +2567,7 @@ export class GameEngine {
       return;
     }
     if (!this.bounty) {
-      const busy = this.mode !== 'roam' || this.bountyPending || this.eventOffer || this.travelOpen || this.serviceOpen || this.dealerOpen || this.fuelOut;
+      const busy = this.mode !== 'roam' || this.errand || this.bountyPending || this.eventOffer || this.travelOpen || this.serviceOpen || this.dealerOpen || this.fuelOut;
       if (busy || now < this.bountyOfferAt) return;
       const seed = Math.round(here[0] * 1e5) ^ Math.round(here[1] * 1e5) ^ (now | 0);
       const avoid = this.missions.map(mission => mission.position);
@@ -2378,7 +2690,7 @@ export class GameEngine {
   private updateBountyMarkers() {
     const pending = Boolean(this.bountyPending && this.bountyPickup && !this.bounty);
     const bounty = this.bountyFight ? null : (this.bounty ?? this.bountyPending);
-    if (!bounty || !this.driving || (pending && !this.bountyPickup)) {
+    if (!bounty || !this.driving || this.errand || (pending && !this.bountyPickup)) {
       if (this.bountyIndicator) this.bountyIndicator.element.style.display = 'none';
       if (this.bountyMarker) { this.bountyMarker.remove(); this.bountyMarker = null; }
       return;
@@ -2446,9 +2758,18 @@ export class GameEngine {
     if (this.focusIndicator && mission) this.paintMissionIndicator(this.focusIndicator.element, mission.missionKind);
     this.updateOffscreenMarker(this.focusIndicator, mission?.position ?? null, Boolean(mission), mission?.label);
     this.updateOffscreenMarker(this.raceGoalIndicator, this.raceGoal, this.driving && this.mode === 'race');
+    const errand = this.errandTarget();
+    if (errand && !this.errandIndicator && this.eventIndicatorLayer) {
+      this.errandIndicator = this.makeOffscreenIndicator('focus', errand.label);
+      this.eventIndicatorLayer.appendChild(this.errandIndicator.element);
+    }
+    if (errand && this.errandIndicator) this.paintMissionIndicator(this.errandIndicator.element, errand.kind);
+    this.updateOffscreenMarker(this.errandIndicator, errand?.position ?? null, this.driving && Boolean(errand), errand?.label);
     this.syncCustomPinPointers();
     for (const pin of this.customPins) {
       this.updateOffscreenMarker(pin.indicator, pin.position, this.driving, t('marker.pin'));
+      // in view the pin's own plaque says it all: no second name and distance over it
+      if (pin.indicator.element.classList.contains('is-onscreen')) pin.indicator.element.style.display = 'none';
     }
   }
 
@@ -2789,7 +3110,7 @@ export class GameEngine {
     this.say(near ? t('tow.done') : t('tow.none'), true);
   }
 
-  private marker(options: { element: HTMLElement; anchor: 'bottom' }): MapMarker {
+  private marker(options: { element: HTMLElement; anchor: 'bottom' | 'center' }): MapMarker {
     return new ThreeMarker(options) as unknown as MapMarker;
   }
 
@@ -2898,6 +3219,8 @@ export class GameEngine {
       this.eventOffer = null;
       this.onEventOffer(null);
       this.onEventResult(null);
+      // leaving the car drops an errand (its markers go with it)
+      if (this.errand) { this.clearErrand(); this.completeActiveMission(); }
       if (this.mode !== 'roam') {
         this.mode = 'roam';
         this.heist = null;
@@ -3363,7 +3686,7 @@ export class GameEngine {
             ...vehicleConfig,
             acceleration: bot.car.acceleration,
             maxSpeed: bot.car.maxSpeed,
-          }, police ? peers.slice(0, 1) : peers);
+          }, police ? peers.slice(0, 1) : peers, [], this.botShortcut(bot, now));
           const building = this.collisions.resolve(previous, bot.position, bot.heading);
           if (building.stopped || building.slid) {
             bot.controller.position = building.position;
@@ -3526,10 +3849,12 @@ export class GameEngine {
       }
     }
     this.updateTrains(dt);
+    // players first: the bars must sit where their cars are drawn this frame, not the last one
+    this.players.update();
     this.updateHealthMarkers(now - this.overlayTime > 100);
     this.updateTrafficMarkers();
-    this.players.update();
     this.updateEventMarkers();
+    this.updateSelfMarker();
     if (now - this.overlayTime > 100) this.overlayTime = now;
     if (now - this.hudTime > 100) {
       this.hudTime = now;
@@ -3567,6 +3892,8 @@ export class GameEngine {
     this.combatLayer?.setPickups([]);
     this.trafficMarkerLayer?.remove();
     this.trafficMarkers.clear();
+    this.offLang();
+    this.selfMarker?.remove();
     this.healthMeters.dispose();
     this.cleanups.forEach((fn) => fn());
     this.map.remove();

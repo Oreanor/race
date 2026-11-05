@@ -59,7 +59,8 @@ const clients = new Map<string, Client>();
 /** when a shooter → victim pair was last logged */
 const loggedHits = new Map<string, number>();
 let nextId = 1;
-const players = new WebSocketServer({ noServer: true, maxPayload: 2048 });
+// a traffic message is the biggest: up to TRAFFIC_MAX cars of ~110 bytes each
+const players = new WebSocketServer({ noServer: true, maxPayload: 8192 });
 
 const finite = (v: unknown, lo: number, hi: number): v is number => typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi;
 
@@ -205,10 +206,11 @@ players.on('connection', (socket: WebSocket, request: http.IncomingMessage) => {
       console.log(`[mp] ${client.player.name}: ${text}`);
     }
   });
-  socket.on('close', () => {
+  socket.on('close', (code) => {
     clients.delete(id);
     for (const pair of loggedHits.keys()) if (pair.startsWith(id + '>') || pair.endsWith('>' + id)) loggedHits.delete(pair);
-    console.log(`[mp] ${id} left (${clients.size} online)`);
+    // 1001: tab closed; 1006: connection lost; 1009: message too big
+    console.log(`[mp] ${id} left (${clients.size} online)${code === 1000 || code === 1001 ? '' : `, code ${code}`}`);
   });
   socket.on('error', () => socket.close());
 });

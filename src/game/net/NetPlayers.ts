@@ -3,8 +3,11 @@ import { t } from '@/i18n';
 import { createNet, type ChatLine, type Net, type NetNotice, type RemotePlayer } from '@/net/NetClient';
 import type { TrafficCar } from '@/net/protocol';
 import type { VehicleSceneLayer } from '@/rendering/VehicleLayer';
-import { metersBetween, resolveVehicleCollision, type Position, type VehicleController } from '../VehicleController';
+import { bumpDamage, metersBetween, resolveVehicleCollision, type Position, type VehicleController } from '../VehicleController';
 import { nameIndicator, placeIndicator, type IndicatorView } from '../hud/indicators';
+
+/** other players' map marker and the name over their health bar */
+export const PLAYER_MARKER_COLOR = '#7cf0b0';
 
 // Other players in the shared world, from the game's side: report our car,
 // draw everybody else (through the vehicle layer), point at them, bump into
@@ -24,6 +27,8 @@ export type NetHost = {
   altitude(): number;
   /** our health */
   hp(): number;
+  /** we knocked into another player's car: our share of the damage */
+  bumped(damage: number): void;
   lean(): { pitch: number; roll: number };
   driving(): boolean;
   /** the map view (M) is open: pins wherever the target is in frame */
@@ -95,11 +100,12 @@ export class NetPlayers {
   hitTraffic(id: string) { this.net?.trafficHit(id); }
   takeTraffic(id: string) { this.net?.take(id); }
 
-  /** Our bullet hit another player's car (not one parked on a mission). */
+  /** Our bullet hit another player's car (not one parked on a mission). True when it counts. */
   shot(id: string) {
     const remote = this.remotes.find((r) => r.id === id);
-    if (!remote || remote.busy || this.anchor) return;
-    this.net?.hit(id);
+    if (!this.net || !remote || remote.busy || this.anchor) return false;
+    this.net.hit(id);
+    return true;
   }
 
   /** Report our car, draw the others and point at them; once a frame. */
@@ -151,8 +157,9 @@ export class NetPlayers {
       if (this.game.canMove(vehicle.position, next, vehicle.heading)) vehicle.position = next;
       if (now - (this.bumpedAt.get(remote.id) ?? 0) < 280) continue;
       this.bumpedAt.set(remote.id, now);
+      // both sides take the knock, each on their own screen
+      this.game.bumped(bumpDamage(Math.abs(vehicle.speed) + Math.abs(remote.speed)));
       vehicle.speed *= 0.6;
-      this.game.layer()?.flashPlayer(180);
     }
   }
 
@@ -168,7 +175,7 @@ export class NetPlayers {
     for (const player of players) {
       let marker = this.markers.get(player.id);
       if (!marker) {
-        marker = nameIndicator('traffic-indicator player-indicator', '#7cf0b0');
+        marker = nameIndicator('traffic-indicator player-indicator', PLAYER_MARKER_COLOR);
         this.layer.appendChild(marker.element);
         this.markers.set(player.id, marker);
       }
