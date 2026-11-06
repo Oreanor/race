@@ -663,12 +663,14 @@ export class ThreeMap {
     worldTime.value = performance.now() / 1000;
     this.uniforms.uClock.value = worldTime.value;
     this.updateSeason();
-    // tiles past the opaque fog are pure fog colour (= sky): skip them entirely
-    // high above the city the haze moves out with the camera, so the whole area shows
+    // tiles past the opaque fog are pure fog colour (= sky): skip them entirely.
+    // Cap altitude fog growth — Manhattan skylines from height used to pull fog to 3–4 km
+    // and fill the GPU with tower overdraw.
     const above = Math.max(0, cam.cameraAltitude() - cam.state.elevation);
-    this.uniforms.uFogNear.value = 1100 + above * 0.9;
-    this.uniforms.uFogFar.value = 2000 + above * 1.1;
-    this.world.cullBeyond(cam.state.center, this.uniforms.uFogFar.value + 150);
+    const fogLift = Math.min(450, above * 0.35);
+    this.uniforms.uFogNear.value = 900 + fogLift;
+    this.uniforms.uFogFar.value = 1600 + fogLift * 1.15;
+    this.world.cullBeyond(cam.state.center, this.uniforms.uFogFar.value + 80);
 
     const clip = new THREE.Matrix4().copy(cam.mainMatrix).multiply(this.sceneToMercator);
     // The chain mirrors once (mercator y points south). Pick the face side once.

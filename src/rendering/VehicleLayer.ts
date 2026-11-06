@@ -1000,7 +1000,7 @@ export function vehicleLayer(
 
   function fire(now: number, heading: number, here: Position) {
     const water = currentCar.id === WATER_TRUCK_ID;
-    if (!aim || !map || now - lastShot < (water ? 32 : 50)) return;
+    if (!aim || !map || now - lastShot < (water ? 14 : 50)) return;
     lastShot = now;
     const carAlt = height();
 

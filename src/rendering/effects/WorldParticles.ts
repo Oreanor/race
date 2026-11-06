@@ -408,16 +408,23 @@ export class WorldParticles {
       u: groundRel,
     };
     const flightMs = Math.min(900, Math.max(80, (tLand / speedUp) * 1000));
-    const gobs = 3 + Math.floor(Math.random() * 2);
+    // dense rope of spit — many small stretched beads, staggered along the lob so gaps close
+    const gobs = 11 + Math.floor(Math.random() * 4);
     for (let i = 0; i < gobs; i++) {
-      const wobble = 0.035;
-      this.add(here, from, {
+      const wobble = 0.022;
+      const along = (i / gobs) * Math.min(0.09, tLand / speedUp); // seed a short lead along the jet
+      const spawn: Enu = {
+        e: from.e + ve * along,
+        n: from.n + vn * along,
+        u: from.u + vu * along - 0.5 * particleG * along * along,
+      };
+      this.add(here, spawn, {
         kind: 'water',
-        ve: ve * (1 + rand(-wobble, wobble)) + rand(-0.2, 0.2) * speedUp,
-        vn: vn * (1 + rand(-wobble, wobble)) + rand(-0.2, 0.2) * speedUp,
-        vu: vu * (1 + rand(-wobble * 0.5, wobble)) + rand(-0.1, 0.2) * speedUp,
-        life: flightMs * rand(1.05, 1.18), size0: rand(0.4, 0.68), size1: rand(0.3, 0.48),
-        drag: 0.12, gravity: particleG, stretch: 0.028,
+        ve: ve * (1 + rand(-wobble, wobble)) + rand(-0.12, 0.12) * speedUp,
+        vn: vn * (1 + rand(-wobble, wobble)) + rand(-0.12, 0.12) * speedUp,
+        vu: vu * (1 + rand(-wobble * 0.5, wobble)) + rand(-0.08, 0.12) * speedUp,
+        life: flightMs * rand(1.0, 1.12), size0: rand(0.16, 0.28), size1: rand(0.12, 0.22),
+        drag: 0.1, gravity: particleG, stretch: 0.042,
       }, now);
     }
     return { flightMs, land };

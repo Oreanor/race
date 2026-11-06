@@ -413,11 +413,11 @@ export class WorldTiles {
     geometry.setAttribute('aWin', new THREE.BufferAttribute(chunk.win, 4));
     geometry.setAttribute('aWinSize', new THREE.BufferAttribute(chunk.winSize, 2));
     geometry.setIndex(new THREE.BufferAttribute(chunk.index, 1));
-    // aGround*uExag lifts walls in the vertex shader (not in positions); pad for DEM, but
-    // +400 kept almost every high-rise chunk forever in frustum — tighten for city FPS
+    // aGround*uExag lifts walls in the vertex shader (not in positions); pad for DEM.
+    // Keep pad modest so off-screen Manhattan blocks actually cull.
     geometry.boundingSphere = new THREE.Sphere(
       new THREE.Vector3(chunk.cx, chunk.maxHeight / 2, chunk.cz),
-      Math.hypot(chunk.radius * Math.SQRT2, chunk.maxHeight) + 180,
+      Math.hypot(chunk.radius * Math.SQRT2, chunk.maxHeight) + 120,
     );
     const mesh = this.lampLit(new THREE.Mesh(geometry, this.farMat), live);
     mesh.matrixAutoUpdate = false;

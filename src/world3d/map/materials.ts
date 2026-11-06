@@ -666,9 +666,10 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
         return heat;
       }
       void main() {
-        // fully fogged pixels: skip window/skin work (dense skylines waste a lot here)
+        // fully / nearly fogged: skip window/skin/mirror work (Manhattan towers eat fill-rate)
         float fogDist = distance(vWorld, uCameraPos);
-        if (fogDist >= uFogFar) {
+        float fogAmt = smoothstep(uFogNear, uFogFar, fogDist);
+        if (fogAmt > 0.92) {
           gl_FragColor = linearToOutputTexel(vec4(toLinear(uFogColor), 1.0));
           return;
         }
@@ -816,10 +817,13 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
             vec3 glass = skin > 0.5 ? skinGlass * 0.85 : toLinear(cityGlass) * 0.85;
             if (skin > 0.5 && skin < 1.5) glass = modGlass(seeded(vColor, 13.3)) * 0.9;
             vec2 cellM = vWin.zw;
-            // dense high-rises fill the screen with sub-pixel cells — skip archetype/shutters there
-            float far = smoothstep(0.18, 0.45, max(fwidth(uv.x), fwidth(uv.y)));
+            // dense / fogged towers: skip archetype/shutters (Manhattan fill-rate)
+            float far = max(
+              smoothstep(0.16, 0.4, max(fwidth(uv.x), fwidth(uv.y))),
+              fogAmt * 1.15
+            );
             float fa = clamp(vWinSize.x * vWinSize.y / (cellM.x * cellM.y), 0.0, 1.0);
-            if (far > 0.88) {
+            if (far > 0.82) {
               // cheap average glass fill (no cityWindow / modernWindow / cracks)
               float gaFast = fa * 0.72;
               albedo = albedo * (1.0 - fa) + frame * (fa - gaFast) + glass * gaFast;
@@ -935,88 +939,61 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
             }
           }
         }
-        // ---- futuristic: mirror towers, steel-and-glass stripes, white modules with ribbon windows
-        float mirror = 0.0;          // how much of this pixel reflects the sky
-        vec3 futureLit = vec3(0.0);  // its night light
-        vec3 env_tint = vec3(1.0);   // gold glass warms what it reflects
+        // ---- futuristic (perf-first): keep the look, ditch heavy mirror/atan fill-rate
+        float mirror = 0.0;
+        vec3 futureLit = vec3(0.0);
+        vec3 env_tint = vec3(1.0);
         if (skin > 1.5 && skin < 2.5) {
           vec3 kept = albedo;
           float kind = seeded(vColor, 11.3);
           float floorH = vWin.x > 0.5 ? vWin.w : 3.4;
-          vec2 fw = max(fwidth(wallM), vec2(1e-3));
-          float fy = fract(wallM.y / floorH), floorIdx = floor(wallM.y / floorH);
-          // far away the fine pattern turns into its average colour (no moiré)
-          float far = smoothstep(0.12, 0.4, fw.y / floorH);
+          float fy = fract(wallM.y / floorH);
+          float far = max(smoothstep(0.08, 0.28, max(fwidth(wallM.x), fwidth(wallM.y)) / floorH), fogAmt);
           vec3 cool = glowTone(hb2);
+          vec3 pane = slot(4, hb2) * 0.88;
+          vec3 steel = toLinear(vec3(0.9, 0.92, 0.94));
           if (roofFace) {
-            if (hb3 < 0.04 && normalize(vNormal).y > 0.9) { // a rare roof garden, flat roofs only
-              // roof garden: lawn with soft round shrubs
-              vec2 q = vWorld.xz * 0.7; float shrub = smoothstep(0.42, 0.3, length(fract(q) - 0.5)) * step(0.55, seeded(vec3(floor(q), hb), 2.0));
-              albedo = mix(toLinear(vec3(0.52, 0.68, 0.4)), toLinear(vec3(0.38, 0.54, 0.3)), shrub * (1.0 - far));
-            } else if (hb2 < 0.62) albedo = toLinear(vec3(0.92, 0.94, 0.93)) * (0.98 + 0.05 * hb3); // bright roof; the rest keep a light slate tone
-          } else if (kind < 0.34) {
-            // mirror tower: reflective skin with thin steel lines; champagne glass stays warm, not muddy
-            float room = 1.5 + floor(hb2 * 3.0) * 0.45;
-            vec2 g = abs(vec2(fract(wallM.x / room), fy) - 0.5);
-            float lines = max(step(0.47, g.x), step(0.45, g.y));
-            bool gold = kind > 0.22;
-            vec3 pane = gold
-              ? mix(toLinear(vec3(0.82, 0.78, 0.7)), toLinear(vec3(0.74, 0.72, 0.68)), hb3) * 0.88
-              : mix(slot(4, hb), toLinear(vec3(0.78, 0.88, 0.94)), hb3 * 0.55) * 0.9;
-            vec3 steel = gold ? toLinear(vec3(0.92, 0.88, 0.8)) : toLinear(vec3(0.9, 0.93, 0.95));
-            albedo = mix(mix(pane, steel, lines), mix(pane, steel, 0.16), far);
-            mirror = 0.82 * mix(1.0 - lines, 0.78, far);
-            float h = seeded(vec3(floor(wallM.x / room), floorIdx, hb), 4.0);
-            futureLit = cool * step(0.78, h) * mix(1.0 - lines, 0.25, far);
-            if (gold) env_tint = vec3(1.1, 1.02, 0.92);
-          } else if (kind < 0.46) {
-            // diagrid tower: bright lattice over sky glass
-            float cell = 2.0 * floorH;
-            vec2 q = vec2(wallM.x, wallM.y) / cell;
-            float d1 = abs(fract(q.x + q.y) - 0.5), d2 = abs(fract(q.x - q.y) - 0.5);
-            float lattice = max(step(0.45, d1), step(0.45, d2));
-            float floors = step(0.47, abs(fy - 0.5));
-            vec3 pane = slot(4, hb2) * 0.82;
-            vec3 steel = toLinear(vec3(0.92, 0.94, 0.96));
-            albedo = mix(mix(pane, steel, max(lattice, floors * 0.6)), mix(pane, steel, 0.28), far);
-            mirror = mix((1.0 - lattice) * 0.78, 0.62, far);
-            futureLit = cool * step(0.8, seeded(vec3(floor(wallM.x / 2.0), floorIdx, hb), 9.0)) * mix(1.0 - lattice, 0.2, far);
-          } else if (kind < 0.62) {
-            // steel and glass stripes: silver spandrel + bright glass ribbon
-            float split = 0.3 + hb2 * 0.15;
+            albedo = hb2 < 0.62
+              ? toLinear(vec3(0.92, 0.94, 0.93)) * (0.98 + 0.05 * hb3)
+              : pickRoof(hb) * (1.0 + (hb2 - 0.5) * 2.0 * skinRoofRange);
+          } else if (far > 0.55) {
+            // mid/far towers: two-tone stripe only (no lattice/fins/diagrid)
+            float band = step(0.38, fy);
+            albedo = mix(steel, pane, band * 0.85 + 0.15);
+            mirror = 0.18 * (1.0 - fogAmt);
+            futureLit = cool * step(0.72, hb3) * band * 0.35;
+          } else if (kind < 0.4) {
+            // mirror / glass curtain — lower mirror than before
+            float room = 1.6 + floor(hb2 * 2.0) * 0.55;
+            float lines = max(step(0.46, abs(fract(wallM.x / room) - 0.5)), step(0.46, abs(fy - 0.5)));
+            bool gold = kind > 0.26;
+            if (gold) {
+              pane = mix(toLinear(vec3(0.82, 0.78, 0.7)), toLinear(vec3(0.74, 0.72, 0.68)), hb3) * 0.88;
+              steel = toLinear(vec3(0.92, 0.88, 0.8));
+              env_tint = vec3(1.08, 1.02, 0.94);
+            }
+            albedo = mix(pane, steel, lines);
+            mirror = 0.42 * (1.0 - lines);
+            futureLit = cool * step(0.8, hb) * (1.0 - lines) * 0.5;
+          } else if (kind < 0.7) {
+            // steel + glass floor ribbons (covers old stripe / diagrid looks)
+            float split = 0.32 + hb2 * 0.14;
             float band = step(split, fy);
-            float mull = step(0.45, abs(fract(wallM.x / 1.3) - 0.5)) * band;
-            vec3 steel = mix(toLinear(vec3(0.88, 0.9, 0.92)), toLinear(vec3(0.9, 0.88, 0.82)), step(0.5, hb3)) * (0.97 + 0.06 * hb3);
-            vec3 pane = slot(4, hb2) * 0.9;
-            vec3 sharp = mix(mix(steel, pane, band), steel * 0.92, mull);
-            albedo = mix(sharp, mix(steel, pane, 1.0 - split), far);
-            mirror = mix(band * (1.0 - mull) * 0.7 + (1.0 - band) * 0.28, 0.5, far);
-            float h = seeded(vec3(floor(wallM.x / 2.6), floorIdx, hb), 5.0);
-            futureLit = cool * step(0.78, h) * mix(band * (1.0 - mull), 0.2, far);
-          } else if (kind < 0.76) {
-            // white vertical fins: tall louvres, bright glass between them
-            float pitch = 0.9 + hb2 * 0.6;
-            float fin = step(0.3, abs(fract(wallM.x / pitch) - 0.5));
-            float slab = step(0.46, abs(fy - 0.5));
-            vec3 white = toLinear(vec3(0.97, 0.98, 0.97));
-            vec3 pane = slot(4, hb) * 0.78;
-            albedo = mix(mix(pane, white, max(fin, slab)), mix(pane, white, 0.55), far);
-            mirror = mix((1.0 - max(fin, slab)) * 0.5, 0.22, far);
-            futureLit = cool * step(0.65, seeded(vec3(floor(wallM.x / 3.0), floorIdx, hb), 10.0)) * mix(1.0 - max(fin, slab), 0.15, far);
+            float mull = step(0.46, abs(fract(wallM.x / 1.4) - 0.5)) * band;
+            albedo = mix(mix(steel, pane, band), steel * 0.92, mull);
+            mirror = band * (1.0 - mull) * 0.32;
+            futureLit = cool * step(0.78, hb3) * band * 0.45;
           } else {
-            // white modules: long ribbon windows on clean composites
-            float stretch = 3.0 + floor(hb2 * 3.0);
-            float open = step(0.38, seeded(vec3(floor(wallM.x / stretch), floorIdx, hb), 6.0));
-            float win = open * step(0.36, fy) * step(fy, 0.84);
-            vec3 white = toLinear(vec3(0.97, 0.98, 0.96)) * (0.98 + 0.04 * hb3);
-            vec3 pane = slot(4, hb) * 0.8;
-            albedo = mix(mix(white, pane, win), mix(white, pane, 0.28), far);
-            mirror = mix(win * 0.55, 0.16, far);
-            futureLit = cool * step(0.5, seeded(vec3(floor(wallM.x / stretch), floorIdx, hb), 8.0)) * mix(win, 0.14, far);
+            // white fins / modules
+            float fin = step(0.32, abs(fract(wallM.x / (0.95 + hb2 * 0.5)) - 0.5));
+            float win = step(0.36, fy) * step(fy, 0.84) * (1.0 - fin);
+            vec3 white = toLinear(vec3(0.97, 0.98, 0.96));
+            albedo = mix(white, pane, win);
+            mirror = win * 0.28;
+            futureLit = cool * step(0.55, hb) * win * 0.4;
           }
-          // a shot-out pane keeps its cracks
           albedo = mix(albedo, kept, broken);
-          mirror *= 1.0 - broken;
+          mirror *= (1.0 - broken) * (1.0 - fogAmt * 0.85);
         }
         vec3 n = normalize(vNormal);
         // comic-like light, but sunlit walls stand clearly apart from the shaded ones
@@ -1028,18 +1005,12 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
         if (n.y < 0.5) light *= mix(0.62, 1.0, smoothstep(0.0, 2.2, vHeight));
         // street light reaches the lower floors of the walls, not the roofs
         vec3 color = albedo * (light + headlight(vWorld, n) + lampLight() * (n.y > 0.5 ? 0.0 : 1.0 - smoothstep(1.5, 9.0, vHeight)));
-        if (mirror > 0.0) {
-          // glass and steel reflect the sky (and a dark street below the horizon), with a sun glint
-          vec3 eye = normalize(vWorld - uCameraPos);
-          vec3 r = reflect(eye, n);
-          vec3 sky = toLinear(uFogColor);
-          vec3 zenith = sky * vec3(0.62, 0.78, 1.05) * (0.65 + 0.4 * uAmbient.g / 0.73);
-          vec3 env = r.y > 0.0 ? mix(sky * 1.18, zenith, pow(r.y, 0.55)) : mix(sky * 0.72, toLinear(vec3(0.42, 0.46, 0.5)), min(1.0, -r.y * 4.0));
-          // soft bright bands in the glass, not dirty street strips
-          env *= (0.88 + 0.16 * smoothstep(0.3, 0.7, fract(atan(r.z, r.x) * 2.2))) * env_tint;
-          float fres = 0.35 + 0.55 * pow(1.0 - max(dot(-eye, n), 0.0), 3.0);
-          color = mix(color, env, mirror * fres);
-          color += uSunColor * 2.6 * pow(max(dot(r, uSun), 0.0), 140.0) * mirror;
+        // futuristic glass: always cheap sky tint (old reflect+atan+pow was the Manhattan killer)
+        if (mirror > 0.02) {
+          vec3 sky = toLinear(uFogColor) * env_tint;
+          float facing = 0.35 + 0.4 * max(0.0, 1.0 - abs(n.y));
+          color = mix(color, sky * 1.15, mirror * facing);
+          color += uSunColor * (0.35 * mirror * max(dot(n, uSun), 0.0));
         }
         color += futureLit * 1.1 * uNight;
         // at night a share of the windows is lit, each window its own warm tone
