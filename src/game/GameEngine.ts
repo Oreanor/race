@@ -277,7 +277,7 @@ export class GameEngine {
   private sharedTraffic!: SharedTraffic;
   private vehicleContactTimes = new Map<string, number>();
   private trafficMarkerLayer: HTMLElement | null = null;
-  private trafficMarkers = new Map<string, { element: HTMLElement; arrow: HTMLElement; distance: HTMLElement }>();
+  private trafficMarkers = new Map<string, { element: HTMLElement; arrow: HTMLElement; name: HTMLElement; distance: HTMLElement }>();
   /** health bars over the cars on screen */
   private healthMeters!: HealthMeters;
   private mode: 'roam' | 'arena' | 'race' = 'roam';
@@ -3593,7 +3593,7 @@ export class GameEngine {
     };
   }
 
-  /** Fire truck: marker by an existing house → arrive → burn 1..N street windows → hose them out. */
+  /** Fire truck: a house is already burning when the call appears — drive over and hose the windows. */
   private updateFire() {
     if (!this.isFireTruck()) return;
     updateFireCall(this.fire, this.fireWorld());
@@ -4005,11 +4005,11 @@ export class GameEngine {
     const roleLatch = roleGoal
       ? `${roleGoal.id}:${roleGoal.position?.[0]?.toFixed(5) ?? ''},${roleGoal.position?.[1]?.toFixed(5) ?? ''}:${roleGoal.label}`
       : null;
-    if (roleLatch && roleLatch !== this.focusEventLatch) {
+    if (roleLatch && roleLatch !== this.focusGoalsLatch) {
       const index = goals.findIndex((goal) => goal.role);
       if (index >= 0) this.missionFocus = index;
     }
-    this.focusEventLatch = roleLatch;
+    this.focusGoalsLatch = roleLatch;
     if (this.missionFocus >= goals.length) this.missionFocus = Math.max(0, goals.length - 1);
     const focused = roaming ? goals[this.missionFocus] ?? null : null;
     if (!this.focusIndicator && roaming && focused) {
@@ -4060,9 +4060,9 @@ export class GameEngine {
       this.busTour.active ? this.busTour.goal : this.busTour.pickup,
       pinRange && this.isBus(),
     );
-    if (errand?.kind === 'delivery') this.setMapPinRange(this.errandMarkers.get('goal'), errand.goal, pinRange);
-    if (errand?.kind === 'collect') {
-      for (const box of errand.boxes) this.setMapPinRange(this.errandMarkers.get(box.id), box.position, pinRange);
+    if (this.errand?.kind === 'delivery') this.setMapPinRange(this.errandMarkers.get('goal'), this.errand.goal, pinRange);
+    if (this.errand?.kind === 'collect') {
+      for (const box of this.errand.boxes) this.setMapPinRange(this.errandMarkers.get(box.id), box.position, pinRange);
     }
   }
 

@@ -252,6 +252,7 @@
 .ui-empty{margin:6px 10px;font-size:13px;color:var(--ui-muted)}
 .ui-wallet{padding:8px 12px;border-radius:var(--ui-radius-sm);background:var(--ui-soft);justify-content:flex-end}
 .ui-wallet.is-reward{justify-content:space-between}
+.ui-wallet.is-payout{width:fit-content;margin-inline:auto;justify-content:center;gap:0;padding:8px 14px}
 .ui-coins{display:inline-flex;align-items:center;gap:0;font-variant-numeric:tabular-nums}
 .ui-coins .money-coin{width:10px;height:15px}
 .ui-coins.is-broke{color:#d9534f}

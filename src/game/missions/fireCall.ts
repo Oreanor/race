@@ -1,7 +1,7 @@
 import { facadeMarker, pickBurningCount, pickBurningPanes, type FirePaneSpec } from '@/rendering/BurningHouse';
 import { formatNumber, t } from '@/i18n';
-import { metersBetween, type Position } from '../VehicleController';
-import { FIRE_ARRIVE_M, FIRE_WINDOW_COIN } from '../tuning';
+import type { Position } from '../VehicleController';
+import { FIRE_WINDOW_COIN } from '../tuning';
 
 export type FireCallState = {
   pickup: [number, number] | null;
@@ -39,20 +39,14 @@ export type FireCallWorld = {
   onResult: (cash: number, windows: number) => void;
 };
 
-/** Spawn / arrive at the fire pin (call every frame while in the fire truck). */
+/** Spawn a burning house while in the fire truck (call every frame). Fire is lit as soon as the call appears. */
 export function updateFireCall(state: FireCallState, world: FireCallWorld) {
   const now = performance.now();
-  const here = world.position;
-  if (state.active) return;
-  if (state.pickup) {
-    if (world.mode === 'roam' && !world.bountyFight && !world.errand
-      && metersBetween(here, state.pickup) <= FIRE_ARRIVE_M) startFireCall(state, world);
-    return;
-  }
+  if (state.active || state.pickup) return;
   if (world.mode !== 'roam' || world.bountyFight || world.errand || world.onMission) return;
   if (world.busy || now < state.offerAt) return;
+  const here = world.position;
   const seed = Math.round(here[0] * 1e5) ^ Math.round(here[1] * 1e5) ^ (now | 0);
-  let pinned: [number, number] | null = null;
   for (let attempt = 0; attempt < 8; attempt++) {
     const spot = world.pickBeaconSpot(here as [number, number], world.heading, seed ^ 0x51f3 ^ (attempt * 17), world.avoid);
     const facades = world.fireFacadesNear(spot, 70);
@@ -63,44 +57,51 @@ export function updateFireCall(state: FireCallState, world: FireCallWorld) {
       oe: p.oe,
       on: p.on,
     }));
-    pinned = facadeMarker(specs, spot) as [number, number];
-    break;
-  }
-  if (!pinned) {
-    state.offerAt = now + 8000;
+    const n = pickBurningCount(specs.length, seed ^ (attempt * 9137));
+    const burning = pickBurningPanes(specs, n, seed ^ 0x9e3779b9 ^ (attempt * 17));
+    if (!burning.length) continue;
+    state.active = true;
+    state.pickup = null;
+    state.spot = facadeMarker(burning, spot) as [number, number];
+    state.windowTotal = burning.length;
+    world.setFireHouse({ panes: burning });
+    world.syncMissionVisuals(true);
+    world.say(t('fire.start', { n: state.windowTotal, coin: formatNumber(FIRE_WINDOW_COIN) }), true);
     return;
   }
-  state.pickup = pinned;
-  world.syncMissionVisuals(true);
-  world.say(t('mission.new', { label: t('fire.goal') }), true);
+  state.offerAt = now + 8000;
 }
 
+/** Kept for callers that still poke the call; fire now starts when the pin is offered. */
 export function startFireCall(state: FireCallState, world: FireCallWorld) {
-  if (!state.pickup || state.active) return;
-  const site = state.pickup;
-  const facades = world.fireFacadesNear(site, 80);
-  if (!facades?.panes.length) {
+  if (state.active) return;
+  if (state.pickup) {
+    // legacy path: pin without flames — ignite now
+    const site = state.pickup;
+    const facades = world.fireFacadesNear(site, 80);
+    if (!facades?.panes.length) {
+      state.pickup = null;
+      state.offerAt = performance.now() + 6000;
+      world.syncMissionVisuals(true);
+      return;
+    }
+    const specs: FirePaneSpec[] = facades.panes.map((p) => ({
+      at: p.at as [number, number],
+      altitude: p.altitude,
+      oe: p.oe,
+      on: p.on,
+    }));
+    const seed = Math.round(site[0] * 1e5) ^ Math.round(site[1] * 1e5) ^ (performance.now() | 0);
+    const n = pickBurningCount(specs.length, seed);
+    const burning = pickBurningPanes(specs, n, seed ^ 0x9e3779b9);
+    state.active = true;
+    state.spot = facadeMarker(burning, site) as [number, number];
     state.pickup = null;
-    state.offerAt = performance.now() + 6000;
+    state.windowTotal = burning.length;
+    world.setFireHouse({ panes: burning });
     world.syncMissionVisuals(true);
-    return;
+    world.say(t('fire.start', { n: state.windowTotal, coin: formatNumber(FIRE_WINDOW_COIN) }), true);
   }
-  const specs: FirePaneSpec[] = facades.panes.map((p) => ({
-    at: p.at as [number, number],
-    altitude: p.altitude,
-    oe: p.oe,
-    on: p.on,
-  }));
-  const seed = Math.round(site[0] * 1e5) ^ Math.round(site[1] * 1e5) ^ (performance.now() | 0);
-  const n = pickBurningCount(specs.length, seed);
-  const burning = pickBurningPanes(specs, n, seed ^ 0x9e3779b9);
-  state.active = true;
-  state.spot = facadeMarker(burning, site) as [number, number];
-  state.pickup = null;
-  state.windowTotal = burning.length;
-  world.setFireHouse({ panes: burning });
-  world.syncMissionVisuals(true);
-  world.say(t('fire.start', { n: state.windowTotal, coin: formatNumber(FIRE_WINDOW_COIN) }), true);
 }
 
 export function onFireWindowOut(state: FireCallState, world: FireCallWorld, left: number) {
@@ -138,5 +139,6 @@ export function suspendFireCall(state: FireCallState, world: FireCallWorld) {
     state.offerAt = performance.now() + 12000;
     world.say(t('fire.aborted'), true);
   }
+  state.pickup = null;
   world.syncMissionVisuals(true);
 }

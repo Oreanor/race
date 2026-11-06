@@ -1072,7 +1072,7 @@ export default function Game() {
           >
             <p className="ui-text">{text}</p>
             {eventResult.won && cash > 0 && (
-              <div className="ui-row ui-wallet is-reward"><span>+ <Price value={cash} /></span></div>
+              <div className="ui-row ui-wallet is-payout"><span>+ <Price value={cash} /></span></div>
             )}
           </Dialog>
         );
