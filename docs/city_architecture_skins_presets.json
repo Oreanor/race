@@ -432,6 +432,15 @@
   "selectionAndVariation": {
     "applyStylePer": "neighborhood, district or polygon zone; not per face",
     "districtStyleMixRule": "Для узнаваемого квартала держать 75–90% зданий в одном стиле; остальные — нейтральные переходы/соседний район",
+    "mixedCityRule": {
+      "mode": "skin id mixed (shader index 4)",
+      "districts": "Сетка ~300 м; каждый район тяготеет к одному из четырёх видов: old city / modern / futuristic / victorian",
+      "heightGates": [
+        "high-rise (≥9 этажей или ≥30 м): преимущественно modern и futuristic",
+        "mid-rise: любой стиль",
+        "low-rise (1–2 этажа): все кроме futuristic"
+      ]
+    },
     "buildingVariation": "Hash(cityId, buildingId, styleId) => reproducible palette, roof, trim and accent choices",
     "buildingSizeRules": [
       "low-rise: visibly pitched roofs, distinctive roof color; avoid facade full glazing",

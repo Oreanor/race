@@ -153,7 +153,7 @@ export class SharedTraffic {
   holdable(): { id: string; car: Car; position: Position; heading: number; speed: number }[] {
     const layer = this.host.layer();
     return [
-      ...this.bots().map((bot) => ({ id: bot.id, car: bot.car, position: bot.position, heading: bot.heading, speed: Math.abs(bot.controller.speed) })),
+      ...this.bots().map((bot) => ({ id: bot.id, car: bot.car, position: bot.position, heading: bot.heading, speed: bot.controller.speed })),
       ...this.parked.filter((p) => layer?.isTargetAlive(p.id) !== false).map((p) => ({ id: p.id, car: p.car, position: p.controller.position, heading: p.controller.heading, speed: 0 })),
     ];
   }
@@ -162,12 +162,12 @@ export class SharedTraffic {
   hold(id: string | null) { this.held = id; }
 
   /** Put a car of ours here (the hauler carries it); a driven one finds its way again from there. */
-  place(id: string, position: Position, heading: number) {
+  place(id: string, position: Position, heading: number, speed = 0) {
     const bot = this.driven.find((d) => d.bot.id === id)?.bot;
     if (bot) {
       bot.controller.position = [...position] as Position;
       bot.controller.heading = heading;
-      bot.controller.speed = 0;
+      bot.controller.speed = speed;
       bot.position = [...position] as Position;
       bot.heading = heading;
       bot.route = [];

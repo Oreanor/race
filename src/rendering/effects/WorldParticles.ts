@@ -20,7 +20,7 @@ function eastNorth(origin: Position, point: Position) {
 /** World offset relative to the car, meters. */
 export type Enu = { e: number; n: number; u: number };
 
-type Kind = 'flash' | 'flame' | 'spark' | 'fire' | 'smoke' | 'dust' | 'ring' | 'ember' | 'tracer' | 'tiresmoke' | 'grit';
+type Kind = 'flash' | 'flame' | 'spark' | 'fire' | 'smoke' | 'dust' | 'ring' | 'ember' | 'tracer' | 'tiresmoke' | 'grit' | 'water' | 'mist';
 
 /** What the rear wheels are on: asphalt and pavements smoke, the rest throws dust and grit. */
 export type Surface = 'paved' | 'dirt' | 'grass' | 'sand';
@@ -39,8 +39,8 @@ type Particle = {
   tint?: [number, number, number];
 };
 
-const SHAPE: Record<Kind, number> = { flash: 0, flame: 0, spark: 0, ember: 0, fire: 0, smoke: 2, dust: 2, ring: 1, tracer: 0, tiresmoke: 2, grit: 0 };
-const ADDITIVE: Record<Kind, boolean> = { flash: true, flame: true, spark: true, ember: true, fire: true, smoke: false, dust: false, ring: true, tracer: true, tiresmoke: false, grit: false };
+const SHAPE: Record<Kind, number> = { flash: 0, flame: 0, spark: 0, ember: 0, fire: 0, smoke: 2, dust: 2, ring: 1, tracer: 0, tiresmoke: 2, grit: 0, water: 3, mist: 2 };
+const ADDITIVE: Record<Kind, boolean> = { flash: true, flame: true, spark: true, ember: true, fire: true, smoke: false, dust: false, ring: true, tracer: true, tiresmoke: false, grit: false, water: false, mist: false };
 
 /** dust cloud, grit and tyre-smoke colours per surface (linear) */
 const SURFACE_FX: Record<Surface, { dust: [number, number, number]; grit: [number, number, number] }> = {
@@ -98,6 +98,15 @@ function shade(p: Particle, t: number): [number, number, number, number] {
     }
     case 'ring': return [2.6, 1.5, 0.6, 0.85 * (1 - t) * (1 - t)];
     case 'tracer': return [3, 2.1, 0.8, 1 - t * 0.4];
+    case 'water': {
+      // bright milky spit, only a hint of cyan — readable against sky and walls
+      const c = lerp3([0.92, 0.98, 1.05], [0.7, 0.86, 0.98], t);
+      return [c[0], c[1], c[2], 0.88 * (1 - t * t)];
+    }
+    case 'mist': {
+      const c = p.tint ?? [0.55, 0.72, 0.88];
+      return [c[0], c[1], c[2], 0.4 * Math.min(1, t * 8) * (1 - t) * (1 - t)];
+    }
   }
 }
 
@@ -153,7 +162,14 @@ const FRAGMENT = /* glsl */ `
   void main() {
     float r = length(vUv);
     float a;
-    if (vMeta.x > 1.5) {
+    vec3 rgb = vColor.rgb;
+    if (vMeta.x > 2.5) {
+      // water spit: dense body, slight cool rim (not a blue ghost)
+      float core = exp(-r * r * 3.2);
+      float rim = smoothstep(0.22, 0.88, r) * smoothstep(1.05, 0.72, r);
+      a = (0.92 * core + 0.4 * rim) * smoothstep(1.05, 0.68, r);
+      rgb = mix(vColor.rgb, vec3(0.55, 0.78, 1.0), rim * 0.28);
+    } else if (vMeta.x > 1.5) {
       // smoke / dust puff: soft lumpy blob
       float ang = atan(vUv.y, vUv.x);
       float lumps = 0.82 + 0.1 * sin(ang * 5.0 + vMeta.y * 40.0) + 0.08 * sin(ang * 9.0 - vMeta.y * 23.0);
@@ -168,7 +184,7 @@ const FRAGMENT = /* glsl */ `
     }
     a *= vColor.a;
     if (a < 0.004) discard;
-    vec4 color = uAdditive > 0.5 ? vec4(vColor.rgb * a, 1.0) : vec4(vColor.rgb, a);
+    vec4 color = uAdditive > 0.5 ? vec4(rgb * a, 1.0) : vec4(rgb, a);
     gl_FragColor = linearToOutputTexel(color);
   }
 `;
@@ -253,8 +269,8 @@ export class WorldParticles {
   light = 1;
 
   constructor(scene: THREE.Scene) {
-    this.glow = new Batch(900, true, this.eye);
-    this.soft = new Batch(900, false, this.eye);
+    this.glow = new Batch(1200, true, this.eye);
+    this.soft = new Batch(1200, false, this.eye);
     scene.add(this.soft.mesh, this.glow.mesh);
   }
 
@@ -262,7 +278,7 @@ export class WorldParticles {
     if (!this.anchor || this.particles.length === 0) this.anchor = [...here];
     const o = eastNorth(this.anchor, here);
     this.particles.push({ ...p, e: o.east + at.e, n: o.north + at.n, u: this.altitude + at.u, born: now, seed: p.seed ?? Math.random() });
-    if (this.particles.length > 1800) this.particles.splice(0, this.particles.length - 1800);
+    if (this.particles.length > 2400) this.particles.splice(0, this.particles.length - 2400);
   }
 
   /** Muzzle flash: a hot core, flame tongues along the shot, a couple of sparks. */
@@ -355,6 +371,106 @@ export class WorldParticles {
     }
   }
 
+  /**
+   * Fire hose: fixed muzzle speed, elevation from the player (mouse Y).
+   * Lands where the lob falls — short/long = aim higher/lower or drive closer/farther.
+   * Returns flight time (ms) and the ENU point where the spit meets the ground (u ≈ groundRel).
+   */
+  hose(here: Position, from: Enu, dirE: number, dirN: number, elev: number, groundRel: number, now: number): { flightMs: number; land: Enu } {
+    const g = 9.8;
+    const speedUp = 3;
+    const v0 = 26; // m/s real; particles run 3× faster on the same arc
+    const hl = Math.hypot(dirE, dirN) || 1;
+    const ue = dirE / hl, un = dirN / hl;
+    const theta = Math.max(-0.08, Math.min(1.05, elev)); // ~−5° … 60°
+    const cos = Math.cos(theta), sin = Math.sin(theta);
+    const ve = ue * v0 * cos * speedUp;
+    const vn = un * v0 * cos * speedUp;
+    const vu = v0 * sin * speedUp;
+    const particleG = g * speedUp * speedUp;
+    // real-time to drop from muzzle height to groundRel
+    const a = 0.5 * g;
+    const b = -(v0 * sin);
+    const c = from.u - groundRel;
+    let tLand = 0;
+    const disc = b * b - 4 * a * c;
+    if (disc >= 0 && a > 1e-6) {
+      const t1 = (-b - Math.sqrt(disc)) / (2 * a);
+      const t2 = (-b + Math.sqrt(disc)) / (2 * a);
+      tLand = Math.max(t1, t2);
+    }
+    if (!(tLand > 0.05)) tLand = Math.max(0.2, (2 * v0 * Math.max(0.05, sin)) / g);
+    tLand = Math.min(tLand, 2.2);
+    const range = v0 * cos * tLand;
+    const land: Enu = {
+      e: from.e + ue * range,
+      n: from.n + un * range,
+      u: groundRel,
+    };
+    const flightMs = Math.min(900, Math.max(80, (tLand / speedUp) * 1000));
+    const gobs = 3 + Math.floor(Math.random() * 2);
+    for (let i = 0; i < gobs; i++) {
+      const wobble = 0.035;
+      this.add(here, from, {
+        kind: 'water',
+        ve: ve * (1 + rand(-wobble, wobble)) + rand(-0.2, 0.2) * speedUp,
+        vn: vn * (1 + rand(-wobble, wobble)) + rand(-0.2, 0.2) * speedUp,
+        vu: vu * (1 + rand(-wobble * 0.5, wobble)) + rand(-0.1, 0.2) * speedUp,
+        life: flightMs * rand(1.05, 1.18), size0: rand(0.4, 0.68), size1: rand(0.3, 0.48),
+        drag: 0.12, gravity: particleG, stretch: 0.028,
+      }, now);
+    }
+    return { flightMs, land };
+  }
+
+  /** Sample points along the same lob as `hose` (real metres, for hit tests). */
+  hoseArc(from: Enu, dirE: number, dirN: number, elev: number, groundRel: number, steps = 20): Enu[] {
+    const g = 9.8, v0 = 26;
+    const hl = Math.hypot(dirE, dirN) || 1;
+    const ue = dirE / hl, un = dirN / hl;
+    const cos = Math.cos(elev), sin = Math.sin(elev);
+    const a = 0.5 * g, b = -(v0 * sin), c = from.u - groundRel;
+    let tLand = 0.8;
+    const disc = b * b - 4 * a * c;
+    if (disc >= 0 && a > 1e-6) {
+      const t1 = (-b - Math.sqrt(disc)) / (2 * a);
+      const t2 = (-b + Math.sqrt(disc)) / (2 * a);
+      tLand = Math.max(0.05, Math.max(t1, t2));
+    }
+    tLand = Math.min(tLand, 2.2);
+    const out: Enu[] = [];
+    for (let i = 1; i <= steps; i++) {
+      const t = (tLand * i) / steps;
+      out.push({
+        e: from.e + ue * v0 * cos * t,
+        n: from.n + un * v0 * cos * t,
+        u: from.u + v0 * sin * t - 0.5 * g * t * t,
+      });
+    }
+    return out;
+  }
+
+  /** Impact: same thick spit blobs as the hose, flung sideways off the surface. */
+  splash(here: Position, at: Enu, normal: Enu, now: number, scale = 1) {
+    const s = scale;
+    const nl = Math.hypot(normal.e, normal.n, normal.u) || 1;
+    const ne = normal.e / nl, nn = normal.n / nl, nu = normal.u / nl;
+    const count = 8;
+    for (let i = 0; i < count; i++) {
+      const ve = ne * rand(0.15, 0.55) + rand(-1, 1);
+      const vn = nn * rand(0.15, 0.55) + rand(-1, 1);
+      const vu = nu * rand(0.2, 0.7) + rand(0.05, 0.85);
+      const l = Math.hypot(ve, vn, vu) || 1;
+      const speed = rand(6, 12) * Math.sqrt(s);
+      this.add(here, at, {
+        kind: 'water',
+        ve: ve / l * speed, vn: vn / l * speed, vu: vu / l * speed,
+        life: rand(280, 480), size0: rand(0.4, 0.68) * s, size1: rand(0.3, 0.48) * s,
+        drag: 0.35, gravity: 9.8, stretch: 0.028,
+      }, now);
+    }
+  }
+
   /** Bullet impact: a spray of sparks bouncing back from the surface, a flash, dust on walls and ground. */
   impact(here: Position, at: Enu, normal: Enu, now: number, options: { scale?: number; dust?: boolean } = {}) {
     const s = options.scale ?? 1;
@@ -427,6 +543,33 @@ export class WorldParticles {
     }
   }
 
+  /** Black smoke pouring out of a burning window (slightly outward + up). Kept light for FPS. */
+  windowSmoke(here: Position, at: Enu, outward: { e: number; n: number }, now: number) {
+    this.add(here, { e: at.e + rand(-0.1, 0.1), n: at.n + rand(-0.1, 0.1), u: at.u + rand(0, 0.1) }, {
+      kind: 'smoke', tint: [0.03, 0.028, 0.025],
+      ve: outward.e * rand(0.3, 0.7) + rand(-0.15, 0.15),
+      vn: outward.n * rand(0.3, 0.7) + rand(-0.15, 0.15),
+      vu: rand(1.4, 2.4),
+      life: rand(1400, 2200), size0: rand(0.3, 0.45), size1: rand(1.0, 1.5),
+      drag: 0.3, gravity: -0.4, stretch: 0,
+    }, now);
+  }
+
+  /** White steam after a pane is put out — one soft puff. */
+  windowSteam(here: Position, at: Enu, outward: { e: number; n: number }, strength: number, now: number) {
+    if (strength <= 0.05) return;
+    const s = Math.max(0.15, Math.min(1, strength));
+    this.add(here, { e: at.e + rand(-0.1, 0.1), n: at.n + rand(-0.1, 0.1), u: at.u + rand(0, 0.1) }, {
+      kind: 'mist', tint: [0.92, 0.94, 0.96],
+      ve: outward.e * rand(0.2, 0.55) * s + rand(-0.15, 0.15),
+      vn: outward.n * rand(0.2, 0.55) * s + rand(-0.15, 0.15),
+      vu: rand(0.9, 1.8) * s,
+      life: rand(700, 1200) * (0.5 + 0.5 * s),
+      size0: rand(0.35, 0.55) * s, size1: rand(1.0, 1.5) * s,
+      drag: 0.4, gravity: -0.28, stretch: 0,
+    }, now);
+  }
+
   /**
    * Advance and draw. `heading` and `here` define the vehicle layer's local frame;
    * `eye` is the camera position in that frame.
@@ -453,6 +596,8 @@ export class WorldParticles {
       if (p.u < floor && (p.kind === 'spark' || p.kind === 'ember')) { p.u = floor; p.vu = Math.abs(p.vu) * 0.35; p.ve *= 0.6; p.vn *= 0.6; }
       // grit lands and skids to a stop
       if (p.u < floor && p.kind === 'grit') { p.u = floor; p.vu = 0; p.ve *= 0.5; p.vn *= 0.5; }
+      // water droplets splash once on the ground, then flatten into a short-lived puddle bead
+      if (p.u < floor && p.kind === 'water') { p.u = floor; p.vu = Math.abs(p.vu) * 0.25; p.ve *= 0.45; p.vn *= 0.45; p.life *= 0.85; }
       // world → local frame of the layer (same mapping as scenePoint)
       const e = p.e - o.east, n = p.n - o.north;
       const x = n * sin - e * cos, z = n * cos + e * sin;

@@ -43,20 +43,26 @@ export type BaseUniforms = {
   /** recent bullet hits on walls (scene xyz, w = crack seed): the pane they hit shows cracks */
   uShots: { value: THREE.Vector4[] };
   uShotCount: { value: number };
-  /** architecture skin (buildings/skins): 0 the city's own look, 1 modern, 2 futuristic, 3 victorian */
+  /** burning façade windows (scene xyz): that pane glows with fire */
+  uFires: { value: THREE.Vector4[] };
+  uFireCount: { value: number };
+  /** architecture skin (buildings/skins): 0 city, 1 modern, 2 futuristic, 3 victorian, 4 mixed (per building) */
   uSkin: { value: number };
-  /** weighted palettes: rgb (linear) + cumulative weight 0..1 */
+  /** weighted palettes × 3 banks (modern/futuristic/victorian): rgb (linear) + cumulative weight 0..1 */
   uSkinWall: { value: THREE.Vector4[] };
   uSkinRoof: { value: THREE.Vector4[] };
-  /** secondary wall, glass, frame, trim, accent, night glow (linear rgb), 4 each */
+  /** per bank: secondary, glass, frame, trim, accent, night glow (linear rgb), 4 each → 24 × 3 */
   uSkinColors: { value: THREE.Vector3[] };
-  /** lit share at night, accent chance, feature chance, wall lightness range */
-  uSkinOpt: { value: THREE.Vector4 };
-  uSkinRoofRange: { value: number };
+  /** per bank: lit share at night, accent chance, feature chance, wall lightness range */
+  uSkinOpt: { value: THREE.Vector4[] };
+  /** per bank: roof lightness range */
+  uSkinRoofRange: { value: THREE.Vector3 };
 };
 
 /** bullet-hit windows the facade shader knows about at once */
-export const MAX_SHOTS = 64;
+export const MAX_SHOTS = 48;
+/** burning windows the facade shader knows about at once (one fire call is enough) */
+export const MAX_FIRES = 24;
 
 export function baseUniforms(fogColor: string): BaseUniforms {
   return {
@@ -84,12 +90,14 @@ export function baseUniforms(fogColor: string): BaseUniforms {
     uXray: { value: 0 },
     uShots: { value: Array.from({ length: MAX_SHOTS }, () => new THREE.Vector4()) },
     uShotCount: { value: 0 },
+    uFires: { value: Array.from({ length: MAX_FIRES }, () => new THREE.Vector4()) },
+    uFireCount: { value: 0 },
     uSkin: { value: 0 },
-    uSkinWall: { value: Array.from({ length: 5 }, () => new THREE.Vector4()) },
-    uSkinRoof: { value: Array.from({ length: 5 }, () => new THREE.Vector4()) },
-    uSkinColors: { value: Array.from({ length: 24 }, () => new THREE.Vector3()) },
-    uSkinOpt: { value: new THREE.Vector4(0.38, 0, 0, 0) },
-    uSkinRoofRange: { value: 0 },
+    uSkinWall: { value: Array.from({ length: 15 }, () => new THREE.Vector4()) },
+    uSkinRoof: { value: Array.from({ length: 15 }, () => new THREE.Vector4()) },
+    uSkinColors: { value: Array.from({ length: 72 }, () => new THREE.Vector3()) },
+    uSkinOpt: { value: Array.from({ length: 3 }, () => new THREE.Vector4(0.38, 0, 0, 0)) },
+    uSkinRoofRange: { value: new THREE.Vector3() },
   };
 }
 
@@ -422,17 +430,29 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
       uniform float uXray;
       uniform vec4 uShots[${MAX_SHOTS}];
       uniform int uShotCount;
+      uniform vec4 uFires[${MAX_FIRES}];
+      uniform int uFireCount;
       uniform float uSkin;
-      uniform vec4 uSkinWall[5];
-      uniform vec4 uSkinRoof[5];
-      uniform vec3 uSkinColors[24];
-      uniform vec4 uSkinOpt;
-      uniform float uSkinRoofRange;
+      uniform vec4 uSkinWall[15];
+      uniform vec4 uSkinRoof[15];
+      uniform vec3 uSkinColors[72];
+      uniform vec4 uSkinOpt[3];
+      uniform vec3 uSkinRoofRange;
+      int skinBank;
       float seeded(vec3 c, float salt) { return fract(sin(dot(c, vec3(12.9898, 78.233, 37.719)) + salt) * 43758.5453); }
-      vec3 pickWall(float r) { for (int i = 0; i < 5; i++) if (r <= uSkinWall[i].w) return uSkinWall[i].rgb; return uSkinWall[4].rgb; }
-      vec3 pickRoof(float r) { for (int i = 0; i < 5; i++) if (r <= uSkinRoof[i].w) return uSkinRoof[i].rgb; return uSkinRoof[4].rgb; }
-      // slots of uSkinColors: 0 secondary, 4 glass, 8 frame, 12 trim, 16 accent, 20 glow
-      vec3 slot(int base, float r) { return uSkinColors[base + int(floor(r * 3.999))]; }
+      vec3 pickWall(float r) {
+        int o = skinBank * 5;
+        for (int i = 0; i < 5; i++) if (r <= uSkinWall[o + i].w) return uSkinWall[o + i].rgb;
+        return uSkinWall[o + 4].rgb;
+      }
+      vec3 pickRoof(float r) {
+        int o = skinBank * 5;
+        for (int i = 0; i < 5; i++) if (r <= uSkinRoof[o + i].w) return uSkinRoof[o + i].rgb;
+        return uSkinRoof[o + 4].rgb;
+      }
+      // slots of uSkinColors per bank: 0 secondary, 4 glass, 8 frame, 12 trim, 16 accent, 20 glow
+      vec3 slot(int base, float r) { return uSkinColors[skinBank * 24 + base + int(floor(r * 3.999))]; }
+      vec3 glowTone(float r) { return mix(uSkinColors[skinBank * 24 + 20], uSkinColors[skinBank * 24 + 21], r); }
       // victorian palettes (sRGB), one of four by roll
       vec3 pick4(float r, vec3 a, vec3 b, vec3 c, vec3 d) { return toLinear(r < 0.25 ? a : r < 0.5 ? b : r < 0.75 ? c : d); }
       vec3 vicStucco(float r) { return pick4(r, vec3(0.91, 0.86, 0.77), vec3(0.85, 0.78, 0.66), vec3(0.81, 0.81, 0.78), vec3(0.91, 0.87, 0.66)); }
@@ -453,6 +473,36 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
       varying float vHeight;
       varying vec4 vWin;
       varying vec2 vWinSize;
+      // Mixed city: districts (~300 m) favour one style; height clamps which styles a building may take.
+      // 0 old city, 1 modern, 2 futuristic, 3 victorian.
+      float resolveMixedSkin() {
+        vec2 cell = floor(vWorld.xz / 300.0);
+        float dRoll = seeded(vec3(cell, 2.1), 1.1);
+        // district dominant style (roughly even split of the four looks)
+        float district = dRoll < 0.24 ? 0.0 : dRoll < 0.49 ? 1.0 : dRoll < 0.72 ? 2.0 : 3.0;
+        float floors = vWin.x > 0.5 ? vWin.y : max(1.0, floor(vHeight / 3.2 + 0.5));
+        float clear = vWin.x > 0.5 ? vWin.y * vWin.w : vHeight;
+        bool high = floors >= 9.0 || clear >= 30.0;
+        bool low = floors <= 2.0 && !high;
+        float stick = seeded(vColor, 44.1);
+        float pick = seeded(vColor, 48.7);
+        if (high) {
+          // towers: modern / futuristic dominate; rare old-city or victorian spill
+          if (stick < 0.84) {
+            if (district == 1.0 || district == 2.0) return district;
+            return pick < 0.55 ? 1.0 : 2.0;
+          }
+          return pick < 0.5 ? 0.0 : 3.0;
+        }
+        if (low) {
+          // 1–2 floors: anything but futuristic
+          if (stick < 0.8 && district != 2.0) return district;
+          return pick < 0.34 ? 0.0 : pick < 0.67 ? 1.0 : 3.0;
+        }
+        // mid-rise: any style, district still reads as the majority
+        if (stick < 0.78) return district;
+        return floor(pick * 3.999);
+      }
       // 1 inside the centred rectangle of half-size h, antialiased by aa
       float box(vec2 p, vec2 h, vec2 aa) {
         vec2 q = smoothstep(h + aa, h - aa, abs(p));
@@ -594,7 +644,34 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
         }
         return result;
       }
+      // Fire in this pane: returns heat 0..1 when a burning marker sits on the glass.
+      float flaming(vec2 uv, vec2 cellM, vec2 pane, vec3 n) {
+        if (uFireCount == 0) return 0.0;
+        vec3 t = normalize(cross(vec3(0.0, 1.0, 0.0), n));
+        float s = dot(dFdx(vWorld), t) * dFdx(uv.x) + dot(dFdy(vWorld), t) * dFdy(uv.x);
+        s = s < 0.0 ? -1.0 : 1.0;
+        vec2 cell = floor(uv);
+        float heat = 0.0;
+        for (int i = 0; i < ${MAX_FIRES}; i++) {
+          if (i >= uFireCount) break;
+          vec3 d = uFires[i].xyz - vWorld;
+          if (dot(d, d) > 12.0 || abs(dot(d, n)) > 0.55) continue;
+          vec2 suv = uv + vec2(s * dot(d, t) / cellM.x, d.y / cellM.y);
+          if (floor(suv) != cell) continue;
+          vec2 sp = (fract(suv) - 0.5) * cellM;
+          if (abs(sp.x) > pane.x * 1.15 || abs(sp.y) > pane.y * 1.15) continue;
+          float flick = 0.55 + 0.45 * fract(sin(dot(cell, vec2(12.9898, 78.233)) + uClock * 3.1) * 43758.5453);
+          heat = max(heat, flick);
+        }
+        return heat;
+      }
       void main() {
+        // fully fogged pixels: skip window/skin work (dense skylines waste a lot here)
+        float fogDist = distance(vWorld, uCameraPos);
+        if (fogDist >= uFogFar) {
+          gl_FragColor = linearToOutputTexel(vec4(toLinear(uFogColor), 1.0));
+          return;
+        }
         if (uXray > 0.5) {
           vec3 target = uCar + vec3(0.0, 1.2, 0.0);
           vec3 seg = target - uCameraPos;
@@ -610,8 +687,16 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
         }
         vec3 albedo = toLinear(vColor);
         float broken = 0.0;
+        float fireHeat = 0.0;
+        float fireGlass = 0.0;
         // ---- architecture skin: one wall and one roof tone per building, the style's patterns
-        float skin = uSkin;
+        // mixed (uSkin=4) picks 0–3 per building from district + height; otherwise the global skin
+        float skin = uSkin > 3.5 ? resolveMixedSkin() : uSkin;
+        skinBank = skin > 0.5 ? int(skin + 0.5) - 1 : 0;
+        vec4 skinOpt = skin > 0.5 ? uSkinOpt[skinBank] : vec4(0.38, 0.0, 0.0, 0.0);
+        float skinRoofRange = skin > 0.5
+          ? (skinBank == 0 ? uSkinRoofRange.x : skinBank == 1 ? uSkinRoofRange.y : uSkinRoofRange.z)
+          : 0.0;
         float hb = seeded(vColor, 0.0), hb2 = seeded(vColor, 3.7), hb3 = seeded(vColor, 7.1);
         // victorian facade family: stucco 35%, muted brick 25%, stone 10%, painted 20%, brick + stucco 10%
         float fam = seeded(vColor, 21.7);
@@ -625,7 +710,7 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
           skinFrame = slot(8, hb3);
           skinTrim = slot(12, hb2);
           if (roofFace) {
-            albedo = pickRoof(hb) * (1.0 + (hb2 - 0.5) * 2.0 * uSkinRoofRange);
+            albedo = pickRoof(hb) * (1.0 + (hb2 - 0.5) * 2.0 * skinRoofRange);
             if (skin > 2.5) {
               // victorian roofs: each district (~260 m) keeps one family of three tones, so
               // neighbours agree without matching; one roof in ten takes any of the eight
@@ -640,14 +725,14 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
                   : k < 4.0 ? vec3(0.639, 0.42, 0.337) : k < 5.0 ? vec3(0.533, 0.31, 0.271) : k < 6.0 ? vec3(0.463, 0.337, 0.278)
                   : k < 7.0 ? vec3(0.455, 0.471, 0.427) : vec3(0.6, 0.576, 0.545);
               }
-              albedo = toLinear(tone) * (1.0 + (hb2 - 0.5) * 2.0 * uSkinRoofRange);
+              albedo = toLinear(tone) * (1.0 + (hb2 - 0.5) * 2.0 * skinRoofRange);
               // slate: courses along the slope, faint, fading out with distance
               float rows = step(0.44, abs(fract(vWorld.y / 0.32) - 0.5));
               albedo *= 1.0 - 0.07 * rows * (1.0 - smoothstep(0.02, 0.06, fwidth(vWorld.y)));
             }
 
           } else {
-            albedo = pickWall(hb) * (1.0 + (hb2 - 0.5) * 2.0 * uSkinOpt.w);
+            albedo = pickWall(hb) * (1.0 + (hb2 - 0.5) * 2.0 * skinOpt.w);
             if (skin < 1.5) {
               // modern: one large colour move per facade at most — a vertical section (one or
               // two wide strips), the top third in another shade, or a marked ground floor
@@ -730,114 +815,124 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
             vec3 cityGlass = hg < 0.3 ? uGlass0 : hg < 0.6 ? uGlass1 : hg < 0.8 ? uGlass3 : uGlass2;
             vec3 glass = skin > 0.5 ? skinGlass * 0.85 : toLinear(cityGlass) * 0.85;
             if (skin > 0.5 && skin < 1.5) glass = modGlass(seeded(vColor, 13.3)) * 0.9;
-            vec2 cellM = vWin.zw;                      // cell size in meters
-            vec2 p = (fract(uv) - 0.5) * cellM;        // meters from the pane centre
-            vec2 aa = max(fwidth(uv) * cellM, vec2(1e-4)) * 0.75;
-            float f = box(p, vWinSize * 0.5, aa);
-            float g = box(p, vWinSize * 0.46, aa);
-            if (skin > 2.5) {
-              // victorian: taller, narrower sash windows in white or cream surrounds,
-              // a lintel above and a sill below, string courses on some houses, doors below
-              vec2 ws = vWinSize * vec2(0.8, 1.06);
-              f = box(p, ws * 0.5 + 0.04, aa);
-              g = box(p, ws * 0.46, aa);
-              float surround = box(p, ws * 0.5 + vec2(0.12, 0.12), aa);
-              float lintel = box(p - vec2(0.0, ws.y * 0.5 + 0.13), vec2(ws.x * 0.5 + 0.18, 0.08), aa);
-              float sill = box(p - vec2(0.0, -ws.y * 0.5 - 0.12), vec2(ws.x * 0.5 + 0.16, 0.05), aa);
-              albedo = mix(albedo, skinTrim, max(surround, max(lintel, sill)));
-              if (hb2 < uSkinOpt.z && fract(uv.y) < 0.05) albedo = skinTrim * 0.96;
-              // sash bars: one upright and the meeting rail, gone before they shimmer
-              float barDetail = 1.0 - smoothstep(0.012, 0.03, max(fwidth(p.x), fwidth(p.y)));
-              float bars = max(step(abs(p.x), 0.03), step(abs(p.y + ws.y * 0.06), 0.035)) * barDetail;
-              glass = mix(glass, frame, bars);
-              // a door in some ground-floor bays: dark green, burgundy or navy
-              if (floor(uv.y) == 0.0 && mod(floor(uv.x) + floor(hb * 7.0), 5.0) == 0.0) {
-                vec2 door = vec2(min(0.6, cellM.x * 0.32), min(1.15, cellM.y * 0.4));
-                float d = box(p - vec2(0.0, -cellM.y * 0.5 + door.y + 0.05), door, aa);
-                float frameD = box(p - vec2(0.0, -cellM.y * 0.5 + door.y + 0.05), door + 0.1, aa);
-                albedo = mix(albedo, skinTrim, frameD);
-                albedo = mix(albedo, slot(16, fract(hb * 13.0)), d);
-                f = 0.0; g = 0.0;
-              }
-            } else if (skin > 1.5) {
-              // futuristic: ribbon glazing along each floor; thin teal stripes on some buildings
-              if (hb2 < 0.6) albedo = mix(albedo, glass * 0.95, step(abs(p.y), vWinSize.y * 0.46));
-              if (hb3 < uSkinOpt.y && fract(uv.y) < 0.035) albedo = slot(16, hb);
-              f = box(p, vWinSize * 0.47, aa);
-            } else if (skin > 0.5) {
-              ModWin mw = modernWindow(floor(uv), cellM, vWinSize, vWin.x);
-              vec2 q = p - mw.off;
-              g = box(q, mw.size, aa) * mw.open;
-              f = mw.kind == 0.0 ? box(q, mw.size + 0.04, aa) * mw.open : 0.0; // slim frames on plain windows
-              if (mw.kind == 2.0) {
-                // loggia: a dark recess with a light slab and a railing line at its foot
-                vec3 recess = albedo * 0.3;
-                float slab = step(q.y, -mw.size.y + 0.1);
-                float rail = step(abs(q.y + mw.size.y - 1.0), 0.035);
-                glass = mix(mix(recess, albedo * 0.9, slab), frame, rail);
-              } else if (mw.kind == 3.0) {
-                glass *= 0.62;                                   // shopfronts read darker
-              }
-              // a rare balcony on residential houses: a slab and a simple railing, middle bay only
-              float hbal = seeded(vColor, 71.1);
-              if (modType() == 0.0 && hbal < 0.1 && floor(uv.y) > 0.0 && mw.kind == 0.0 && mw.open > 0.5
-                  && abs(floor(uv.x) - (vWin.x - 1.0) * 0.5) < 0.6) {
-                vec2 bal = vec2(mw.size.x + 0.35, 0.07);
-                float plate = box(q - vec2(0.0, -mw.size.y - 0.05), bal, aa);
-                float railing = box(q - vec2(0.0, -mw.size.y + 0.9), vec2(bal.x, 0.03), aa)
-                  + box(vec2(abs(q.x) - bal.x, q.y + mw.size.y - 0.45), vec2(0.03, 0.47), aa);
-                albedo = mix(albedo, frame, max(plate, min(1.0, railing)));
-                glass = mix(glass, frame, min(1.0, railing));
-              }
-            } else {
-              // the city's own look: the building's archetype sets size, rhythm and kind
-              CityWin cw = cityWindow(floor(uv), cellM, vWinSize, vWin.x);
-              vec2 q = p - cw.off;
-              g = box(q, cw.size, aa) * cw.open;
-              float kind = cw.kind;
-              float hk = seeded(vColor, 23.3);
-              // frames: framed windows get a broad light or dark surround, the rest a slim one
-              if (kind == 2.0) {
-                f = box(q, cw.size + 0.11, aa) * cw.open;
-                if (hk < 0.12) frame = albedo * 0.55;
-              } else {
-                f = box(q, cw.size + 0.045, aa) * cw.open;
-              }
-              if (kind == 3.0) {
-                // shutters: two flat coloured leaves beside the pane
-                vec3 leaf = toLinear(hk < 0.075 ? vec3(0.37, 0.48, 0.35) : hk < 0.15 ? vec3(0.31, 0.42, 0.49) : hk < 0.22 ? vec3(0.48, 0.34, 0.25) : vec3(0.55, 0.54, 0.37));
-                float sw = cw.size.x * 0.55;
-                float leaves = box(vec2(abs(q.x) - (cw.size.x + 0.06 + sw), q.y), vec2(sw, cw.size.y + 0.04), aa) * cw.open;
-                albedo = mix(albedo, leaf, leaves);
-              }
-              if (kind == 4.0 && floor(uv.y) > 0.0) {
-                // French window: a thin dark railing across its lower part
-                float rail = step(abs(q.y + cw.size.y - 0.95), 0.035) + step(abs(q.y + cw.size.y - 0.08), 0.03);
-                glass = mix(glass, toLinear(vec3(0.16, 0.17, 0.18)), min(1.0, rail));
-              }
-            }
-            vec3 crack = cracked(uv, cellM, vWinSize * 0.46, normalize(vNormal));
-            broken = crack.z * g;
-            // shattered pane: darker glass, pale crack web, a black hole where the bullet went
-            vec3 pane = mix(glass, glass * 0.55, crack.z);
-            pane = mix(pane, toLinear(vec3(0.86, 0.9, 0.92)), crack.x * 0.85);
-            pane = mix(pane, vec3(0.01), crack.y);
-            vec3 sharp = mix(mix(albedo, frame, f), pane, g);
-            // far away a cell covers few pixels: use its average colour (no moiré)
-            float fa = clamp(vWinSize.x * vWinSize.y / (cellM.x * cellM.y), 0.0, 1.0);
-            float ga = fa * 0.8464;
-            if (skin < 0.5) {
-              CityWin cwa = cityWindow(floor(uv), cellM, vWinSize, vWin.x);
-              ga = clamp(4.0 * cwa.size.x * cwa.size.y / (cellM.x * cellM.y), 0.0, 1.0) * cwa.share;
-              fa = min(1.0, ga * 1.25);
-            } else if (skin < 1.5) {
-              ModWin mwa = modernWindow(floor(uv), cellM, vWinSize, vWin.x);
-              ga = clamp(4.0 * mwa.size.x * mwa.size.y / (cellM.x * cellM.y), 0.0, 1.0) * mwa.share;
-              fa = min(1.0, ga * 1.1);
-            }
-            vec3 average = albedo * (1.0 - fa) + frame * (fa - ga) + glass * ga;
+            vec2 cellM = vWin.zw;
+            // dense high-rises fill the screen with sub-pixel cells — skip archetype/shutters there
             float far = smoothstep(0.18, 0.45, max(fwidth(uv.x), fwidth(uv.y)));
-            albedo = mix(sharp, average, far);
+            float fa = clamp(vWinSize.x * vWinSize.y / (cellM.x * cellM.y), 0.0, 1.0);
+            if (far > 0.88) {
+              // cheap average glass fill (no cityWindow / modernWindow / cracks)
+              float gaFast = fa * 0.72;
+              albedo = albedo * (1.0 - fa) + frame * (fa - gaFast) + glass * gaFast;
+            } else {
+              float ga = fa * 0.8464;
+              CityWin cwAvg;
+              ModWin mwAvg;
+              bool useCity = skin < 0.5;
+              bool useMod = skin > 0.5 && skin < 1.5;
+              if (useCity) {
+                cwAvg = cityWindow(floor(uv), cellM, vWinSize, vWin.x);
+                ga = clamp(4.0 * cwAvg.size.x * cwAvg.size.y / (cellM.x * cellM.y), 0.0, 1.0) * cwAvg.share;
+                fa = min(1.0, ga * 1.25);
+              } else if (useMod) {
+                mwAvg = modernWindow(floor(uv), cellM, vWinSize, vWin.x);
+                ga = clamp(4.0 * mwAvg.size.x * mwAvg.size.y / (cellM.x * cellM.y), 0.0, 1.0) * mwAvg.share;
+                fa = min(1.0, ga * 1.1);
+              }
+              vec2 p = (fract(uv) - 0.5) * cellM;
+              vec2 aa = max(fwidth(uv) * cellM, vec2(1e-4)) * 0.75;
+              float f = box(p, vWinSize * 0.5, aa);
+              float g = box(p, vWinSize * 0.46, aa);
+              if (skin > 2.5) {
+                // victorian: taller, narrower sash windows in white or cream surrounds,
+                // a lintel above and a sill below, string courses on some houses, doors below
+                vec2 ws = vWinSize * vec2(0.8, 1.06);
+                f = box(p, ws * 0.5 + 0.04, aa);
+                g = box(p, ws * 0.46, aa);
+                float surround = box(p, ws * 0.5 + vec2(0.12, 0.12), aa);
+                float lintel = box(p - vec2(0.0, ws.y * 0.5 + 0.13), vec2(ws.x * 0.5 + 0.18, 0.08), aa);
+                float sill = box(p - vec2(0.0, -ws.y * 0.5 - 0.12), vec2(ws.x * 0.5 + 0.16, 0.05), aa);
+                albedo = mix(albedo, skinTrim, max(surround, max(lintel, sill)));
+                if (hb2 < skinOpt.z && fract(uv.y) < 0.05) albedo = skinTrim * 0.96;
+                float barDetail = 1.0 - smoothstep(0.012, 0.03, max(fwidth(p.x), fwidth(p.y)));
+                float bars = max(step(abs(p.x), 0.03), step(abs(p.y + ws.y * 0.06), 0.035)) * barDetail;
+                glass = mix(glass, frame, bars);
+                if (floor(uv.y) == 0.0 && mod(floor(uv.x) + floor(hb * 7.0), 5.0) == 0.0) {
+                  vec2 door = vec2(min(0.6, cellM.x * 0.32), min(1.15, cellM.y * 0.4));
+                  float d = box(p - vec2(0.0, -cellM.y * 0.5 + door.y + 0.05), door, aa);
+                  float frameD = box(p - vec2(0.0, -cellM.y * 0.5 + door.y + 0.05), door + 0.1, aa);
+                  albedo = mix(albedo, skinTrim, frameD);
+                  albedo = mix(albedo, slot(16, fract(hb * 13.0)), d);
+                  f = 0.0; g = 0.0;
+                }
+              } else if (skin > 1.5) {
+                if (hb2 < 0.6) albedo = mix(albedo, glass * 0.95, step(abs(p.y), vWinSize.y * 0.46));
+                if (hb3 < skinOpt.y && fract(uv.y) < 0.035) albedo = slot(16, hb);
+                f = box(p, vWinSize * 0.47, aa);
+              } else if (useMod) {
+                vec2 q = p - mwAvg.off;
+                g = box(q, mwAvg.size, aa) * mwAvg.open;
+                f = mwAvg.kind == 0.0 ? box(q, mwAvg.size + 0.04, aa) * mwAvg.open : 0.0;
+                if (mwAvg.kind == 2.0) {
+                  vec3 recess = albedo * 0.3;
+                  float slab = step(q.y, -mwAvg.size.y + 0.1);
+                  float rail = step(abs(q.y + mwAvg.size.y - 1.0), 0.035);
+                  glass = mix(mix(recess, albedo * 0.9, slab), frame, rail);
+                } else if (mwAvg.kind == 3.0) {
+                  glass *= 0.62;
+                }
+                float hbal = seeded(vColor, 71.1);
+                if (modType() == 0.0 && hbal < 0.1 && floor(uv.y) > 0.0 && mwAvg.kind == 0.0 && mwAvg.open > 0.5
+                    && abs(floor(uv.x) - (vWin.x - 1.0) * 0.5) < 0.6) {
+                  vec2 bal = vec2(mwAvg.size.x + 0.35, 0.07);
+                  float plate = box(q - vec2(0.0, -mwAvg.size.y - 0.05), bal, aa);
+                  float railing = box(q - vec2(0.0, -mwAvg.size.y + 0.9), vec2(bal.x, 0.03), aa)
+                    + box(vec2(abs(q.x) - bal.x, q.y + mwAvg.size.y - 0.45), vec2(0.03, 0.47), aa);
+                  albedo = mix(albedo, frame, max(plate, min(1.0, railing)));
+                  glass = mix(glass, frame, min(1.0, railing));
+                }
+              } else if (useCity) {
+                vec2 q = p - cwAvg.off;
+                g = box(q, cwAvg.size, aa) * cwAvg.open;
+                float kind = cwAvg.kind;
+                float hk = seeded(vColor, 23.3);
+                if (kind == 2.0) {
+                  f = box(q, cwAvg.size + 0.11, aa) * cwAvg.open;
+                  if (hk < 0.12) frame = albedo * 0.55;
+                } else {
+                  f = box(q, cwAvg.size + 0.045, aa) * cwAvg.open;
+                }
+                if (kind == 3.0) {
+                  vec3 leaf = toLinear(hk < 0.075 ? vec3(0.37, 0.48, 0.35) : hk < 0.15 ? vec3(0.31, 0.42, 0.49) : hk < 0.22 ? vec3(0.48, 0.34, 0.25) : vec3(0.55, 0.54, 0.37));
+                  float sw = cwAvg.size.x * 0.55;
+                  float leaves = box(vec2(abs(q.x) - (cwAvg.size.x + 0.06 + sw), q.y), vec2(sw, cwAvg.size.y + 0.04), aa) * cwAvg.open;
+                  albedo = mix(albedo, leaf, leaves);
+                }
+                if (kind == 4.0 && floor(uv.y) > 0.0) {
+                  float rail = step(abs(q.y + cwAvg.size.y - 0.95), 0.035) + step(abs(q.y + cwAvg.size.y - 0.08), 0.03);
+                  glass = mix(glass, toLinear(vec3(0.16, 0.17, 0.18)), min(1.0, rail));
+                }
+              }
+              vec3 crack = vec3(0.0);
+              if (uShotCount > 0) crack = cracked(uv, cellM, vWinSize * 0.46, normalize(vNormal));
+              broken = crack.z * g;
+              if (uFireCount > 0) {
+                fireHeat = flaming(uv, cellM, vWinSize * 0.46, normalize(vNormal));
+                fireGlass = g;
+              }
+              vec3 pane = mix(glass, glass * 0.55, crack.z);
+              pane = mix(pane, toLinear(vec3(0.86, 0.9, 0.92)), crack.x * 0.85);
+              pane = mix(pane, vec3(0.01), crack.y);
+              if (fireHeat > 0.01 && broken < 0.5) {
+                float local = fract(uv.y) + 0.15 * sin(uClock * 7.0 + uv.x * 9.0);
+                vec3 flame = mix(vec3(0.55, 0.08, 0.02), vec3(1.7, 0.55, 0.08), smoothstep(0.15, 0.75, local));
+                flame = mix(flame, vec3(2.1, 1.4, 0.35), smoothstep(0.55, 1.0, fireHeat * (1.1 - fract(uv.y))));
+                pane = mix(pane, flame, fireHeat);
+              }
+              vec3 sharp = mix(mix(albedo, frame, f), pane, g);
+              vec3 fireAvg = mix(glass, vec3(1.5, 0.45, 0.06), fireHeat);
+              vec3 average = albedo * (1.0 - fa) + frame * (fa - ga) + fireAvg * ga;
+              albedo = mix(sharp, average, far);
+            }
           }
         }
         // ---- futuristic: mirror towers, steel-and-glass stripes, white modules with ribbon windows
@@ -852,7 +947,7 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
           float fy = fract(wallM.y / floorH), floorIdx = floor(wallM.y / floorH);
           // far away the fine pattern turns into its average colour (no moiré)
           float far = smoothstep(0.12, 0.4, fw.y / floorH);
-          vec3 cool = mix(uSkinColors[20], uSkinColors[21], hb2);
+          vec3 cool = glowTone(hb2);
           if (roofFace) {
             if (hb3 < 0.04 && normalize(vNormal).y > 0.9) { // a rare roof garden, flat roofs only
               // roof garden: lawn with soft round shrubs
@@ -953,26 +1048,39 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
           if (uv.x >= 0.0 && uv.x < vWin.x && uv.y >= 0.0 && uv.y < vWin.y) {
             vec2 cell = floor(uv);
             float h = fract(sin(dot(cell + vColor.rg * 37.0, vec2(12.9898, 78.233))) * 43758.5453);
-            vec2 p = (fract(uv) - 0.5) * vWin.zw;
-            vec2 aa = max(fwidth(uv) * vWin.zw, vec2(1e-4)) * 0.75;
-            float g = box(p, vWinSize * 0.46, aa);
-            float full = vWinSize.x * vWinSize.y / (vWin.z * vWin.w) * 0.85;
-            if (skin < 0.5) {
-              CityWin cw = cityWindow(cell, vWin.zw, vWinSize, vWin.x);
-              g = box(p - cw.off, cw.size, aa) * cw.open;
-              full = 4.0 * cw.size.x * cw.size.y / (vWin.z * vWin.w) * cw.share;
-            } else if (skin < 1.5) {
-              ModWin mw = modernWindow(cell, vWin.zw, vWinSize, vWin.x);
-              g = box(p - mw.off, mw.size, aa) * mw.open * (mw.kind == 2.0 ? 0.0 : 1.0);
-              full = 4.0 * mw.size.x * mw.size.y / (vWin.z * vWin.w) * mw.share;
+            float litShare = skin > 0.5 ? skinOpt.x : 0.38;
+            float lit = step(1.0 - litShare, h) * uNight * (1.0 - broken);
+            if (lit > 0.01) {
+              float farN = smoothstep(0.18, 0.45, max(fwidth(uv.x), fwidth(uv.y)));
+              float share;
+              if (farN > 0.88) {
+                share = vWinSize.x * vWinSize.y / (vWin.z * vWin.w) * 0.72;
+              } else {
+                vec2 p = (fract(uv) - 0.5) * vWin.zw;
+                vec2 aa = max(fwidth(uv) * vWin.zw, vec2(1e-4)) * 0.75;
+                float g = box(p, vWinSize * 0.46, aa);
+                float full = vWinSize.x * vWinSize.y / (vWin.z * vWin.w) * 0.85;
+                if (skin < 0.5) {
+                  CityWin cw = cityWindow(cell, vWin.zw, vWinSize, vWin.x);
+                  g = box(p - cw.off, cw.size, aa) * cw.open;
+                  full = 4.0 * cw.size.x * cw.size.y / (vWin.z * vWin.w) * cw.share;
+                } else if (skin < 1.5) {
+                  ModWin mw = modernWindow(cell, vWin.zw, vWinSize, vWin.x);
+                  g = box(p - mw.off, mw.size, aa) * mw.open * (mw.kind == 2.0 ? 0.0 : 1.0);
+                  full = 4.0 * mw.size.x * mw.size.y / (vWin.z * vWin.w) * mw.share;
+                }
+                share = mix(g, full, farN);
+              }
+              vec3 warm = mix(vec3(1.0, 0.72, 0.38), vec3(1.0, 0.86, 0.6), fract(h * 7.0));
+              if (skin > 0.5) warm = glowTone(fract(h * 7.0));
+              color += warm * 1.1 * share * lit;
             }
-            float far = smoothstep(0.18, 0.45, max(fwidth(uv.x), fwidth(uv.y)));
-            float share = mix(g, full, far);
-            vec3 warm = mix(vec3(1.0, 0.72, 0.38), vec3(1.0, 0.86, 0.6), fract(h * 7.0));
-            if (skin > 0.5) warm = mix(uSkinColors[20], uSkinColors[21], fract(h * 7.0));
-            float litShare = skin > 0.5 ? uSkinOpt.x : 0.38;
-            color += warm * 1.1 * share * step(1.0 - litShare, h) * uNight * (1.0 - broken);
           }
+        }
+        // fire emission: day and night, so burning panes read from the street
+        if (fireHeat > 0.01 && fireGlass > 0.01 && broken < 0.5) {
+          vec3 ember = mix(vec3(1.2, 0.28, 0.04), vec3(2.0, 1.1, 0.25), fireHeat);
+          color += ember * fireGlass * fireHeat * 1.35;
         }
         gl_FragColor = linearToOutputTexel(vec4(fogged(color, vWorld), 1.0));
       }

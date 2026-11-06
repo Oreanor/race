@@ -382,8 +382,8 @@ export class WorldTiles {
     if (uvs && data.uvs) geometry.setAttribute('uv', new THREE.BufferAttribute(data.uvs, 2));
     geometry.setIndex(new THREE.BufferAttribute(data.index, 1));
     geometry.computeBoundingSphere();
-    // ground lifts by up to a few hundred meters with exaggeration: keep culling generous
-    if (geometry.boundingSphere) geometry.boundingSphere.radius += 400;
+    // ground lifts with exaggeration in the vertex shader — pad for DEM, not whole-tile fog
+    if (geometry.boundingSphere) geometry.boundingSphere.radius += 180;
     const mesh = new THREE.Mesh(geometry, material);
     mesh.matrixAutoUpdate = false;
     return mesh;
@@ -413,7 +413,12 @@ export class WorldTiles {
     geometry.setAttribute('aWin', new THREE.BufferAttribute(chunk.win, 4));
     geometry.setAttribute('aWinSize', new THREE.BufferAttribute(chunk.winSize, 2));
     geometry.setIndex(new THREE.BufferAttribute(chunk.index, 1));
-    geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(chunk.cx, chunk.maxHeight / 2, chunk.cz), Math.hypot(chunk.radius * Math.SQRT2, chunk.maxHeight) + 400);
+    // aGround*uExag lifts walls in the vertex shader (not in positions); pad for DEM, but
+    // +400 kept almost every high-rise chunk forever in frustum — tighten for city FPS
+    geometry.boundingSphere = new THREE.Sphere(
+      new THREE.Vector3(chunk.cx, chunk.maxHeight / 2, chunk.cz),
+      Math.hypot(chunk.radius * Math.SQRT2, chunk.maxHeight) + 180,
+    );
     const mesh = this.lampLit(new THREE.Mesh(geometry, this.farMat), live);
     mesh.matrixAutoUpdate = false;
     live.group.add(mesh);
@@ -642,6 +647,111 @@ export class WorldTiles {
       best = { middle, top: crest + Math.max(height, ridge), d };
     });
     return best ? { middle: (best as { middle: LngLat }).middle, top: (best as { top: number }).top } : null;
+  }
+
+  /**
+   * Street-facing, accessible window centres on the nearest house to `street`
+   * (road pin). Only façades that open toward the street and are not blocked by
+   * a neighbour. Heights match the drawn wall grid (~3.2 m floors).
+   */
+  fireFacadesNear(
+    street: LngLat,
+    exaggeration: number,
+    radius = 55,
+  ): { middle: LngLat; crest: number; top: number; panes: { at: LngLat; altitude: number; oe: number; on: number }[] } | null {
+    const FLOOR = 3.2;
+    const SPACING = 2.7;
+    const cos = Math.cos(street[1] * Math.PI / 180);
+    type Cand = { middle: LngLat; outer: [number, number][]; height: number; crest: number; d: number };
+    let best: Cand | null = null;
+    this.eachFootprint(street, radius, (rings, height, _roof, crest) => {
+      const outer = rings()[0];
+      if (!outer?.length || height < 2.4) return;
+      let x = 0, y = 0;
+      for (const [lng, lat] of outer) { x += lng; y += lat; }
+      const middle: LngLat = [x / outer.length, y / outer.length];
+      const inside = insideLngLat(street, outer);
+      const d = inside ? 0 : Math.hypot((middle[0] - street[0]) * 111320 * cos, (middle[1] - street[1]) * 111320);
+      if (d > radius || (best && d >= best.d)) return;
+      best = { middle, outer: outer.map((p) => [...p] as [number, number]), height, crest, d };
+    });
+    if (!best) return null;
+    const house = best as Cand;
+    const toE = (lng: number, lat: number) => ({
+      e: (lng - house.middle[0]) * 111319.49 * cos,
+      n: (lat - house.middle[1]) * 111319.49,
+    });
+    const streetDir = toE(street[0], street[1]);
+    const streetLen = Math.hypot(streetDir.e, streetDir.n) || 1;
+    streetDir.e /= streetLen;
+    streetDir.n /= streetLen;
+
+    // neighbour footprints for accessibility (blocked courtyards / party walls)
+    const neighbours: [number, number][][] = [];
+    this.eachFootprint(house.middle, 40, (rings) => {
+      const outer = rings()[0];
+      if (!outer?.length) return;
+      // skip self (same middle-ish)
+      let x = 0, y = 0;
+      for (const [lng, lat] of outer) { x += lng; y += lat; }
+      if (Math.hypot((x / outer.length - house.middle[0]) * 111320 * cos, (y / outer.length - house.middle[1]) * 111320) < 1.5) return;
+      neighbours.push(outer);
+    });
+
+    const clear = house.height;
+    const plinth = Math.min(0.42, Math.max(0.16, clear * 0.1));
+    const cap = Math.min(0.5, Math.max(0.18, clear * 0.09));
+    const usable = clear - plinth - cap;
+    if (usable < 0.8) return null;
+    let floors = Math.max(1, Math.round(usable / FLOOR));
+    while (floors > 1 && usable / floors < 2.2) floors--;
+    const body0 = house.crest + plinth;
+    const floorH = usable / floors;
+    const crestEx = house.crest * exaggeration;
+
+    const panes: { at: LngLat; altitude: number; oe: number; on: number }[] = [];
+    const ring = house.outer;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const a = ring[j], b = ring[i];
+      const ae = toE(a[0], a[1]), be = toE(b[0], b[1]);
+      const de = be.e - ae.e, dn = be.n - ae.n;
+      const length = Math.hypot(de, dn);
+      if (length < 2.5) continue;
+      // outward = away from building middle
+      let oe = dn / length, on = -de / length;
+      const midE = (ae.e + be.e) * 0.5, midN = (ae.n + be.n) * 0.5;
+      if (oe * midE + on * midN < 0) { oe = -oe; on = -on; }
+      // street-facing: at least somewhat toward the road pin
+      if (oe * streetDir.e + on * streetDir.n < 0.12) continue;
+      // accessible: a few metres out is not inside a neighbour
+      const probeLng = house.middle[0] + (midE + oe * 4) / (111319.49 * cos);
+      const probeLat = house.middle[1] + (midN + on * 4) / 111319.49;
+      if (neighbours.some((n) => insideLngLat([probeLng, probeLat], n))) continue;
+
+      const columns = Math.max(1, Math.floor((length - 0.6) / SPACING));
+      for (let fl = 0; fl < floors; fl++) {
+        const altitude = (body0 + floorH * (fl + 0.55)) * exaggeration;
+        // skip very low ground-floor panes buried in plinth noise
+        if (altitude < crestEx + 1.2) continue;
+        for (let c = 0; c < columns; c++) {
+          const t = (c + 0.5) / columns;
+          const alongE = ae.e + de * t + oe * 0.08;
+          const alongN = ae.n + dn * t + on * 0.08;
+          const at: LngLat = [
+            house.middle[0] + alongE / (111319.49 * cos),
+            house.middle[1] + alongN / 111319.49,
+          ];
+          panes.push({ at, altitude, oe, on });
+        }
+      }
+    }
+    if (!panes.length) return null;
+    return {
+      middle: house.middle,
+      crest: crestEx,
+      top: (house.crest + house.height) * exaggeration,
+      panes,
+    };
   }
 
   /** Footprints with roof skins for vehicle collisions (`crest` already exaggerated). */

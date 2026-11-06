@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { cars, carPrice, cities, STARTING_CASH, type City } from '@/config/vehicle.config';
+import { cars, carPrice, cities, GIFT_CARS, STARTING_CASH, type City } from '@/config/vehicle.config';
 import { SKINS } from '@/world3d/buildings/skins';
 import { NetHud, type NetFeed } from './NetHud';
 import ServerStatus from './ServerStatus';
@@ -293,7 +293,10 @@ export default function Game() {
         at,
         collected: save.collected ?? [],
         loan: Number.isFinite(save.loan) ? save.loan : 0,
-        garage: Array.isArray(save.garage) ? save.garage.filter((id): id is string => typeof id === 'string') : [save.carId],
+        garage: [
+          ...(Array.isArray(save.garage) ? save.garage.filter((id): id is string => typeof id === 'string') : [save.carId]),
+          ...GIFT_CARS,
+        ],
       };
       resumeAtRef.current = at;
       resumeRef.current = true;
@@ -933,7 +936,13 @@ export default function Game() {
 
       {eventResult && driving && !settingsOpen && (
         <Dialog
-          title={eventResult.kind === 'hijack' ? t('hijack.title') : eventResult.kind === 'heist' ? t('heist.title') : t(`event.${eventResult.kind}`)}
+          title={
+            eventResult.kind === 'hijack' ? t('hijack.title')
+              : eventResult.kind === 'heist' ? t('heist.title')
+                : eventResult.kind === 'fire' ? t('event.fire')
+                  : eventResult.kind === 'impound' ? t('event.impound')
+                    : t(`event.${eventResult.kind}`)
+          }
           tone={eventResult.won ? 'default' : 'alert'}
           onBackdrop={() => setEventResult(null)}
           actions={
@@ -945,6 +954,10 @@ export default function Game() {
               ? priced('delivery.won', { reward: eventResult.cash ?? 0 }, { item: eventResult.name ?? '' })
               : eventResult.kind === 'collect'
               ? priced('collect.won', { reward: eventResult.cash ?? 0 })
+              : eventResult.kind === 'fire'
+              ? priced('fire.won', { reward: eventResult.cash ?? 0 }, { n: eventResult.name ?? '' })
+              : eventResult.kind === 'impound'
+              ? priced('impound.won', { reward: eventResult.cash ?? 0 })
               : eventResult.kind === 'hijack'
               ? priced('hijack.sold', { cash: eventResult.cash ?? 0 }, { car: eventResult.name ?? '' })
               : eventResult.kind === 'heist'
@@ -953,6 +966,9 @@ export default function Game() {
                 ? (eventResult.won ? t('arena.won') : t('arena.lost'))
                 : (eventResult.won ? t('race.won') : t('race.lost', { name: eventResult.name ?? '' }))}
           </p>
+          {(eventResult.kind === 'fire' || eventResult.kind === 'impound') && eventResult.won && (
+            <div className="ui-row ui-wallet is-reward"><span>{t('bounty.reward')}</span><Price value={eventResult.cash ?? 0} /></div>
+          )}
         </Dialog>
       )}
     </main>

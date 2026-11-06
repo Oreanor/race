@@ -4,11 +4,15 @@
 // and one roof tone from weighted palettes (seeded by the building), plus the
 // style's windows, trims and patterns (map/materials farBuildingMaterial).
 
-export type SkinId = 'original' | 'modern' | 'futuristic' | 'victorian';
-export const SKINS: SkinId[] = ['original', 'modern', 'futuristic', 'victorian'];
+export type SkinId = 'original' | 'modern' | 'futuristic' | 'victorian' | 'mixed';
+export const SKINS: SkinId[] = ['original', 'modern', 'futuristic', 'victorian', 'mixed'];
+
+/** painted styles stored in the facade shader's three palette banks (mixed picks among them) */
+export const PAINTED_SKINS = ['modern', 'futuristic', 'victorian'] as const;
+export type PaintedSkinId = (typeof PAINTED_SKINS)[number];
 
 export type Skin = {
-  /** shader index: 1 modern, 2 futuristic, 3 victorian */
+  /** shader index: 1 modern, 2 futuristic, 3 victorian; mixed uses 4 and resolves per building */
   index: number;
   wall: [string, number][];
   roof: [string, number][];
@@ -29,7 +33,7 @@ export type Skin = {
   roofRange: number;
 };
 
-export const SKIN_DATA: Record<Exclude<SkinId, 'original'>, Skin> = {
+export const SKIN_DATA: Record<PaintedSkinId, Skin> = {
   modern: {
     index: 1,
     // white, cream, beige / sand, light grey, warm concrete; sage comes in as a section colour

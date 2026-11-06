@@ -1,3 +1,4 @@
+import { BurningHouse, type FirePaneSpec } from './BurningHouse';
 import { TireTracks } from './TireTracks';
 import { WorldParticles, type Enu, type Surface } from './effects/WorldParticles';
 import { fireEye, WreckFire } from './effects/WreckFire';
@@ -99,10 +100,16 @@ export type VehicleSceneLayer = MapLayer & {
   setMissionBeacons: (beacons: {
     id: string;
     position: Position;
-    kind?: 'arena' | 'race' | 'bounty';
+    kind?: 'arena' | 'race' | 'bounty' | 'fire' | 'impound';
     colors?: { pole: string; glow: string; orb: string };
   }[]) => void;
   setRaceFinish: (goal: Position | null) => void;
+  /** fire call: ignite these existing-façade panes; null clears */
+  setFireHouse: (site: { panes: FirePaneSpec[] } | null) => void;
+  /** panes still burning (null if no house) */
+  fireWindowsLeft: () => number | null;
+  /** called when a burning pane is put out for the first time */
+  onFireWindowOut: (left: number) => void;
   /** the hauler: a car of ours held at this pose (`up`: m above our car), drawn there and not on its own ground */
   setCarried: (pose: { id: string; position: Position; heading: number; up: number; pitch?: number } | null) => void;
   /** the hauler's cable from our car's middle to a point (`up`: m above our car); `wave`: 0 taut … 1 whipping; null hides it */
@@ -172,7 +179,12 @@ export async function loadCar(car: Car) {
  * Police lights on the roof: the Chevy (Fleetline Police) one red lamp in the middle, the
  * Volga (GAZ-24 militia) the red one plus a blue on each side. Red and blue take turns.
  */
-const POLICE_LIGHTS: Record<string, ('red' | 'blue')[]> = { '09': ['red'], '16': ['blue', 'red', 'blue'] };
+const POLICE_LIGHTS: Record<string, ('red' | 'blue')[]> = {
+  '09': ['red'],
+  '16': ['blue', 'red', 'blue'],
+};
+/** Holds LMB for a water jet instead of bullets. */
+const WATER_TRUCK_ID = '18';
 /**
  * A model with its own roof lamps: only the glow goes on, over those lamps — `forward`
  * of the car's middle (m) and `drop` below the model's top (m). Others get lamp boxes on top.
@@ -389,7 +401,11 @@ export function vehicleLayer(
     return texture;
   })();
   const shadowGeometry = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
-  const shadowMaterial = new THREE.MeshBasicMaterial({ alphaMap: shadowTexture, color: 0x000000, transparent: true, opacity: 0.42, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 });
+  const shadowMaterial = new THREE.MeshBasicMaterial({
+    alphaMap: shadowTexture, color: 0x000000, transparent: true, opacity: 0.42, depthWrite: false,
+    // pull slightly toward the camera so a low plane doesn't z-fight the ground
+    polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8,
+  });
   /** the shadow's size for a car: its footprint plus a hand's width of soft edge round it */
   const shadowScale = (mesh: THREE.Object3D, length: number, width: number) => mesh.scale.set(width + 0.3, 1, length + 0.24);
   /** a shadow for a car `length` m long and `width` wide */
@@ -403,14 +419,15 @@ export function vehicleLayer(
   };
   /** lay `shadow` on the ground at `ground` (m relative to our car), fading the higher the car is over it */
   const layShadow = (shadow: THREE.Mesh, x: number, ground: number, z: number, yaw: number, lift: number) => {
-    // over the road's ribbons too (they lie up to ~0.2 m above the ground)
-    shadow.position.set(x, ground + 0.21, z);
+    // keep the plane near the dirt so it doesn't cut through big tyres (was 0.21)
+    shadow.position.set(x, ground + 0.04, z);
     shadow.rotation.y = yaw;
     const fade = Math.max(0, 1 - Math.max(0, lift) / 6);
     (shadow.material as THREE.MeshBasicMaterial).opacity = 0.42 * fade;
     shadow.visible = fade > 0.02;
   };
   const playerShadow = makeShadow(car.length, car.length * 0.44);
+  const burningHouse = new BurningHouse();
   scene.add(new THREE.HemisphereLight(0xfff6ec, 0x8a8172, 1.6));
   const sun = new THREE.DirectionalLight(0xffffff, 2.6);
   sun.position.set(6, 16, 8);
@@ -427,6 +444,7 @@ export function vehicleLayer(
   let cursor = 0;
   let lastSpawn = 0;
   let lastDust = 0;
+  let lastHouseFx = 0;
   let surface: Surface = 'paved';
   let surfaceAt = 0;
   let lastFrame = 0;
@@ -490,19 +508,22 @@ export function vehicleLayer(
     return { group, tip: core };
   }
   const missionBeacons = new Map<string, {
-    kind?: 'arena' | 'race' | 'bounty';
+    kind?: 'arena' | 'race' | 'bounty' | 'fire' | 'impound';
     position: Position;
     visual: ReturnType<typeof makeBeacon>;
   }>();
   function colorsForBeacon(beacon: {
-    kind?: 'arena' | 'race' | 'bounty';
+    kind?: 'arena' | 'race' | 'bounty' | 'fire' | 'impound';
     colors?: { pole: string; glow: string; orb: string };
   }) {
     if (beacon.colors) return beacon.colors;
     if (beacon.kind === 'arena') return { pole: '#2f7dff', glow: '#1a4fb8', orb: '#6eb6ff' };
     if (beacon.kind === 'bounty') return { pole: '#d63a2f', glow: '#8a1c14', orb: '#ff8a7a' };
+    if (beacon.kind === 'fire') return { pole: '#e85d04', glow: '#9a3412', orb: '#fb923c' };
+    if (beacon.kind === 'impound') return { pole: '#7c3aed', glow: '#5b21b6', orb: '#c4b5fd' };
     return { pole: '#ff7a1a', glow: '#b84a00', orb: '#ffb86b' };
   }
+  let onFireWindowOut: (left: number) => void = () => {};
   const raceFinish = new THREE.Group();
   const finishPole = new THREE.Mesh(
     new THREE.CylinderGeometry(0.08, 0.1, 3.2, 8),
@@ -618,7 +639,7 @@ export function vehicleLayer(
   function setMissionBeacons(beacons: {
     id: string;
     position: Position;
-    kind?: 'arena' | 'race' | 'bounty';
+    kind?: 'arena' | 'race' | 'bounty' | 'fire' | 'impound';
     colors?: { pole: string; glow: string; orb: string };
   }[]) {
     const active = new Set(beacons.map(beacon => beacon.id));
@@ -978,9 +999,62 @@ export function vehicleLayer(
   }
 
   function fire(now: number, heading: number, here: Position) {
-    if (!aim || !map || now - lastShot < 50) return;
+    const water = currentCar.id === WATER_TRUCK_ID;
+    if (!aim || !map || now - lastShot < (water ? 32 : 50)) return;
     lastShot = now;
     const carAlt = height();
+
+    // Hose: mouse Y = launch elevation; azimuth toward the aim. No auto-hit —
+    // short/long means aim higher/lower or drive closer/farther.
+    if (water) {
+      const gunFwd = currentCar.length * 0.28;
+      const gunUp = 1.15;
+      const p = pitch(), r = roll();
+      const cp = Math.cos(p), sp = Math.sin(p), cr = Math.cos(r), sr = Math.sin(r);
+      const f1 = gunFwd * cp - gunUp * sp, u1 = gunFwd * sp + gunUp * cp;
+      const f2 = f1, u2 = u1 * cr, r2 = u1 * sr;
+      const gunEast = Math.sin(heading) * f2 + Math.cos(heading) * r2;
+      const gunNorth = Math.cos(heading) * f2 - Math.sin(heading) * r2;
+      const muzzleAt: Enu = { e: gunEast, n: gunNorth, u: u2 };
+      const ground = eastNorth(here, aim.ground);
+      let dirE = ground.east - gunEast, dirN = ground.north - gunNorth;
+      if (Math.hypot(dirE, dirN) < 0.5) {
+        dirE = Math.sin(heading);
+        dirN = Math.cos(heading);
+      }
+      const canvasH = map.getCanvas().clientHeight || 1;
+      // top of screen → steep (~52°), bottom → flat (0°)
+      const t = 1 - Math.max(0, Math.min(1, aim.screen[1] / canvasH));
+      const elev = (t * 52) * Math.PI / 180;
+      const landAlt = (map.groundAt(aim.ground) ?? carAlt) - carAlt;
+      fx.altitude = carAlt;
+      const { flightMs, land } = fx.hose(here, muzzleAt, dirE, dirN, elev, landAlt, now);
+      // walk the lob: first burning façade pane near the jet wins, else ground splash
+      let houseHit: { e: number; n: number; u: number; fresh: boolean; at: Position; altitude: number } | null = null;
+      for (const pt of fx.hoseArc(muzzleAt, dirE, dirN, elev, landAlt, 28)) {
+        const hit = burningHouse.douseAt(here, carAlt, pt, now, 1.85);
+        if (hit) { houseHit = hit; break; }
+      }
+      const splashAt = houseHit ?? land;
+      const splashNormal: Enu = houseHit
+        ? { e: muzzleAt.e - splashAt.e, n: muzzleAt.n - splashAt.n, u: 0.35 }
+        : { e: 0, n: 0, u: 1 };
+      if (flightMs > 0) fx.splash(here, splashAt, splashNormal, now + flightMs, houseHit ? 1.05 : 0.85);
+      if (houseHit?.fresh) {
+        const de = splashAt.e - muzzleAt.e, dn = splashAt.n - muzzleAt.n;
+        const hl = Math.hypot(de, dn) || 1;
+        fx.windowSteam(here, splashAt, { e: de / hl, n: dn / hl }, 1, now + flightMs);
+        // cracked / sooty glass on the real façade
+        {
+          const from = offsetPosition(here, splashAt.e - (de / hl) * 1.4, splashAt.n - (dn / hl) * 1.4);
+          map?.raycastBuildings(from, carAlt + splashAt.u, houseHit.at, houseHit.altitude, true);
+        }
+        map?.setFirePanes(burningHouse.fireMarkers());
+        onFireWindowOut(burningHouse.burningLeft());
+      }
+      return;
+    }
+
     const groundAlt = map.groundAt(aim.ground) ?? carAlt;
     const ground = eastNorth(here, aim.ground);
     const radius = 2.15;
@@ -1030,13 +1104,27 @@ export function vehicleLayer(
       }
     }
 
-    // 2. The bullet leaves our gun (the car's nose, 0.85 m up) for that point and flies on
-    //    past it: whatever stands between the car and the aim takes it.
-    const gunEast = Math.sin(heading) * 1.7, gunNorth = Math.cos(heading) * 1.7;
+    // 2. The bullet leaves the nose; the hose sits on the middle of the hood (body frame + lean).
+    const gunFwd = water ? currentCar.length * 0.28 : 1.7;
+    const gunUp = water ? 1.15 : 0.85;
+    let gunEast: number, gunNorth: number, gunAlt = gunUp;
+    if (water) {
+      // stick to the hood when the truck pitches / rolls, so turns don't drift the spout
+      const p = pitch(), r = roll();
+      const cp = Math.cos(p), sp = Math.sin(p), cr = Math.cos(r), sr = Math.sin(r);
+      const f1 = gunFwd * cp - gunUp * sp, u1 = gunFwd * sp + gunUp * cp;
+      const f2 = f1, u2 = u1 * cr, r2 = u1 * sr;
+      gunEast = Math.sin(heading) * f2 + Math.cos(heading) * r2;
+      gunNorth = Math.cos(heading) * f2 - Math.sin(heading) * r2;
+      gunAlt = u2;
+    } else {
+      gunEast = Math.sin(heading) * gunFwd;
+      gunNorth = Math.cos(heading) * gunFwd;
+    }
 
     // Spread: the farther the aim, the wider the bullets scatter round it. A car is ~2 m
     // across: up close every shot lands, at 80 m nearly all do, at 150 m about two in three.
-    {
+    if (!water) {
       const d = Math.hypot(aimE - gunEast, aimN - gunNorth);
       const scatter = 0.1 + d * 0.008 + d * d * 0.00005;
       // two randoms averaged: most shots near the middle, a few wide
@@ -1050,7 +1138,7 @@ export function vehicleLayer(
       if (aimGround) { aimE += side.n * other; aimN -= side.e * other; } else aimU += other;
     }
     const groundMark = aimGround ? offsetPosition(here, aimE, aimN) as Position : aim.ground;
-    const cam = { position: offsetPosition(here, gunEast, gunNorth) as Position, altitude: carAlt + 0.85, east: gunEast, north: gunNorth, up: 0.85 };
+    const cam = { position: offsetPosition(here, gunEast, gunNorth) as Position, altitude: carAlt + gunAlt, east: gunEast, north: gunNorth, up: gunAlt };
     const dx = aimE - cam.east;
     const dy = aimU - cam.up;
     const dz = aimN - cam.north;
@@ -1059,7 +1147,8 @@ export function vehicleLayer(
     const ux = dx / rayLen;
     const uy = dy / rayLen;
     const uz = dz / rayLen;
-    const reach = aimGround ? Math.min(rayLen * 1.02, 160) : 160;
+    // water hose: ~40 m; guns keep the long rifle reach
+    const reach = water ? Math.min(rayLen * 1.02, 40) : aimGround ? Math.min(rayLen * 1.02, 160) : 160;
     const far = offsetPosition(here, cam.east + ux * reach, cam.north + uz * reach) as Position;
     const farAlt = carAlt + cam.up + uy * reach;
 
@@ -1122,7 +1211,8 @@ export function vehicleLayer(
         bestT = wallT;
         hitUp = wall.altitude - carAlt;
         wallHit = true;
-        resolveShot(cam.position, cam.altitude, far, farAlt, true);
+        // water leaves no bullet holes / doesn't topple props
+        if (!water) resolveShot(cam.position, cam.altitude, far, farAlt, true);
       }
     }
     // trains: hard to the bullet, nothing to break; a vintage one coughs up a coin
@@ -1136,17 +1226,28 @@ export function vehicleLayer(
         bestT = tt;
         hitUp = train.altitude - carAlt;
         trainHit = { vintage: train.vintage };
-        if (train.vintage) trainCoinHandler(train.point, train.altitude);
+        if (!water && train.vintage) trainCoinHandler(train.point, train.altitude);
       }
     }
     if (!hit && !wallHit && !remoteHit && !trainHit && aimGround) {
       bestT = Math.min(bestT, rayLen);
       hitUp = groundAlt - carAlt;
       groundHit = true;
-      markGround(groundMark, groundAlt);
+      if (!water) markGround(groundMark, groundAlt);
     }
 
     const end = offsetPosition(here, cam.east + ux * bestT, cam.north + uz * bestT);
+    // world-space (east, north, up) shot geometry for the effects
+    const muzzleAt: Enu = water
+      ? { e: gunEast, n: gunNorth, u: gunAlt }
+      : { e: gunEast + Math.sin(heading) * 0.2, n: gunNorth + Math.cos(heading) * 0.2, u: gunUp };
+    const endEn = eastNorth(here, end);
+    const hitAt: Enu = { e: endEn.east, n: endEn.north, u: hitUp };
+    const shotLen = Math.hypot(hitAt.e - muzzleAt.e, hitAt.n - muzzleAt.n, hitAt.u - muzzleAt.u) || 1;
+    const shotDir: Enu = { e: (hitAt.e - muzzleAt.e) / shotLen, n: (hitAt.n - muzzleAt.n) / shotLen, u: (hitAt.u - muzzleAt.u) / shotLen };
+    const bounce: Enu = { e: -shotDir.e, n: -shotDir.n, u: Math.max(0.35, -shotDir.u) };
+    fx.altitude = carAlt;
+
     const muzzle = offsetPosition(here, Math.sin(heading) * 1.7, Math.cos(heading) * 1.7);
     const startPoint = scenePoint(here, muzzle, heading, 0.85);
     const endPoint = scenePoint(here, end, heading, hitUp);
@@ -1171,14 +1272,6 @@ export function vehicleLayer(
     tracerGeometry.setDrawRange(0, dashCount * 2);
     tracer.visible = true;
     tracerUntil = now + 90;
-    // world-space (east, north, up) shot geometry for the effects
-    const muzzleAt: Enu = { e: Math.sin(heading) * 1.9, n: Math.cos(heading) * 1.9, u: 0.85 };
-    const endEn = eastNorth(here, end);
-    const hitAt: Enu = { e: endEn.east, n: endEn.north, u: hitUp };
-    const shotLen = Math.hypot(hitAt.e - muzzleAt.e, hitAt.n - muzzleAt.n, hitAt.u - muzzleAt.u) || 1;
-    const shotDir: Enu = { e: (hitAt.e - muzzleAt.e) / shotLen, n: (hitAt.n - muzzleAt.n) / shotLen, u: (hitAt.u - muzzleAt.u) / shotLen };
-    const bounce: Enu = { e: -shotDir.e, n: -shotDir.n, u: Math.max(0.35, -shotDir.u) };
-    fx.altitude = carAlt;
     fx.muzzle(here, muzzleAt, shotDir, now);
     fx.tracer(here, muzzleAt, hitAt, now);
     tracer.visible = false; // the particle streak replaces the 1px line
@@ -1422,6 +1515,18 @@ export function vehicleLayer(
     },
     setMissionBeacons,
     setRaceFinish,
+    setFireHouse(site) {
+      if (!site) {
+        burningHouse.clear();
+        map?.setFirePanes([]);
+        return;
+      }
+      burningHouse.ignite(site.panes);
+      map?.setFirePanes(burningHouse.fireMarkers());
+    },
+    fireWindowsLeft() { return burningHouse.placed ? burningHouse.burningLeft() : null; },
+    get onFireWindowOut() { return onFireWindowOut; },
+    set onFireWindowOut(handler: (left: number) => void) { onFireWindowOut = handler; },
     setBeacons(on) { beaconsOn = on; applyBeacons(); },
     setCarried(pose) { carried = pose ? { ...pose, position: [...pose.position] as Position } : null; map?.triggerRepaint(); },
     setCable(to) { cableTo = to ? { position: [...to.position] as Position, up: to.up, wave: to.wave ?? 0 } : null; map?.triggerRepaint(); },
@@ -1446,13 +1551,23 @@ export function vehicleLayer(
       const now = performance.now();
       const dt = lastFrame ? Math.min(0.05, (now - lastFrame) / 1000) : 0;
       lastFrame = now;
+      const here = vehicle.position;
+      const heading = vehicle.heading;
+      const carAlt = height();
+      fx.altitude = carAlt;
+      // façade smoke is throttled — every window every frame was killing FPS
+      if (burningHouse.placed && now - lastHouseFx > 90) {
+        lastHouseFx = now;
+        for (const puff of burningHouse.fxEmitters(here, carAlt, now)) {
+          if (puff.mode === 'smoke') fx.windowSmoke(here, puff, { e: puff.oe, n: puff.on }, now);
+          else fx.windowSteam(here, puff, { e: puff.oe, n: puff.on }, puff.strength, now);
+        }
+      }
       if (vehicle.throttle && now - lastSpawn > 45) {
         lastSpawn = now;
         spawn(1, now);
         spawn(-1, now);
       }
-      const heading = vehicle.heading;
-      const here = vehicle.position;
       const drift = vehicle.slip ?? 0, speed = vehicle.speed ?? 0;
       const slip = Math.abs(drift);
       if (slip > 0.28 && Math.abs(speed) > 3) {

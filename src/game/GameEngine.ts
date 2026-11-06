@@ -3,10 +3,11 @@ import { VehiclePose } from './VehiclePose';
 import { supportAltitude, type GroundSample } from './groundSupport';
 import { BuildingCollisions } from './BuildingCollisions';
 import { WaterCollisionController, type MapFeature } from './WaterCollisionController';
-import { mapConfig, cars as carsConfig, carPrice, STARTING_CASH, type City, type Car, vehicleConfig } from '@/config/vehicle.config';
+import { mapConfig, cars as carsConfig, carPrice, GIFT_CARS, STARTING_CASH, type City, type Car, vehicleConfig } from '@/config/vehicle.config';
 import { cameraConfig, lookAheadFor, zoomForDistance } from '@/config/camera.config';
 import { VehicleController, bumpDamage, offsetPosition, resolveVehicleCollision, type Position } from './VehicleController';
 import { DROP_MS, vehicleLayer, type PickupVisual, type VehicleSceneLayer } from '@/rendering/VehicleLayer';
+import { facadeMarker, pickBurningCount, pickBurningPanes, type FirePaneSpec } from '@/rendering/BurningHouse';
 import type { ArchitectureSetting, BuildingDetail } from './buildings/BuildingStyles';
 import type { SkinId } from '@/world3d/buildings/skins';
 import type { ChatLine, NetNotice } from '@/net/NetClient';
@@ -58,7 +59,7 @@ export type TravelOffer = { kind: HubKind; from: [number, number]; money: number
 export type BountyOffer = { name: string; car: string; place: string; country: string; km: number; reward: number };
 /** Arena/race finished — UI shows a result dialog. */
 export type MissionKind = 'arena' | 'race' | 'delivery' | 'collect';
-export type EventResult = { kind: MissionKind | 'heist' | 'hijack'; won: boolean; name?: string; cash?: number };
+export type EventResult = { kind: MissionKind | 'heist' | 'hijack' | 'fire' | 'impound'; won: boolean; name?: string; cash?: number };
 /** What the marker's dialog offers; a delivery says what, how far and for how much. */
 export type EventOffer = { kind: MissionKind; item?: DeliveryItem; km?: number; reward?: number; boxes?: number };
 /** Arrived at a fuel station or a car service: what the dialog needs to show. */
@@ -100,12 +101,29 @@ function savedCamera(): { distance: number; pitch: number; orbit: number } | nul
 }
 /** The Howler doesn't shoot: it throws a cable at a standing car and pulls it up onto its back. */
 const HAULER_ID = '03';
+/** Fire Truck №5 — hose + fire calls */
+const FIRE_TRUCK_ID = '18';
+/** Fleetline Police + ГАЗ-24 Милиция — wanted hunts */
+const POLICE_IDS = new Set(['09', '16']);
+/** coins for each window put out on a fire call */
+const FIRE_WINDOW_COIN = 100;
+/** how close to the fire marker the house lights up (m) */
+const FIRE_ARRIVE_M = 28;
+/** Howler tow job: arrive this close to pick up the car (m) */
+const IMPOUND_ARRIVE_M = 22;
+/** premium for delivering the impound car to any police station */
+const IMPOUND_REWARD = 2000;
+const TOW_CAR_ID = 'tow-impound';
 /** how far the cable reaches (m), how close to the aim a car must stand to be hooked, and when it snaps */
 const HAUL_REACH_M = 20;
 const HAUL_AIM_M = 3;
 const HAUL_SNAP_M = 30;
-/** faster than this (m/s) the hook slips off */
-const HAUL_STILL = 1;
+/** winch reels a hooked car in at this rate (m/s) when its speed against the rope is lower */
+const HAUL_WINCH_MS = 5.5;
+/** at full stretch against the winch this long (ms), the hook lets go */
+const HAUL_TAUT_MS = 2000;
+/** close enough: yank the car up onto the deck */
+const HAUL_LOAD_M = 4.5;
 /**
  * The Howler's flatbed, as shares of its length (measured on the model): the bed's top is
  * 0.177 of the length up, its middle 0.23 of the length behind the truck's middle.
@@ -163,6 +181,8 @@ const MISSION_COLORS = {
   arena: { main: '#2f7dff', soft: '#6eb6ff' },
   race: { main: '#ff7a1a', soft: '#ffb86b' },
   bounty: { main: '#d63a2f', soft: '#ff8a7a' },
+  fire: { main: '#e85d04', soft: '#fb923c' },
+  impound: { main: '#7c3aed', soft: '#c4b5fd' },
   finish: { main: '#c9a227', soft: '#ffe56a' },
   delivery: { main: '#2fae5a', soft: '#7fe0a0' },
   collect: { main: '#b8742a', soft: '#f0b878' },
@@ -334,6 +354,23 @@ export class GameEngine {
   private players!: NetPlayers;
   private bountyIndicator: { element: HTMLElement; arrow: HTMLElement; title: HTMLElement; distance: HTMLElement } | null = null;
   private bountyMarker: MapMarker | null = null;
+  /** fire call (fire truck only): marker → burning house → put out every window */
+  private firePickup: [number, number] | null = null;
+  private fireActive = false;
+  private fireSpot: [number, number] | null = null;
+  /** how many windows this call started with (1 … street façade) */
+  private fireWindowTotal = 0;
+  private fireOfferAt = performance.now() + 20000;
+  private fireIndicator: { element: HTMLElement; arrow: HTMLElement; title: HTMLElement; distance: HTMLElement } | null = null;
+  private fireMarker: MapMarker | null = null;
+  /** Howler: marker → load a car → any police station for a premium */
+  private impoundPickup: [number, number] | null = null;
+  private impoundActive = false;
+  private impoundSpot: [number, number] | null = null;
+  private impoundOfferAt = performance.now() + 25000;
+  private impoundDeliveredAt = 0;
+  private impoundIndicator: { element: HTMLElement; arrow: HTMLElement; title: HTMLElement; distance: HTMLElement } | null = null;
+  private impoundMarker: MapMarker | null = null;
   /**
    * The hauler's cable. First click: it flies out (fly) and sticks to a car (hooked) or a
    * wall (anchored), or comes back empty (miss). Second click: the car is yanked up onto
@@ -350,6 +387,10 @@ export class GameEngine {
     trainId?: string; rope?: number; ropeFrom?: number; reeled?: boolean;
     /** coins: the ones on the hook and where each lay */
     coins?: { id: string; start: Position }[];
+    /** hooked car fighting the winch: first moment the rope hit full stretch */
+    tautAt?: number;
+    /** last updateHaul time for hooked-car drag (ms) */
+    dragAt?: number;
   } | null = null;
   /** our police car's lights (F) */
   private beaconsOn = true;
@@ -637,6 +678,7 @@ export class GameEngine {
       this.combatLayer.onRemoteHit = (id) => this.players.shot(id);
       this.combatLayer.onTargetHit = (id) => this.sharedTraffic.ourHit(id);
       this.combatLayer.onTrainCoin = (point, altitude) => this.trainCoin(point, altitude);
+      this.combatLayer.onFireWindowOut = (left) => this.onFireWindowOut(left);
       this.combatLayer.onTargetDestroyed = (id, position) => {
         this.dropCoins(position);
         if (this.heist && id.startsWith('police')) {
@@ -829,9 +871,35 @@ export class GameEngine {
   setCar(car: Car) {
     if (this.car.id === car.id && this.car.path === car.path) return;
     if (this.haul && car.id !== HAULER_ID) this.loseHaul();
+    const prev = this.car.id;
     this.car = car;
     this.fuel.changeSpec(car.fuel);
     this.combatLayer?.setCar(car);
+    this.onSpecialVehicleChange(prev, car.id);
+  }
+
+  private isPoliceCar(id = this.car.id) { return POLICE_IDS.has(id); }
+  private isFireTruck(id = this.car.id) { return id === FIRE_TRUCK_ID; }
+  private isHauler(id = this.car.id) { return id === HAULER_ID; }
+
+  /** Role cars swap which special mission is on the map (police / fire / hauler). */
+  private onSpecialVehicleChange(prev: string, next: string) {
+    if (this.isFireTruck(prev) && !this.isFireTruck(next)) this.suspendFire();
+    if (this.isHauler(prev) && !this.isHauler(next)) this.suspendImpound();
+    if (this.isPoliceCar(prev) && !this.isPoliceCar(next)) {
+      // hide bounty offer UI; keep the saved hunt for when we're back in a cruiser
+      if (this.bountyOfferShown) { this.bountyOfferShown = false; this.onBountyOffer(null); }
+    }
+    if (this.isFireTruck(next) && !this.fireActive && !this.firePickup) {
+      this.fireOfferAt = Math.min(this.fireOfferAt, performance.now() + 4000);
+    }
+    if (this.isHauler(next) && !this.impoundActive && !this.impoundPickup) {
+      this.impoundOfferAt = Math.min(this.impoundOfferAt, performance.now() + 4000);
+    }
+    if (this.isPoliceCar(next) && !this.bounty && !this.bountyPending) {
+      this.bountyOfferAt = Math.min(this.bountyOfferAt, performance.now() + 4000);
+    }
+    this.syncMissionVisuals(true);
   }
 
   /** Lot catalogue for the dealership dialog. */
@@ -967,6 +1035,9 @@ export class GameEngine {
     this.loanDebt = Math.max(0, Math.round(carry?.loan ?? 0));
     this.garage = new Set((carry?.garage ?? []).filter((id) => carsConfig.some((car) => car.id === id)));
     this.garage.add(this.car.id);
+    for (const id of GIFT_CARS) {
+      if (carsConfig.some((car) => car.id === id)) this.garage.add(id);
+    }
     this.carry = null;
     this.runReady = true;
     this.fuelOut = false;
@@ -1100,7 +1171,7 @@ export class GameEngine {
     const beacons: {
       id: string;
       position: [number, number];
-      kind?: 'arena' | 'race' | 'bounty';
+      kind?: 'arena' | 'race' | 'bounty' | 'fire' | 'impound';
       colors?: { pole: string; glow: string; orb: string };
     }[] = visible.map(mission => ({
       id: mission.id,
@@ -1112,10 +1183,22 @@ export class GameEngine {
     if (errand?.kind === 'delivery') beacons.push({ id: 'errand-goal', position: errand.goal, colors: ERRAND_BEACONS.delivery });
     if (errand?.kind === 'collect') for (const box of errand.boxes) beacons.push({ id: `errand-${box.id}`, position: box.position, colors: ERRAND_BEACONS.collect });
     if (showWorld && !this.bountyFight && !errand) {
-      if (this.bountyPending && this.bountyPickup && free) {
+      if (this.isPoliceCar() && this.bountyPending && this.bountyPickup && free) {
         beacons.push({ id: 'bounty-pickup', kind: 'bounty', position: this.bountyPickup });
-      } else if (this.bounty?.spot) {
+      } else if (this.isPoliceCar() && this.bounty?.spot) {
         beacons.push({ id: 'bounty', kind: 'bounty', position: this.bounty.spot });
+      }
+      if (this.isFireTruck() && this.fireActive && this.fireSpot) {
+        beacons.push({ id: 'fire', kind: 'fire', position: this.fireSpot });
+      } else if (this.isFireTruck() && this.firePickup && free) {
+        beacons.push({ id: 'fire-pickup', kind: 'fire', position: this.firePickup });
+      }
+      if (this.isHauler() && this.impoundActive) {
+        const drop = this.impoundDropPin();
+        if (drop) beacons.push({ id: 'impound-drop', kind: 'impound', position: drop });
+        else if (this.impoundSpot) beacons.push({ id: 'impound', kind: 'impound', position: this.impoundSpot });
+      } else if (this.isHauler() && this.impoundPickup && free) {
+        beacons.push({ id: 'impound-pickup', kind: 'impound', position: this.impoundPickup });
       }
     }
     if (this.driving) {
@@ -1131,11 +1214,13 @@ export class GameEngine {
     this.ensureEventMarkers();
   }
 
-  /** Arena/race missions plus the wanted job (pending pickup or accepted hunt). */
+  /** Arena/race missions plus the wanted job, fire call or impound (role-gated). */
   private focusGoals() {
     const goals: Array<
       | { kind: 'mission'; id: string; missionKind: MissionKind; label: string; position: [number, number] }
       | { kind: 'bounty'; label: string; position: [number, number] | null }
+      | { kind: 'fire'; label: string; position: [number, number] | null }
+      | { kind: 'impound'; label: string; position: [number, number] | null }
     > = (this.onMission() ? [] : this.missions).map(mission => ({
       kind: 'mission' as const,
       id: mission.id,
@@ -1144,14 +1229,35 @@ export class GameEngine {
       position: mission.position,
     }));
     if (this.bountyFight || this.errand) return goals;
-    if (this.bountyPending && this.bountyPickup && !this.onMission()) {
-      goals.push({ kind: 'bounty', label: t('bounty.goal'), position: this.bountyPickup });
-    } else if (this.bounty) {
-      goals.push({
-        kind: 'bounty',
-        label: t('bounty.marker', { name: this.bounty.name }),
-        position: this.bounty.spot ?? null,
-      });
+    if (this.isPoliceCar()) {
+      if (this.bountyPending && this.bountyPickup && !this.onMission()) {
+        goals.push({ kind: 'bounty', label: t('bounty.goal'), position: this.bountyPickup });
+      } else if (this.bounty) {
+        goals.push({
+          kind: 'bounty',
+          label: t('bounty.marker', { name: this.bounty.name }),
+          position: this.bounty.spot ?? null,
+        });
+      }
+    }
+    if (this.isFireTruck()) {
+      if (this.fireActive && this.fireSpot) {
+        goals.push({ kind: 'fire', label: t('fire.goal'), position: this.fireSpot });
+      } else if (this.firePickup && !this.onMission()) {
+        goals.push({ kind: 'fire', label: t('fire.goal'), position: this.firePickup });
+      }
+    }
+    if (this.isHauler()) {
+      if (this.impoundActive) {
+        const drop = this.impoundDropPin();
+        goals.push({
+          kind: 'impound',
+          label: drop ? t('impound.drop') : t('impound.goal'),
+          position: drop ?? this.impoundSpot,
+        });
+      } else if (this.impoundPickup && !this.onMission()) {
+        goals.push({ kind: 'impound', label: t('impound.goal'), position: this.impoundPickup });
+      }
     }
     return goals;
   }
@@ -2203,6 +2309,8 @@ export class GameEngine {
     if (!this.driving) return;
     if (this.heist) { this.updateHeist(); return; }
     this.updateBounty();
+    this.updateFire();
+    this.updateImpound();
     if (this.bountyFight) {
       if (this.playerHp <= 0) this.endBounty(false);
       else if (this.trafficBots.length && this.combatLayer && this.combatLayer.aliveTargetCount() === 0) this.endBounty(true);
@@ -2249,9 +2357,15 @@ export class GameEngine {
     this.onEventOffer(offer);
   }
 
-  /** On a mission of any kind (arena, race, chase, a hunt, an errand): nothing else is offered or shown. */
+  /** On a mission of any kind (arena, race, chase, a hunt, an errand, a fire, an impound): nothing else is offered or shown. */
   private onMission() {
-    return this.mode !== 'roam' || Boolean(this.heist) || this.bountyFight || Boolean(this.bounty) || Boolean(this.errand);
+    return this.mode !== 'roam'
+      || Boolean(this.heist)
+      || this.bountyFight
+      || (Boolean(this.bounty) && this.isPoliceCar())
+      || Boolean(this.errand)
+      || this.fireActive
+      || this.impoundActive;
   }
 
   /** What the marker's dialog says; a delivery picks its address and pay here. Null: no address to go to. */
@@ -2390,15 +2504,19 @@ export class GameEngine {
 
   // ---- the hauler: a cable, a car on our back --------------------------------
 
-  /** Cars the cable can take: our mission bots and the traffic and parked cars we keep. */
+  /** Cars the cable can take: our mission bots and the traffic and parked cars we keep. `speed` is signed (m/s). */
   private haulCandidates() {
     const layer = this.combatLayer;
     return [
       ...this.trafficBots
         .filter(bot => !layer || layer.isTargetAlive(bot.id))
-        .map(bot => ({ id: bot.id, kind: 'bot' as const, car: bot.car, position: bot.position, heading: bot.heading, speed: Math.abs(bot.controller.speed) })),
+        .map(bot => ({ id: bot.id, kind: 'bot' as const, car: bot.car, position: bot.position as Position, heading: bot.heading, speed: bot.controller.speed })),
       ...this.sharedTraffic.holdable().map(c => ({ ...c, kind: 'shared' as const })),
     ];
+  }
+
+  private haulTarget(id: string) {
+    return this.haulCandidates().find((c) => c.id === id) ?? null;
   }
 
   /** A click in the Howler: throw the cable; yank what it holds; let go. Works mid-jump too. */
@@ -2460,12 +2578,11 @@ export class GameEngine {
         if (d <= HAUL_AIM_M && d < bestD) { bestD = d; best = c; }
       }
     }
-    if (best && best.speed <= HAUL_STILL) {
+    if (best) {
       if (best.kind === 'shared') this.sharedTraffic.hold(best.id);
       this.haul = { id: best.id, kind: best.kind, car: best.car, phase: 'fly', at: now, from: [...best.position] as Position, fromHeading: best.heading, fromUp: groundUp(best.position) };
       return;
     }
-    if (best) this.say(t('haul.moving'));
     // a train car by the aim: the hook takes it, and the train takes us
     if (!best) {
       let hit: { trainId: string; at: Position; d: number } | null = null;
@@ -2677,14 +2794,92 @@ export class GameEngine {
     }
     const deck = along(-this.car.length * HAUL_DECK_BACK);
     const deckUp = this.car.length * HAUL_DECK_UP;
+    const groundUp = (at: Position) => (this.map.groundAt(at) ?? this.altitude) - this.altitude;
     let position: Position, up: number, facing: number;
+    let heldSpeed = 0;
     if (haul.phase === 'fly' || haul.phase === 'hooked') {
+      // follow the live car while the hook flies / holds (moving targets included)
+      const live = this.haulTarget(haul.id);
+      if (live) {
+        haul.from = [...live.position] as Position;
+        haul.fromHeading = live.heading;
+        haul.fromUp = groundUp(live.position);
+        heldSpeed = live.speed;
+      }
       position = haul.from; up = haul.fromUp; facing = haul.fromHeading;
-      const t = haul.phase === 'fly' ? k(HAUL_FLY_MS) : 1;
-      layer?.setCable({ position: mix(nose, haul.from, t), up: 0.9 + (haul.fromUp + 0.8 - 0.9) * t, wave: haul.phase === 'fly' ? 1 : quiver(haul.at) });
-      if (haul.phase === 'fly' && t >= 1) { haul.phase = 'hooked'; haul.at = now; }
-      // drove off too far with it on the line: the cable snaps
-      if (haul.phase === 'hooked' && metersBetween(this.vehicle.position, haul.from) > HAUL_SNAP_M) { this.releaseHaul(null); return; }
+      if (haul.phase === 'fly') {
+        const t = k(HAUL_FLY_MS);
+        layer?.setCable({ position: mix(nose, haul.from, t), up: 0.9 + (haul.fromUp + 0.8 - 0.9) * t, wave: 1 });
+        if (t >= 1) { haul.phase = 'hooked'; haul.at = now; haul.tautAt = undefined; haul.dragAt = now; }
+      } else {
+        // hooked: winch vs car speed along the rope
+        const dt = Math.min(0.05, (now - (haul.dragAt ?? now)) / 1000);
+        haul.dragAt = now;
+        const lat = nose[1] * Math.PI / 180;
+        const kx = 111319.49 * Math.cos(lat), ky = 111319.49;
+        let de = (position[0] - nose[0]) * kx, dn = (position[1] - nose[1]) * ky;
+        let dist = Math.hypot(de, dn) || 0.01;
+        const ue = de / dist, un = dn / dist; // nose → car
+        const carSpeed = live?.speed ?? 0;
+        const carVe = Math.sin(facing) * carSpeed, carVn = Math.cos(facing) * carSpeed;
+        const haulVe = Math.sin(heading) * this.vehicle.speed, haulVn = Math.cos(heading) * this.vehicle.speed;
+        // +sep = car fleeing along the rope (against the winch)
+        const sep = (carVe - haulVe) * ue + (carVn - haulVn) * un;
+        heldSpeed = carSpeed;
+        if (sep > HAUL_WINCH_MS) {
+          // car wins: keep its motion, rope stretches toward max reach
+          if (dt > 0) {
+            position = offsetPosition(position, carVe * dt, carVn * dt) as Position;
+            de = (position[0] - nose[0]) * kx; dn = (position[1] - nose[1]) * ky;
+            dist = Math.hypot(de, dn) || 0.01;
+          }
+          if (dist >= HAUL_REACH_M) {
+            const scale = HAUL_REACH_M / dist;
+            position = [nose[0] + (position[0] - nose[0]) * scale, nose[1] + (position[1] - nose[1]) * scale] as Position;
+            dist = HAUL_REACH_M;
+            if (haul.tautAt == null) haul.tautAt = now;
+            else if (now - haul.tautAt >= HAUL_TAUT_MS) {
+              this.say(t('haul.snap'), true);
+              this.releaseHaul({ position, heading: facing });
+              return;
+            }
+          } else {
+            haul.tautAt = undefined;
+          }
+        } else {
+          // winch wins: reel the car in; clear stretch timer
+          haul.tautAt = undefined;
+          const close = (HAUL_WINCH_MS - Math.max(0, sep)) * dt;
+          const newDist = Math.max(0.5, dist - close);
+          position = [nose[0] + ue * newDist / kx, nose[1] + un * newDist / ky] as Position;
+          dist = newDist;
+          heldSpeed = carSpeed * Math.exp(-dt * 2.2);
+          if (dist <= HAUL_LOAD_M) {
+            haul.from = position;
+            haul.fromHeading = facing;
+            haul.fromUp = groundUp(position);
+            haul.phase = 'pull';
+            haul.at = now;
+            heldSpeed = 0;
+          }
+        }
+        up = groundUp(position);
+        haul.from = position;
+        haul.fromHeading = facing;
+        haul.fromUp = up;
+        const taut = haul.tautAt != null;
+        layer?.setCable({
+          position,
+          up: up + 0.8,
+          wave: taut ? 0.2 : quiver(haul.at),
+        });
+        // absolute fail-safe if somehow beyond snap range
+        if (dist > HAUL_SNAP_M) {
+          this.say(t('haul.snap'), true);
+          this.releaseHaul({ position, heading: facing });
+          return;
+        }
+      }
     } else if (haul.phase === 'pull') {
       // yanked: a quick high arc, landing square on the deck
       const t = ease(k(HAUL_PULL_MS));
@@ -2705,21 +2900,21 @@ export class GameEngine {
       facing = heading;
       if (t >= 1) { this.releaseHaul({ position: end, heading }); return; }
     }
-    this.placeHauled(haul, position, facing);
+    this.placeHauled(haul, position, facing, heldSpeed);
     // on the bed: tilted a little nose down (its tail would sink into the bed's raised back) and with the truck
     const onBed = haul.phase === 'carry' ? 1 : haul.phase === 'pull' ? Math.min(1, (now - haul.at) / HAUL_PULL_MS) : haul.phase === 'drop' ? 1 - Math.min(1, (now - haul.at) / HAUL_DROP_MS) : 0;
     layer?.setCarried({ id: haul.id, position, heading: facing, up: up + 0.08 * onBed, pitch: (this.modelPitch - HAUL_TILT) * onBed });
   }
 
   /** The catch's place in the world (so it bumps, is shot at and is seen by others where it is). */
-  private placeHauled(haul: NonNullable<GameEngine['haul']>, position: Position, heading: number) {
+  private placeHauled(haul: NonNullable<GameEngine['haul']>, position: Position, heading: number, speed = 0) {
     if (haul.kind === 'wall') return;
-    if (haul.kind === 'shared') { this.sharedTraffic.place(haul.id, position, heading); return; }
+    if (haul.kind === 'shared') { this.sharedTraffic.place(haul.id, position, heading, speed); return; }
     const bot = this.trafficBots.find(entry => entry.id === haul.id);
     if (!bot) return;
     bot.controller.position = [...position] as Position;
     bot.controller.heading = heading;
-    bot.controller.speed = 0;
+    bot.controller.speed = speed;
     bot.position = [...position] as Position;
     bot.heading = heading;
   }
@@ -2767,6 +2962,12 @@ export class GameEngine {
     this.syncErrandMarkers();
     this.bountyMarker?.remove();
     this.bountyMarker = null;
+    this.fireMarker?.remove();
+    this.fireMarker = null;
+    if (this.fireIndicator) this.fireIndicator.element.setAttribute('aria-label', t('fire.goal'));
+    this.impoundMarker?.remove();
+    this.impoundMarker = null;
+    if (this.impoundIndicator) this.impoundIndicator.element.setAttribute('aria-label', t('impound.goal'));
     this.raceGoalMarker?.remove();
     this.raceGoalMarker = null;
     this.raceGoalIndicator?.element.remove();
@@ -2996,12 +3197,13 @@ export class GameEngine {
     this.placeTargetIndicator(marker, target, 0);
   }
 
-  /** Spawn a local wanted pin now and then; take the job and hunt within 10 km. */
+  /** Spawn a local wanted pin now and then; take the job and hunt within 10 km. Police cars only. */
   private updateBounty() {
+    if (!this.isPoliceCar()) return;
     const now = performance.now();
     const here = this.vehicle.position;
     if (this.bountyPending && !this.bounty) {
-      if (this.mode !== 'roam' || this.bountyFight || this.errand) return;
+      if (this.mode !== 'roam' || this.bountyFight || this.errand || this.fireActive) return;
       if (
         this.bountyPickup
         && !this.bountyOfferShown
@@ -3019,7 +3221,7 @@ export class GameEngine {
       return;
     }
     if (!this.bounty) {
-      const busy = this.mode !== 'roam' || this.errand || this.bountyPending || this.eventOffer || this.travelOpen || this.serviceOpen || this.dealerOpen || this.fuelOut;
+      const busy = this.mode !== 'roam' || this.errand || this.bountyPending || this.eventOffer || this.travelOpen || this.serviceOpen || this.dealerOpen || this.fuelOut || this.fireActive || this.impoundActive;
       if (busy || now < this.bountyOfferAt) return;
       const seed = Math.round(here[0] * 1e5) ^ Math.round(here[1] * 1e5) ^ (now | 0);
       const avoid = this.missions.map(mission => mission.position);
@@ -3138,11 +3340,241 @@ export class GameEngine {
     }
   }
 
+  /** Fire truck: marker by an existing house → arrive → burn 1..N street windows → hose them out. */
+  private updateFire() {
+    if (!this.isFireTruck()) return;
+    const now = performance.now();
+    const here = this.vehicle.position;
+    if (this.fireActive) return;
+    if (this.firePickup) {
+      if (this.mode === 'roam' && !this.bountyFight && !this.errand
+        && metersBetween(here, this.firePickup) <= FIRE_ARRIVE_M) this.startFire();
+      return;
+    }
+    if (this.mode !== 'roam' || this.bountyFight || this.errand || this.onMission()) return;
+    const busy = this.eventOffer || this.travelOpen || this.serviceOpen || this.dealerOpen || this.fuelOut;
+    if (busy || now < this.fireOfferAt) return;
+    const seed = Math.round(here[0] * 1e5) ^ Math.round(here[1] * 1e5) ^ (now | 0);
+    const avoid = this.missions.map(mission => mission.position);
+    if (this.bountyPickup) avoid.push(this.bountyPickup);
+    // prefer a road pin that already sits by a house with street windows
+    let pinned: [number, number] | null = null;
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const spot = this.pickBeaconSpot(here as [number, number], this.vehicle.heading, seed ^ 0x51f3 ^ (attempt * 17), avoid);
+      const facades = this.map.fireFacadesNear(spot, 70);
+      if (!facades?.panes.length) continue;
+      const specs: FirePaneSpec[] = facades.panes.map((p) => ({
+        at: p.at as [number, number],
+        altitude: p.altitude,
+        oe: p.oe,
+        on: p.on,
+      }));
+      pinned = facadeMarker(specs, spot) as [number, number];
+      break;
+    }
+    if (!pinned) {
+      this.fireOfferAt = now + 8000;
+      return;
+    }
+    this.firePickup = pinned;
+    this.syncMissionVisuals(true);
+    this.say(t('mission.new', { label: t('fire.goal') }), true);
+  }
+
+  private startFire() {
+    if (!this.firePickup || this.fireActive) return;
+    const site = this.firePickup;
+    const facades = this.map.fireFacadesNear(site, 80);
+    if (!facades?.panes.length) {
+      // tiles not ready / no usable street façade — try another call soon
+      this.firePickup = null;
+      this.fireOfferAt = performance.now() + 6000;
+      this.syncMissionVisuals(true);
+      return;
+    }
+    const specs: FirePaneSpec[] = facades.panes.map((p) => ({
+      at: p.at as [number, number],
+      altitude: p.altitude,
+      oe: p.oe,
+      on: p.on,
+    }));
+    const seed = Math.round(site[0] * 1e5) ^ Math.round(site[1] * 1e5) ^ (performance.now() | 0);
+    const n = pickBurningCount(specs.length, seed);
+    const burning = pickBurningPanes(specs, n, seed ^ 0x9e3779b9);
+    this.fireActive = true;
+    this.fireSpot = facadeMarker(burning, site) as [number, number];
+    this.firePickup = null;
+    this.fireWindowTotal = burning.length;
+    this.combatLayer?.setFireHouse({ panes: burning });
+    this.syncMissionVisuals(true);
+    this.say(t('fire.start', { n: this.fireWindowTotal, coin: formatNumber(FIRE_WINDOW_COIN) }), true);
+  }
+
+  private onFireWindowOut(left: number) {
+    if (!this.fireActive) return;
+    // reward only when every window is out — paid once in completeFire
+    if (left === 0) {
+      this.completeFire(this.fireWindowTotal);
+      return;
+    }
+    const done = this.fireWindowTotal - left;
+    if (done === 1 || done % 10 === 0) {
+      this.say(t('fire.window', { done: formatNumber(done), left: formatNumber(left) }), true);
+    }
+  }
+
+  private completeFire(windows: number) {
+    if (!this.fireActive) return;
+    const payout = windows * FIRE_WINDOW_COIN;
+    this.fireActive = false;
+    this.fireSpot = null;
+    this.fireWindowTotal = 0;
+    this.combatLayer?.setFireHouse(null);
+    this.playerMoney += payout;
+    this.fireOfferAt = performance.now() + 45000;
+    this.syncMissionVisuals(true);
+    this.onEventResult({ kind: 'fire', won: true, cash: payout, name: String(windows) });
+  }
+
+  /** Leave a fire call when swapping off the truck (progress is lost). */
+  private suspendFire() {
+    if (this.fireActive) {
+      this.fireActive = false;
+      this.fireSpot = null;
+      this.fireWindowTotal = 0;
+      this.combatLayer?.setFireHouse(null);
+      this.fireOfferAt = performance.now() + 12000;
+      this.say(t('fire.aborted'), true);
+    }
+    // keep the map pin for when we come back in the truck; just hide it via sync
+    this.syncMissionVisuals(true);
+  }
+
+  /** Nearest police station pin while hauling the impound car (any station counts). */
+  private impoundDropPin(): [number, number] | null {
+    if (!this.carryingImpound()) return null;
+    const list = [...this.civics.values()].filter((s) => s.kind === 'police');
+    const near = nearestStation(this.vehicle.position, list);
+    return near ? [...near.station.position] as [number, number] : null;
+  }
+
+  private carryingImpound() {
+    const haul = this.haul;
+    // only the car on the bed counts — empty visits to police do nothing
+    return Boolean(this.impoundActive && haul && haul.id === TOW_CAR_ID && haul.phase === 'carry');
+  }
+
+  /** Howler: marker → load the car → deliver to any police station for a premium. */
+  private updateImpound() {
+    if (!this.isHauler()) return;
+    const now = performance.now();
+    const here = this.vehicle.position;
+    if (this.impoundActive) {
+      // car wrecked / gone: cancel and try again later
+      if (!this.trafficBots.some((b) => b.id === TOW_CAR_ID) && this.haul?.id !== TOW_CAR_ID) {
+        this.failImpound();
+        return;
+      }
+      // keep the waiting car planted until the hook takes it
+      const bot = this.trafficBots.find((b) => b.id === TOW_CAR_ID);
+      if (bot && this.haul?.id !== TOW_CAR_ID && this.impoundSpot) {
+        bot.controller.speed = 0;
+        bot.controller.position = [...this.impoundSpot] as Position;
+        bot.position = [...this.impoundSpot] as Position;
+      }
+      // only when the car is on the bed (or hooked/pulling) — empty visits to police do nothing
+      if (this.carryingImpound() && now > this.impoundDeliveredAt) {
+        const police = atStation(here, [...this.civics.values()].filter((s) => s.kind === 'police'));
+        if (police && Math.abs(this.vehicle.speed) < 7) this.completeImpound();
+      }
+      return;
+    }
+    if (this.impoundPickup) {
+      if (this.mode === 'roam' && !this.bountyFight && !this.errand && !this.fireActive
+        && metersBetween(here, this.impoundPickup) <= IMPOUND_ARRIVE_M) this.startImpound();
+      return;
+    }
+    if (this.mode !== 'roam' || this.bountyFight || this.errand || this.onMission()) return;
+    const busy = this.eventOffer || this.travelOpen || this.serviceOpen || this.dealerOpen || this.fuelOut;
+    if (busy || now < this.impoundOfferAt) return;
+    const seed = Math.round(here[0] * 1e5) ^ Math.round(here[1] * 1e5) ^ (now | 0);
+    const avoid = this.missions.map((mission) => mission.position);
+    if (this.bountyPickup) avoid.push(this.bountyPickup);
+    if (this.firePickup) avoid.push(this.firePickup);
+    this.impoundPickup = this.pickBeaconSpot(here as [number, number], this.vehicle.heading, seed ^ 0x70a1, avoid);
+    this.syncMissionVisuals(true);
+    this.say(t('mission.new', { label: t('impound.goal') }), true);
+  }
+
+  private startImpound() {
+    if (!this.impoundPickup || this.impoundActive) return;
+    this.impoundActive = true;
+    this.impoundSpot = this.impoundPickup;
+    this.impoundPickup = null;
+    const heading = this.vehicle.heading;
+    const seed = Math.round(this.impoundSpot[0] * 1e5) ^ Math.round(this.impoundSpot[1] * 1e5);
+    const choices = carsConfig.filter((car) => car.id !== HAULER_ID && car.id !== FIRE_TRUCK_ID && !POLICE_IDS.has(car.id));
+    const car = choices[Math.abs(seed) % choices.length] ?? carsConfig[0];
+    // plant a still car exactly on the pin (createTrafficBot would wander off)
+    const bot = createTrafficBot(TOW_CAR_ID, t('impound.driver'), car, this.trafficNetwork, this.impoundSpot, heading, new Set(), 'explore', seed, { min: 0, max: 40 });
+    bot.controller.position = [...this.impoundSpot] as Position;
+    bot.controller.heading = heading;
+    bot.controller.speed = 0;
+    bot.position = [...this.impoundSpot] as Position;
+    bot.heading = heading;
+    bot.route = [];
+    bot.goal = null;
+    this.trafficBots = [...this.trafficBots.filter((b) => b.id !== TOW_CAR_ID), bot];
+    this.combatLayer?.setTargets(this.targetVehicles());
+    this.syncMissionVisuals(true);
+    this.say(t('impound.start', { car: car.name, reward: formatNumber(IMPOUND_REWARD) }), true);
+  }
+
+  private completeImpound() {
+    if (!this.impoundActive) return;
+    this.impoundActive = false;
+    this.impoundSpot = null;
+    this.impoundDeliveredAt = performance.now() + 2000;
+    // take the car off the bed and scrap it at the station
+    if (this.haul?.id === TOW_CAR_ID) this.loseHaul();
+    else {
+      this.trafficBots = this.trafficBots.filter((b) => b.id !== TOW_CAR_ID);
+      this.combatLayer?.setTargets(this.targetVehicles());
+    }
+    this.playerMoney += IMPOUND_REWARD;
+    this.impoundOfferAt = performance.now() + 50000;
+    this.syncMissionVisuals(true);
+    this.onEventResult({ kind: 'impound', won: true, cash: IMPOUND_REWARD });
+  }
+
+  private failImpound() {
+    this.impoundActive = false;
+    this.impoundSpot = null;
+    this.trafficBots = this.trafficBots.filter((b) => b.id !== TOW_CAR_ID);
+    this.combatLayer?.setTargets(this.targetVehicles());
+    this.impoundOfferAt = performance.now() + 20000;
+    this.syncMissionVisuals(true);
+    this.say(t('impound.lost'), true);
+  }
+
+  private suspendImpound() {
+    if (this.impoundActive) {
+      if (this.haul?.id === TOW_CAR_ID) this.loseHaul();
+      this.impoundActive = false;
+      this.impoundSpot = null;
+      this.trafficBots = this.trafficBots.filter((b) => b.id !== TOW_CAR_ID);
+      this.combatLayer?.setTargets(this.targetVehicles());
+      this.impoundOfferAt = performance.now() + 12000;
+      this.say(t('impound.aborted'), true);
+    }
+    this.syncMissionVisuals(true);
+  }
+
   /** Where the hunt points: pickup pin, the wanted car, its spot, or (far away) its city. */
   private updateBountyMarkers() {
     const pending = Boolean(this.bountyPending && this.bountyPickup && !this.bounty);
     const bounty = this.bountyFight ? null : (this.bounty ?? this.bountyPending);
-    if (!bounty || !this.driving || this.errand || (pending && !this.bountyPickup)) {
+    if (!this.isPoliceCar() || !bounty || !this.driving || this.errand || (pending && !this.bountyPickup)) {
       if (this.bountyIndicator) this.bountyIndicator.element.style.display = 'none';
       if (this.bountyMarker) { this.bountyMarker.remove(); this.bountyMarker = null; }
       return;
@@ -3200,8 +3632,73 @@ export class GameEngine {
     this.trainLayer.setCars(this.trainTraffic.poses(), here, this.settings.terrain);
   }
 
+  /** Edge arrow + map label for the fire call (fire truck only). */
+  private updateFireMarkers() {
+    const pin = this.fireActive ? this.fireSpot : this.firePickup;
+    if (!this.isFireTruck() || !this.driving || !pin || this.errand || this.bountyFight) {
+      if (this.fireIndicator) this.fireIndicator.element.style.display = 'none';
+      if (this.fireMarker) { this.fireMarker.remove(); this.fireMarker = null; }
+      return;
+    }
+    if (!this.eventIndicatorLayer) {
+      this.eventIndicatorLayer = document.createElement('div');
+      this.eventIndicatorLayer.className = 'mission-indicators';
+      this.host.appendChild(this.eventIndicatorLayer);
+    }
+    if (!this.fireIndicator) {
+      this.fireIndicator = this.makeOffscreenIndicator('focus', '');
+      this.fireIndicator.element.classList.replace('mission-focus-indicator', 'fire-indicator');
+      this.paintMissionIndicator(this.fireIndicator.element, 'fire');
+      this.eventIndicatorLayer.appendChild(this.fireIndicator.element);
+    }
+    const title = this.fireActive ? t('fire.marker.active') : t('fire.marker');
+    if (!this.fireMarker) {
+      this.fireMarker = this.marker({ element: this.makeMapLabel('fire-map-marker', title, title), anchor: 'bottom' }).setLngLat(pin).addTo(this.map);
+    } else {
+      this.fireMarker.setLngLat(pin);
+      const label = this.fireMarker.getElement()?.querySelector('span');
+      if (label) label.textContent = title;
+    }
+    this.fireIndicator.title.textContent = title;
+    this.placeTargetIndicator(this.fireIndicator, pin, MARKER_PIN_METERS);
+  }
+
+  /** Edge arrow + map label for the Howler impound job. */
+  private updateImpoundMarkers() {
+    const drop = this.impoundDropPin();
+    const pin = this.impoundActive ? (drop ?? this.impoundSpot) : this.impoundPickup;
+    if (!this.isHauler() || !this.driving || !pin || this.errand || this.bountyFight) {
+      if (this.impoundIndicator) this.impoundIndicator.element.style.display = 'none';
+      if (this.impoundMarker) { this.impoundMarker.remove(); this.impoundMarker = null; }
+      return;
+    }
+    if (!this.eventIndicatorLayer) {
+      this.eventIndicatorLayer = document.createElement('div');
+      this.eventIndicatorLayer.className = 'mission-indicators';
+      this.host.appendChild(this.eventIndicatorLayer);
+    }
+    if (!this.impoundIndicator) {
+      this.impoundIndicator = this.makeOffscreenIndicator('focus', '');
+      this.impoundIndicator.element.classList.replace('mission-focus-indicator', 'impound-indicator');
+      this.paintMissionIndicator(this.impoundIndicator.element, 'impound');
+      this.eventIndicatorLayer.appendChild(this.impoundIndicator.element);
+    }
+    const title = drop ? t('impound.marker.drop') : this.impoundActive ? t('impound.marker.car') : t('impound.marker');
+    if (!this.impoundMarker) {
+      this.impoundMarker = this.marker({ element: this.makeMapLabel('impound-map-marker', title, title), anchor: 'bottom' }).setLngLat(pin).addTo(this.map);
+    } else {
+      this.impoundMarker.setLngLat(pin);
+      const label = this.impoundMarker.getElement()?.querySelector('span');
+      if (label) label.textContent = title;
+    }
+    this.impoundIndicator.title.textContent = title;
+    this.placeTargetIndicator(this.impoundIndicator, pin, MARKER_PIN_METERS);
+  }
+
   private updateEventMarkers() {
     this.updateBountyMarkers();
+    this.updateFireMarkers();
+    this.updateImpoundMarkers();
     const roaming = this.driving && this.mode === 'roam';
     const goals = this.focusGoals();
     if (this.missionFocus >= goals.length) this.missionFocus = Math.max(0, goals.length - 1);
@@ -4141,6 +4638,8 @@ export class GameEngine {
         ];
         for (const bot of this.trafficBots) {
           if (gridded || bot.id === this.haul?.id) continue;
+          // impound car waits still on the pin until hooked
+          if (bot.id === TOW_CAR_ID && this.impoundActive && this.haul?.id !== TOW_CAR_ID) continue;
           if (this.combatLayer && !this.combatLayer.isTargetAlive(bot.id)) continue;
           const previous: [number, number] = [...bot.position];
           const oldHeading = bot.heading;
@@ -4348,6 +4847,9 @@ export class GameEngine {
     this.clearCustomPins();
     this.raceGoalMarker?.remove();
     this.bountyMarker?.remove();
+    this.fireMarker?.remove();
+    this.impoundMarker?.remove();
+    this.combatLayer?.setFireHouse(null);
     this.eventIndicatorLayer?.remove();
     for (const marker of this.hubMarkers.values()) marker.remove();
     this.hubMarkers.clear();

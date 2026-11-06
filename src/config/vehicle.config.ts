@@ -10,6 +10,7 @@ export const cars = [
   { id: '10', name: 'Chevy Taxi', label: 'Такси по всему миру', path: '/models/chevy-taxi.glb', length: 4.9, yaw: Math.PI/2, color: '#f2c230', acceleration: 9, maxSpeed: 140 / 3.6, mass: 1500, engine: 3.9, fuel: { tank: 65, perKm: 1.7 } },
   { id: '07', name: 'ВАЗ-2108 Time Machine', label: 'Назад в будущее по-нашему', path: '/models/vaz2108.glb', length: 4.0, yaw: Math.PI/2, color: '#b9bcc0', acceleration: 8.5, maxSpeed: 160 / 3.6, mass: 900, engine: 1.3, fuel: { tank: 43, perKm: 1.0 } },
   { id: '03', name: 'Howler', label: 'Громкий характер', path: '/models/car-3.glb', length: 7.5, yaw: Math.PI/2, color: '#c4b7a2', acceleration: 9.5, maxSpeed: 120 / 3.6, mass: 2400, engine: 6.2, fuel: { tank: 70, perKm: 3.0 } },
+  { id: '18', name: 'Fire Truck №5', label: 'Вода под давлением', path: '/models/fire-truck-no5.glb', length: 5.5, yaw: Math.PI/2, color: '#c62828', acceleration: 5.8, maxSpeed: 100 / 3.6, mass: 12500, engine: 8.8, fuel: { tank: 220, perKm: 4.8 } },
   { id: '09', name: 'Fleetline Police', label: 'Закон и порядок', path: '/models/fleetline-police.glb', length: 4.9, yaw: Math.PI/2, color: '#2c3a52', acceleration: 10, maxSpeed: 150 / 3.6, mass: 1550, engine: 3.5, fuel: { tank: 60, perKm: 1.8 } },
   { id: '12', name: 'Mustang 65', label: 'Дикая лошадь шестидесятых', path: '/models/mustang-65.glb', length: 4.6, yaw: Math.PI/2, color: '#c45c2a', acceleration: 10.5, maxSpeed: 190 / 3.6, mass: 1280, engine: 4.7, fuel: { tank: 60, perKm: 1.7 } },
   { id: '04', name: 'Toyota Supra 82', label: 'Японская классика', path: '/models/supra-82.glb', length: 4.6, yaw: Math.PI/2, color: '#d9d4c8', acceleration: 11, maxSpeed: 200 / 3.6, mass: 1300, engine: 2.8, fuel: { tank: 61, perKm: 1.6 } },
@@ -41,12 +42,20 @@ const STARTER_PRICE: Partial<Record<string, number>> = {
   '17': 4800, // Family Sedan
 };
 
+/** Always join the player's garage (gifts / unlocks), even on an old save. */
+export const GIFT_CARS = ['18'] as const;
+
+/** Dealership sticker for gifted / special cars outside the speed curve. */
+const PINNED_PRICE: Partial<Record<string, number>> = {
+  '18': 7200, // Fire Truck №5
+};
+
 /**
  * Showroom price in coins. Steep curve on speed and punch so a starter purse
  * only covers the slowest beaters; race cars need arena / bounty money.
  */
 export function carPrice(car: Car): number {
-  const pinned = STARTER_PRICE[car.id];
+  const pinned = STARTER_PRICE[car.id] ?? PINNED_PRICE[car.id];
   if (pinned != null) return pinned;
   const kph = car.maxSpeed * 3.6;
   const raw =

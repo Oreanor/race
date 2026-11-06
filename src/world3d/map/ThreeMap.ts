@@ -10,7 +10,7 @@ import { seasonAt, snowCoverAt, SEASON_MODES, SEASONS, type Season, type SeasonM
 import { SkyBodies } from './sky';
 import { LensFlare } from './LensFlare';
 import { skyDirection } from '../astro';
-import { SKIN_DATA, type SkinId } from '../buildings/skins';
+import { PAINTED_SKINS, SKIN_DATA, type Skin, type SkinId } from '../buildings/skins';
 
 /** bullet hole decals; the oldest one goes when a new one comes */
 const MAX_HOLES = 1024;
@@ -147,9 +147,17 @@ export class ThreeMap {
    * gives way to newer ones.
    */
   private panes: { at: [number, number]; altitude: number; seed: number }[] = [];
+  /** burning façade windows for the fire-truck mission (scene markers via uFires) */
+  private fires: { at: [number, number]; altitude: number }[] = [];
+  private firesDirty = false;
+  private firesOrigin = '';
   private holeMesh: THREE.InstancedMesh;
   private holesDirty = false;
   private holesOrigin = '';
+  /** scratch vectors for headlight pose (avoid per-frame alloc in the render loop) */
+  private readonly headFlat = new THREE.Vector3();
+  private readonly headFwd = new THREE.Vector3();
+  private readonly headUp = new THREE.Vector3();
   /** player car (lng/lat, altitude m) for the see-through buildings in front of it */
   private focusCar: { at: [number, number]; altitude: number; heading: number; pitch: number } | null = null;
   loaded = false;
@@ -304,6 +312,21 @@ export class ThreeMap {
     return house ? { middle: house.middle, top: house.top * this.exaggeration } : null;
   }
 
+  /**
+   * Fire call on an existing house by a street pin: street-facing accessible
+   * window centres (exaggerated altitudes) ready to ignite.
+   */
+  fireFacadesNear(street: LngLatLike, radius = 55) {
+    return this.world.fireFacadesNear(toLngLat(street), this.exaggeration, radius);
+  }
+
+  /** Burning window markers for the façade shader (cleared with empty list). */
+  setFirePanes(panes: { at: [number, number]; altitude: number }[]) {
+    this.fires = panes.map((p) => ({ at: [...p.at] as [number, number], altitude: p.altitude }));
+    this.firesDirty = true;
+    this.firesOrigin = '';
+  }
+
   /** The ground under the view centre has arrived. */
   hasGround() {
     const [lng, lat] = this.camera.state.center;
@@ -430,28 +453,40 @@ export class ThreeMap {
   /** Repaint every building in an architecture skin (or the city's own look); instant, nothing reloads. */
   setSkin(id: SkinId) {
     const u = this.uniforms;
+    // neon lamps + spires only for a fully futuristic city (mixed keeps classic streets)
     this.world.setSpires(id === 'futuristic');
     if (id === 'original') { u.uSkin.value = 0; this.triggerRepaint(); return; }
-    const skin = SKIN_DATA[id];
     const lin = (hex: string) => new THREE.Color().setStyle(hex, THREE.SRGBColorSpace); // three keeps colours linear
-    const weighted = (list: [string, number][], into: THREE.Vector4[]) => {
+    const weighted = (list: [string, number][], into: THREE.Vector4[], offset: number) => {
       const total = list.reduce((sum, [, w]) => sum + w, 0);
       let acc = 0;
-      into.forEach((slot, i) => {
+      for (let i = 0; i < 5; i++) {
         const [hex, w] = list[Math.min(i, list.length - 1)];
         if (i < list.length) acc += w / total;
         const c = lin(hex);
-        slot.set(c.r, c.g, c.b, i < list.length - 1 ? acc : 1);
-      });
+        into[offset + i].set(c.r, c.g, c.b, i < list.length - 1 ? acc : 1);
+      }
     };
-    weighted(skin.wall, u.uSkinWall.value);
-    weighted(skin.roof, u.uSkinRoof.value);
-    [skin.secondary, skin.glass, skin.frame, skin.trim, skin.accent, skin.glow].forEach((list, k) => {
-      for (let i = 0; i < 4; i++) { const c = lin(list[i % list.length]); u.uSkinColors.value[k * 4 + i].set(c.r, c.g, c.b); }
-    });
-    u.uSkinOpt.value.set(skin.lit, skin.accentChance, skin.featureChance, skin.wallRange);
-    u.uSkinRoofRange.value = skin.roofRange;
-    u.uSkin.value = skin.index;
+    const fillBank = (skin: Skin, bank: number) => {
+      weighted(skin.wall, u.uSkinWall.value, bank * 5);
+      weighted(skin.roof, u.uSkinRoof.value, bank * 5);
+      [skin.secondary, skin.glass, skin.frame, skin.trim, skin.accent, skin.glow].forEach((list, k) => {
+        for (let i = 0; i < 4; i++) {
+          const c = lin(list[i % list.length]);
+          u.uSkinColors.value[bank * 24 + k * 4 + i].set(c.r, c.g, c.b);
+        }
+      });
+      u.uSkinOpt.value[bank].set(skin.lit, skin.accentChance, skin.featureChance, skin.wallRange);
+      u.uSkinRoofRange.value.setComponent(bank, skin.roofRange);
+    };
+    if (id === 'mixed') {
+      for (const painted of PAINTED_SKINS) fillBank(SKIN_DATA[painted], SKIN_DATA[painted].index - 1);
+      u.uSkin.value = 4;
+    } else {
+      const skin = SKIN_DATA[id];
+      fillBank(skin, skin.index - 1);
+      u.uSkin.value = skin.index;
+    }
     this.triggerRepaint();
   }
 
@@ -523,6 +558,30 @@ export class ThreeMap {
     const count = Math.min(shots.length, near.length);
     for (let i = 0; i < count; i++) shots[i].set(near[i].x, near[i].y, near[i].z, near[i].seed);
     this.uniforms.uShotCount.value = count;
+  }
+
+  /** Burning windows: nearest ones to the camera → façade shader fire glow. */
+  private placeFires(perMeter: number) {
+    const fires = this.uniforms.uFires.value;
+    if (!this.fires.length) {
+      if (this.uniforms.uFireCount.value !== 0) this.uniforms.uFireCount.value = 0;
+      this.firesDirty = false;
+      return;
+    }
+    const key = `${this.origin.x01},${this.origin.y01}`;
+    if (!this.firesDirty && key === this.firesOrigin) return;
+    this.firesDirty = false;
+    this.firesOrigin = key;
+    const eye = this.uniforms.uCameraPos.value;
+    const near: { d: number; x: number; y: number; z: number }[] = [];
+    for (const pane of this.fires) {
+      const x = (mercatorX01(pane.at[0]) - this.origin.x01) / perMeter, z = (mercatorY01(pane.at[1]) - this.origin.y01) / perMeter;
+      near.push({ d: Math.hypot(x - eye.x, z - eye.z), x, y: pane.altitude, z });
+    }
+    if (near.length > fires.length) near.sort((a, b) => a.d - b.d);
+    const count = Math.min(fires.length, near.length);
+    for (let i = 0; i < count; i++) fires[i].set(near[i].x, near[i].y, near[i].z, 1);
+    this.uniforms.uFireCount.value = count;
   }
 
   setPixelRatio(ratio: number) {
@@ -628,6 +687,7 @@ export class ThreeMap {
     this.updateFlare(eye, perMeter);
     this.placeHoles(perMeter);
     this.placePanes(perMeter);
+    this.placeFires(perMeter);
     this.uniforms.uXray.value = this.focusCar ? 1 : 0;
     this.uniforms.uHeadOn.value = this.focusCar ? Math.min(1, (this.lighting?.night ?? 0) * 1.4) : 0;
     for (const layer of this.fused) (layer as { setHeadlights?: (on: number) => void }).setHeadlights?.(this.uniforms.uHeadOn.value);
@@ -638,11 +698,12 @@ export class ThreeMap {
       const h = this.focusCar.heading;
       // the nose tilts with the car (ramps, hills, jumps), the beams with it
       const p = this.focusCar.pitch;
-      const flat = new THREE.Vector3(Math.sin(h), 0, -Math.cos(h));
-      const forward = flat.clone().multiplyScalar(Math.cos(p)).add(new THREE.Vector3(0, Math.sin(p), 0));
-      const up = flat.clone().multiplyScalar(-Math.sin(p)).add(new THREE.Vector3(0, Math.cos(p), 0));
-      this.uniforms.uHeadPos.value.copy(this.uniforms.uCar.value).addScaledVector(forward, 2.0).addScaledVector(up, 0.72);
-      this.uniforms.uHeadDir.value.copy(forward).addScaledVector(up, -0.1).normalize();
+      const cp = Math.cos(p), sp = Math.sin(p);
+      this.headFlat.set(Math.sin(h), 0, -Math.cos(h));
+      this.headFwd.copy(this.headFlat).multiplyScalar(cp).y += sp;
+      this.headUp.copy(this.headFlat).multiplyScalar(-sp).y += cp;
+      this.uniforms.uHeadPos.value.copy(this.uniforms.uCar.value).addScaledVector(this.headFwd, 2.0).addScaledVector(this.headUp, 0.72);
+      this.uniforms.uHeadDir.value.copy(this.headFwd).addScaledVector(this.headUp, -0.1).normalize();
       this.uniforms.uHeadSide.value.set(Math.cos(h), 0, Math.sin(h)).multiplyScalar(0.62);
     }
 
