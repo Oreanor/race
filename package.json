@@ -7,7 +7,7 @@
     "build": "next build --webpack",
     "start": "next start --hostname 0.0.0.0",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test tests/physics.test.ts tests/buildings.test.ts tests/water.test.ts tests/vegetation.test.ts tests/world3d.test.ts tests/fuel.test.ts tests/travel.test.ts tests/astro.test.ts tests/places.test.ts tests/trains.test.ts tests/errands.test.ts tests/wallcut.test.ts",
+    "test": "node --experimental-strip-types --test tests/physics.test.ts tests/buildings.test.ts tests/water.test.ts tests/vegetation.test.ts tests/world3d.test.ts tests/fuel.test.ts tests/travel.test.ts tests/astro.test.ts tests/places.test.ts tests/trains.test.ts tests/errands.test.ts tests/wallcut.test.ts tests/dem.test.ts",
     "server": "node --experimental-strip-types server/multiplayer.ts",
     "server:tunnel": "node --env-file-if-exists=.env.tunnel --experimental-strip-types server/multiplayer.ts --tunnel"
   },

@@ -91,7 +91,7 @@ export class ThreeMarker {
 }
 
 /** how long a change of time of day takes (ms) */
-const TIME_ROLL_MS = 4000;
+const TIME_ROLL_MS = 1000;
 
 export class ThreeMap {
   readonly renderer: THREE.WebGLRenderer;
@@ -169,6 +169,10 @@ export class ThreeMap {
     // contrast. Done by the compositor, so it costs next to nothing
     this.canvas.style.filter = 'saturate(1.12) contrast(1.06)';
     this.container.appendChild(this.canvas);
+    // a soft vignette: the corners a touch darker, the eye goes to the middle (free: CSS)
+    const vignette = document.createElement('div');
+    vignette.style.cssText = 'position:absolute;inset:0;pointer-events:none;z-index:1;background:radial-gradient(ellipse at 50% 55%, rgba(0,0,0,0) 55%, rgba(0,0,0,0.26) 100%)';
+    this.container.appendChild(vignette);
     this.markerLayer = document.createElement('div');
     this.markerLayer.style.cssText = 'position:absolute;inset:0;overflow:hidden;pointer-events:none;z-index:2';
     this.container.appendChild(this.markerLayer);
@@ -374,9 +378,10 @@ export class ThreeMap {
     const from = this.shownTime(lat, lng).getTime();
     this.timeMode = mode;
     this.modeDate = mode === 'real' ? null : timeFor(mode, new Date(), lat, lng);
-    // always forward, never back through the day: evening → night → morning, as a clock goes
+    // the short way round the clock: back from midday to morning, on from evening to night
     let to = (this.modeDate ?? new Date()).getTime();
-    while (to < from - 60000) to += 86400000;
+    while (to - from > 43200000) to -= 86400000;
+    while (from - to > 43200000) to += 86400000;
     this.timeRoll = Math.abs(to - from) > 60000 ? { from, to, start: performance.now() } : null;
     this.lightClock = 0;
     this.emit('timemode', { mode: this.timeMode, clock: placeClock(this.shownTime(lat, lng), lat, lng) });
@@ -597,6 +602,7 @@ export class ThreeMap {
     // stream around what the camera looks at, plus a bit toward the viewer
     this.world.update(cam.state.center);
     worldTime.value = performance.now() / 1000;
+    this.uniforms.uClock.value = worldTime.value;
     this.updateSeason();
     // tiles past the opaque fog are pure fog colour (= sky): skip them entirely
     // high above the city the haze moves out with the camera, so the whole area shows
@@ -765,8 +771,14 @@ export class ThreeMap {
       u.uSunColor.value.copy(l.sun);
       u.uAmbient.value.copy(l.ambient);
       u.uNight.value = l.night;
+      // cloud shadows by day: none at night, full once the sun is 12° up
+      u.uClouds.value = Math.min(1, Math.max(0, l.sunPos.altitude * 180 / Math.PI / 12));
       u.uFogColor.value.copy(l.sky);
       this.renderer.setClearColor(new THREE.Color().setRGB(l.sky.r, l.sky.g, l.sky.b, THREE.SRGBColorSpace));
+      // colour grade by the time of day, done by the compositor (costs nothing): warmer and
+      // punchier at sunset, cooler and brighter at dawn, a little greyer at night
+      const grade = `saturate(${(1.12 + 0.12 * l.warm - 0.18 * l.night).toFixed(3)}) contrast(${(1.06 + 0.05 * l.warm + 0.03 * l.night).toFixed(3)}) sepia(${(0.12 * l.warm).toFixed(3)}) hue-rotate(${(-6 * l.cool).toFixed(1)}deg) brightness(${(1 + 0.03 * l.cool).toFixed(3)})`;
+      if (this.canvas.style.filter !== grade) this.canvas.style.filter = grade;
     }
     const eyeScene = new THREE.Vector3((eye.x - this.origin.x01) / perMeter, eye.z / perMeter, (eye.y - this.origin.y01) / perMeter);
     this.sky.update(eyeScene, this.lighting);

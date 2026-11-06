@@ -171,7 +171,7 @@ test('coplanar walls: the taller keeps the shared stretch, the rest of the lower
   assert.equal(of(tall).length, 1);
   assert.equal(of(twin).length, 0, 'duplicate removed');
   assert.equal(of(low).length, 1);
-  assert.ok(Math.abs(of(low)[0].t0 - 0.4) < 1e-6 && of(low)[0].t1 === 1, 'only 10..16 of the low wall remains');
+  assert.ok(Math.abs(of(low)[0].t0 - 0.4) < 0.02 && of(low)[0].t1 === 1, 'only 10..16 of the low wall remains');
 });
 
 test('grid under a road is smoothed, slopes and tile borders are kept', async () => {

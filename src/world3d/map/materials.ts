@@ -32,6 +32,10 @@ export type BaseUniforms = {
   uLampOmni: { value: number };
   uFogColor: { value: THREE.Color };
   uFogNear: { value: number };
+  /** seconds, for things that drift (cloud shadows) */
+  uClock: { value: number };
+  /** 0 … 1: how much the clouds' shadows show (by day only) */
+  uClouds: { value: number };
   uFogFar: { value: number };
   /** player car in scene space; buildings between it and the camera turn see-through */
   uCar: { value: THREE.Vector3 };
@@ -73,6 +77,8 @@ export function baseUniforms(fogColor: string): BaseUniforms {
     uFogColor: { value: new THREE.Color().setStyle(fogColor, THREE.NoColorSpace) },
     // Fog is fully opaque before the load radius: tiles always arrive unseen.
     uFogNear: { value: 1100 },
+    uClock: { value: 0 },
+    uClouds: { value: 0 },
     uFogFar: { value: 2000 },
     uCar: { value: new THREE.Vector3() },
     uXray: { value: 0 },
@@ -114,6 +120,23 @@ vec3 headBeam(vec3 world, vec3 n, vec3 lamp) {
 vec3 headlight(vec3 world, vec3 n) {
   if (uHeadOn < 0.01) return vec3(0.0);
   return (headBeam(world, n, uHeadPos + uHeadSide) + headBeam(world, n, uHeadPos - uHeadSide)) * 1.35 * uHeadOn;
+}
+
+uniform float uClock;
+uniform float uClouds;
+float hash2(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+// smooth value noise, 0..1
+float vnoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash2(i), hash2(i + vec2(1.0, 0.0)), f.x), mix(hash2(i + vec2(0.0, 1.0)), hash2(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+// the share of sunlight left under the clouds: big soft shadows drifting with the wind
+float cloudSun(vec3 w) {
+  if (uClouds < 0.01) return 1.0;
+  vec2 p = w.xz / 260.0 + vec2(uClock * 0.012, uClock * 0.006);
+  float c = vnoise(p) * 0.65 + vnoise(p * 2.3 + 7.1) * 0.35;
+  return 1.0 - uClouds * 0.55 * smoothstep(0.5, 0.72, c);
 }
 
 uniform vec3 uFogColor;
@@ -186,9 +209,11 @@ const GROUND_FRAGMENT = /* glsl */ `
       * smoothstep(0.4, 0.55, vColor.g);
     float mottled = 0.5 + 0.5 * sin(vWorld.x * 1.55) * sin(vWorld.z * 1.7);
     vec3 snow = vec3(0.91, 0.935, 0.96) * mix(0.93, 1.03, mottled);
-    vec3 albedo = mix(vColor, snow, uSeason.w * uSnow * greenish);
+    // grass is never one flat green: drier and lusher patches, a finer mottle
+    float tone = 0.86 + 0.2 * vnoise(vWorld.xz * 0.05) + 0.08 * vnoise(vWorld.xz * 0.4);
+    vec3 albedo = mix(vColor * mix(1.0, tone, greenish), snow, uSeason.w * uSnow * greenish);
     // sky light plus sunlight on the slope (hillshade comes from the real sun)
-    vec3 light = uAmbient * 0.9 + uSunColor * 0.55 * max(dot(n, uSun), 0.0) + (headlight(vWorld, n) + lampLight()) * 0.91;
+    vec3 light = uAmbient * 0.9 + uSunColor * 0.55 * max(dot(n, uSun), 0.0) * cloudSun(vWorld) + (headlight(vWorld, n) + lampLight()) * 0.91;
     gl_FragColor = linearToOutputTexel(vec4(fogged(toLinear(albedo) * light / 0.91, vWorld), 1.0));
   }
 `;
@@ -300,8 +325,11 @@ export function roadMaterial(u: BaseUniforms) {
       varying vec3 vColor;
       varying vec3 vWorld;
       void main() {
-        vec3 light = (uAmbient * 0.9 + uSunColor * 0.55 * max(uSun.y, 0.0)) / 0.91 + headlight(vWorld, vec3(0.0, 1.0, 0.0)) + lampLight();
-        gl_FragColor = linearToOutputTexel(vec4(fogged(toLinear(vColor) * light, vWorld), 1.0));
+        vec3 light = (uAmbient * 0.9 + uSunColor * 0.55 * max(uSun.y, 0.0) * cloudSun(vWorld)) / 0.91 + headlight(vWorld, vec3(0.0, 1.0, 0.0)) + lampLight();
+        // asphalt is worn unevenly: broad lighter and darker stretches, and darker patched spots
+        float wear = 0.94 + 0.1 * vnoise(vWorld.xz * 0.08) + 0.04 * vnoise(vWorld.xz * 0.9);
+        float mend = smoothstep(0.66, 0.74, vnoise(vWorld.xz * 0.21 + 13.0)) * 0.08;
+        gl_FragColor = linearToOutputTexel(vec4(fogged(toLinear(vColor) * (wear - mend) * light, vWorld), 1.0));
       }
     `,
     polygonOffset: true,
@@ -897,10 +925,12 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
         }
         vec3 n = normalize(vNormal);
         // comic-like light, but sunlit walls stand clearly apart from the shaded ones
-        float d = max(dot(n, uSun), 0.0);
+        float d = max(dot(n, uSun), 0.0) * cloudSun(vWorld);
         vec3 light = n.y > 0.5
           ? (uAmbient + uSunColor * d) / 1.2
           : (uAmbient + uSunColor * 0.5 * d) / 0.84;
+        // the foot of a wall gets less sky (the street and the ground hem it in): darker low down
+        if (n.y < 0.5) light *= mix(0.62, 1.0, smoothstep(0.0, 2.2, vHeight));
         // street light reaches the lower floors of the walls, not the roofs
         vec3 color = albedo * (light + headlight(vWorld, n) + lampLight() * (n.y > 0.5 ? 0.0 : 1.0 - smoothstep(1.5, 9.0, vHeight)));
         if (mirror > 0.0) {

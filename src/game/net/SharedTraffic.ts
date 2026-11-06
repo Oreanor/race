@@ -58,6 +58,8 @@ export type TrafficHost = {
   hitExtra(id: string): void;
   /** a car could stand at `at` facing `heading` (no wall, no water) */
   canPark(at: Position, heading: number): boolean;
+  /** a move from → to against the houses: where the car ends up, and whether a wall stopped or turned it */
+  hitWalls(from: Position, to: Position, heading: number): { position: Position; stopped: boolean; slid: boolean };
   /** parking lots nearby (POIs) */
   lots(): Position[];
   /** tell the player who parked `id` that we took it */
@@ -335,7 +337,17 @@ export class SharedTraffic {
       if (d.deadAt || d.bot.id === this.held) continue;
       const config = { ...vehicleConfig, acceleration: Math.min(d.bot.car.acceleration, 9), maxSpeed: Math.min(d.bot.car.maxSpeed, TOP_SPEED) };
       // give way to us and the other players: brake, then go round — no ramming
+      const before: Position = [...d.bot.position] as Position;
       advanceTrafficBot(d.bot, dt, this.host.network, config, [], [here, ...this.host.others().map((p) => p.position)]);
+      // never through a house (going round us or turning about it may leave the road)
+      const hit = this.host.hitWalls(before, d.bot.controller.position, d.bot.controller.heading);
+      if (hit.stopped || hit.slid) {
+        d.bot.controller.position = [...hit.position] as Position;
+        d.bot.controller.speed *= hit.stopped ? -0.3 : 0.7;
+        d.bot.position = [...hit.position] as Position;
+        // find its way back onto the road from here
+        if (hit.stopped) { d.bot.route = []; d.bot.routeIndex = 1; d.bot.repathAt = 0; }
+      }
     }
   }
 

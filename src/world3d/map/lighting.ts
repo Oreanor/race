@@ -26,6 +26,9 @@ export type Lighting = {
   moonFraction: number;
   /** overall brightness relative to daylight (for the car's lights) */
   level: number;
+  /** 0 … 1: a low sun in the evening (warm grade) and in the morning (cool grade) */
+  warm: number;
+  cool: number;
 };
 
 type Key = { h: number; sun: [number, number, number]; amb: [number, number, number]; sky: string };
@@ -101,7 +104,9 @@ export function computeLighting(date: Date, lat: number, lng: number): Lighting 
   }
   if (dir.y < 0.05) { dir.y = 0.05; dir.normalize(); } // light never comes from below the ground
   const level = Math.min(1, (ambient.r + ambient.g + ambient.b) / 3 / 0.6); // full day = 1
-  return { dir, sun, ambient, sky, night, sunPos, moonPos, moonPhase: phase, moonFraction: fraction, level };
+  // a low sun tints the whole picture: warm late in the day, fresh and cool early
+  const low = Math.max(0, Math.min(1, 1 - h / 20)) * Math.max(0, Math.min(1, (h + 6) / 6));
+  return { dir, sun, ambient, sky, night, sunPos, moonPos, moonPhase: phase, moonFraction: fraction, level, warm: low * eveningShare, cool: low * (1 - eveningShare) };
 }
 
 /** Time to show for a mode: the real moment, or a typical one of this day here. */

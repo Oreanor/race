@@ -76,12 +76,34 @@ export const ARENA_FEE = 2500;
 export const ARENA_PRIZE = 10000;
 /** how close to a mission marker the offer opens (m) */
 const MISSION_PICKUP_M = 6;
+/** An angle in degrees as −180 … 180 (the same turn, the short way). */
+const wrapDegrees = (deg: number) => ((deg + 180) % 360 + 360) % 360 - 180;
+/** where the camera (zoom, tilt, turn) is kept between reloads */
+const CAMERA_STORE = 'race.camera';
+/** The camera as last left, within its limits; null if none was kept (or it is unreadable). */
+function savedCamera(): { distance: number; pitch: number; orbit: number } | null {
+  try {
+    const raw = typeof localStorage === 'undefined' ? null : localStorage.getItem(CAMERA_STORE);
+    if (!raw) return null;
+    const v = JSON.parse(raw) as { distance?: unknown; pitch?: unknown; orbit?: unknown };
+    const num = (x: unknown) => (typeof x === 'number' && Number.isFinite(x) ? x : null);
+    const distance = num(v.distance), pitch = num(v.pitch), orbit = num(v.orbit);
+    if (distance == null || pitch == null) return null;
+    return {
+      distance: Math.max(cameraConfig.minDistance, Math.min(cameraConfig.maxDistance, distance)),
+      pitch: Math.max(cameraConfig.minPitch, Math.min(cameraConfig.maxPitch, pitch)),
+      orbit: wrapDegrees(orbit ?? 0),
+    };
+  } catch {
+    return null;
+  }
+}
 /** The Howler doesn't shoot: it throws a cable at a standing car and pulls it up onto its back. */
 const HAULER_ID = '03';
 /** how far the cable reaches (m), how close to the aim a car must stand to be hooked, and when it snaps */
-const HAUL_REACH_M = 12;
+const HAUL_REACH_M = 20;
 const HAUL_AIM_M = 3;
-const HAUL_SNAP_M = 20;
+const HAUL_SNAP_M = 30;
 /** faster than this (m/s) the hook slips off */
 const HAUL_STILL = 1;
 /**
@@ -90,7 +112,14 @@ const HAUL_STILL = 1;
  */
 const HAUL_DECK_UP = 0.177;
 const HAUL_DECK_BACK = 0.23;
-const HAUL_FLY_MS = 80, HAUL_PULL_MS = 520, HAUL_REEL_MS = 650, HAUL_DROP_MS = 750, HAUL_MISS_MS = 260;
+/** the load sits this much nose down on the bed (rad, ~3.5°): its tail clears the bed */
+const HAUL_TILT = 0.06;
+const HAUL_FLY_MS = 80, HAUL_PULL_MS = 520, HAUL_REEL_MS = 650, HAUL_DROP_MS = 750;
+/** coins on the hook fly to the car in this long (ms); a coin this close to the crosshair on screen (px) is hooked */
+const HAUL_COINS_MS = 350;
+const HAUL_COIN_PX = 40;
+/** a miss: out to full length, a moment hanging there, wound back in (ms) */
+const HAUL_MISS_OUT_MS = 110, HAUL_MISS_HOLD_MS = 300, HAUL_MISS_BACK_MS = 220;
 /** missions on the map at once: one of each kind */
 const MISSION_COUNT = 4;
 /** 3D markers of the errands: green for a delivery, cardboard brown for the boxes */
@@ -212,9 +241,12 @@ export class GameEngine {
   frame = 0;
   disposed = false;
   ready = false;
-  distance = cameraConfig.distance;
-  orbit = 0;
-  pitch = cameraConfig.pitch;
+  // the camera as the player left it (zoom, tilt, turn round the car): kept across reloads
+  distance = savedCamera()?.distance ?? cameraConfig.distance;
+  orbit = savedCamera()?.orbit ?? 0;
+  pitch = savedCamera()?.pitch ?? cameraConfig.pitch;
+  private cameraSavedAt = 0;
+  private cameraSaved = '';
   bearing = 0;
   last = 0;
   accumulator = 0;
@@ -309,12 +341,22 @@ export class GameEngine {
    * hang). Third click: the car slides off behind (drop), or we let go and fall.
    */
   private haul: {
-    id: string; kind: 'bot' | 'shared' | 'wall'; car: Car;
-    phase: 'fly' | 'hooked' | 'anchored' | 'pull' | 'carry' | 'drop' | 'miss' | 'reel' | 'hang';
+    id: string; kind: 'bot' | 'shared' | 'wall' | 'train' | 'coins'; car: Car;
+    phase: 'fly' | 'hooked' | 'anchored' | 'pull' | 'carry' | 'drop' | 'miss' | 'reel' | 'hang' | 'towed';
     at: number; from: Position; fromHeading: number; fromUp: number;
     /** wall: the hook (absolute height), and where we start reeling from */
     hookAlt?: number; self?: Position; selfAlt?: number;
+    /** train: which one, the rope's length (m) and whether we reeled in already */
+    trainId?: string; rope?: number; ropeFrom?: number; reeled?: boolean;
+    /** coins: the ones on the hook and where each lay */
+    coins?: { id: string; start: Position }[];
   } | null = null;
+  /** our police car's lights (F) */
+  private beaconsOn = true;
+  /** towed by a train on the cable: the car's own driving is off, the rope pulls it */
+  private towed = false;
+  private towSpeed = 0;
+  private towClock = 0;
   /** hanging on (or reeling up) the cable: our height, held; null on the ground or flying */
   private hangAltitude: number | null = null;
   /** us on the map (M): a dot with an arrow along our heading */
@@ -528,6 +570,7 @@ export class GameEngine {
         .map((bot) => ({ id: bot.id, car: bot.car.id, p: bot.position, h: bot.heading, s: bot.controller.speed, hp: Math.round(this.combatLayer?.targetHp(bot.id) ?? 1000) })) : [],
       hitExtra: (id) => { this.combatLayer?.damageTarget(id, HIT_DAMAGE); },
       canPark: (at, heading) => !this.collisions.blocked(at, at, heading) && !this.water.covers(at),
+      hitWalls: (from, to, heading) => this.collisions.resolve(from, to, heading),
       lots: () => [...this.parkingLots.values()].filter((lot) => metersBetween(lot, this.vehicle.position) < 600),
       take: (id) => this.players.takeTraffic(id),
     });
@@ -640,6 +683,7 @@ export class GameEngine {
       if (e.code === 'KeyJ' && !e.repeat) this.beginRampCharge();
       if (e.code === 'KeyC' && !e.repeat) this.swapCar();
       if (e.code === 'KeyH' && !e.repeat) this.tryHijack();
+      if (e.code === 'KeyF' && !e.repeat) { this.beaconsOn = !this.beaconsOn; this.combatLayer?.setBeacons(this.beaconsOn); }
       if (e.code === 'KeyM' && !e.repeat) this.toggleOverview();
     }) as EventListener);
     listen(window, 'keyup', ((e: KeyboardEvent) => {
@@ -797,6 +841,7 @@ export class GameEngine {
 
   /** Open the showroom when standing on a dealership lot (Tab, or slow arrival). */
   private tryOpenDealer() {
+    if (!this.runReady) return false;
     if (!this.driving || this.mode !== 'roam' || this.dealerOpen || this.serviceOpen || this.travelOpen || this.fuelOut) return false;
     const lot = atStation(this.vehicle.position, [...this.dealerships.values()]);
     if (!lot) return false;
@@ -862,6 +907,16 @@ export class GameEngine {
     if (!zoom) return;
     const next = this.distance * Math.exp(zoom * dt * 0.9 * this.settings.sensitivity);
     this.distance = Math.max(cameraConfig.minDistance, Math.min(cameraConfig.maxDistance, next));
+  }
+
+  /** Remember the camera (at most once a second, and only when it moved). */
+  private saveCamera(now: number) {
+    if (now - this.cameraSavedAt < 1000) return;
+    this.cameraSavedAt = now;
+    const text = JSON.stringify({ distance: +this.distance.toFixed(2), pitch: +this.pitch.toFixed(2), orbit: +wrapDegrees(this.orbit).toFixed(2) });
+    if (text === this.cameraSaved) return;
+    this.cameraSaved = text;
+    try { localStorage.setItem(CAMERA_STORE, text); } catch { /* private mode: this session only */ }
   }
 
   resetCamera() {
@@ -2354,6 +2409,8 @@ export class GameEngine {
       if (haul.phase === 'hooked') { haul.phase = 'pull'; haul.at = now; }
       else if (haul.phase === 'anchored') { haul.phase = 'reel'; haul.at = now; haul.self = [...this.vehicle.position] as Position; haul.selfAlt = this.altitude; haul.fromHeading = this.vehicle.heading; }
       else if (haul.phase === 'carry') { haul.phase = 'drop'; haul.at = now; }
+      else if (haul.kind === 'train' && haul.phase === 'towed' && !haul.reeled) { haul.phase = 'reel'; haul.at = now; haul.ropeFrom = haul.rope; haul.reeled = true; }
+      else if (haul.kind === 'train' && (haul.phase === 'towed' || haul.phase === 'reel')) this.releaseTrain();
       else if (haul.phase === 'hang' || haul.phase === 'reel') this.letGoWall();
       return; // flying out, or busy pulling
     }
@@ -2365,12 +2422,43 @@ export class GameEngine {
     const target = this.combatLayer?.aimTarget() ?? null;
     const point: Position = target ? [...target.position] as Position : offsetPosition(here, Math.sin(heading) * HAUL_REACH_M, Math.cos(heading) * HAUL_REACH_M) as Position;
     const groundUp = (at: Position) => (this.map.groundAt(at) ?? this.altitude) - this.altitude;
-    // a car by the aim, within the cable's reach of our nose (to its near side)
+    // a coin (or bundle of cash) right under the crosshair: the hook takes that one and
+    // reels it in by itself
+    if (this.aimScreen) {
+      const [sx, sy] = this.aimScreen;
+      let best: { id: string; at: Position; d: number } | null = null;
+      for (const [id, p] of this.pickups) {
+        if ((p.kind !== 'coin' && p.kind !== 'cash') || (p.drop && now < p.drop.at + DROP_MS)) continue;
+        if (metersBetween(nose, p.position) > HAUL_REACH_M) continue;
+        const q = this.map.project(p.position);
+        // how many pixels a metre is there: the coin hovers ~0.6 m up (higher on screen), and
+        // near ones get a catch zone as big as ~2.5 m round them
+        const r = this.map.project(offsetPosition(p.position, 1, 0) as Position);
+        const perMeter = Math.hypot(r.x - q.x, r.y - q.y);
+        const d = Math.hypot(q.x - sx, q.y - perMeter * 0.5 - sy);
+        if (d <= Math.max(HAUL_COIN_PX, perMeter * 2.5) && (!best || d < best.d)) best = { id, at: [...p.position] as Position, d };
+      }
+      if (best) {
+        this.haul = { id: '', kind: 'coins', car: this.car, phase: 'fly', at: now, from: best.at, fromHeading: heading, fromUp: groundUp(best.at) + 0.6, coins: [{ id: best.id, start: best.at }] };
+        return;
+      }
+    }
+    // a car under the crosshair (on screen, as big as the car looks there), within the
+    // cable's reach of us (to its near side)
     let best: ReturnType<GameEngine['haulCandidates']>[number] | null = null;
-    let bestD = HAUL_AIM_M;
+    let bestD = Infinity;
     for (const c of this.haulCandidates()) {
-      const d = metersBetween(point, c.position);
-      if (d < bestD && metersBetween(nose, c.position) - c.car.length / 2 <= HAUL_REACH_M) { bestD = d; best = c; }
+      if (metersBetween(nose, c.position) - c.car.length / 2 > HAUL_REACH_M) continue;
+      if (this.aimScreen) {
+        const q = this.map.project(c.position);
+        const tip = this.map.project(offsetPosition(c.position, Math.sin(c.heading) * c.car.length / 2, Math.cos(c.heading) * c.car.length / 2) as Position);
+        const reach = Math.max(14, Math.hypot(tip.x - q.x, tip.y - q.y) * 0.9 + 6);
+        const d = Math.hypot(q.x - this.aimScreen[0], q.y - 10 - this.aimScreen[1]); // aim at the body, a little above its ground point
+        if (d <= reach && d < bestD) { bestD = d; best = c; }
+      } else {
+        const d = metersBetween(point, c.position);
+        if (d <= HAUL_AIM_M && d < bestD) { bestD = d; best = c; }
+      }
     }
     if (best && best.speed <= HAUL_STILL) {
       if (best.kind === 'shared') this.sharedTraffic.hold(best.id);
@@ -2378,6 +2466,24 @@ export class GameEngine {
       return;
     }
     if (best) this.say(t('haul.moving'));
+    // a train car by the aim: the hook takes it, and the train takes us
+    if (!best) {
+      let hit: { trainId: string; at: Position; d: number } | null = null;
+      const kx = 111319.49 * Math.cos(point[1] * Math.PI / 180), ky = 111319.49;
+      for (const car of this.trainTraffic.poses()) {
+        const ax = (car.back[0] - point[0]) * kx, ay = (car.back[1] - point[1]) * ky;
+        const bx = (car.front[0] - point[0]) * kx, by = (car.front[1] - point[1]) * ky;
+        const dx = bx - ax, dy = by - ay;
+        const tt = Math.max(0, Math.min(1, -(ax * dx + ay * dy) / (dx * dx + dy * dy || 1)));
+        const cx = ax + dx * tt, cy = ay + dy * tt, d = Math.hypot(cx, cy);
+        const at: Position = [point[0] + cx / kx, point[1] + cy / ky];
+        if (d < 3 && (!hit || d < hit.d) && metersBetween(nose, at) <= HAUL_REACH_M) hit = { trainId: car.trainId, at, d };
+      }
+      if (hit) {
+        this.haul = { id: '', kind: 'train', car: this.car, phase: 'fly', at: now, from: hit.at, fromHeading: heading, fromUp: groundUp(hit.at) + 1.4, trainId: hit.trainId };
+        return;
+      }
+    }
     // a wall within reach: the hook bites into it
     if (!best && target?.wall) {
       const reach = Math.hypot(metersBetween(nose, target.position), target.altitude - noseAlt);
@@ -2386,10 +2492,77 @@ export class GameEngine {
         return;
       }
     }
-    // nothing it can hold: out to its full length and back
+    // nothing it can hold: out to its full length toward the aim (straight ahead if the aim
+    // is on the car itself), a moment there, and back
     const far = metersBetween(nose, point);
-    const end = far > HAUL_REACH_M ? [nose[0] + (point[0] - nose[0]) * HAUL_REACH_M / far, nose[1] + (point[1] - nose[1]) * HAUL_REACH_M / far] as Position : point;
+    const end: Position = far > 1
+      ? [nose[0] + (point[0] - nose[0]) * HAUL_REACH_M / far, nose[1] + (point[1] - nose[1]) * HAUL_REACH_M / far]
+      : offsetPosition(nose, Math.sin(heading) * HAUL_REACH_M, Math.cos(heading) * HAUL_REACH_M) as Position;
     this.haul = { id: '', kind: 'wall', car: this.car, phase: 'miss', at: now, from: end, fromHeading: 0, fromUp: target?.wall ? Math.min(target.altitude - this.altitude, 4) : groundUp(end) + 0.4 };
+  }
+
+  /**
+   * On a train's cable. The hook flies to the car we aimed at; then the rope runs from the
+   * back of the last car, so the train drags us along behind it, straightened out on its
+   * line; reeling in brings us up to a couple of metres behind it, never into it.
+   */
+  private updateTow(haul: NonNullable<GameEngine['haul']>, now: number, nose: Position) {
+    const layer = this.combatLayer;
+    const cars = this.trainTraffic.poses().filter(car => car.trainId === haul.trainId);
+    if (!cars.length) { this.releaseTrain(); return; }
+    const last = cars.reduce((a, b) => (b.index > a.index ? b : a));
+    const kx = 111319.49 * Math.cos(last.back[1] * Math.PI / 180), ky = 111319.49;
+    const ex = (last.front[0] - last.back[0]) * kx, ny = (last.front[1] - last.back[1]) * ky;
+    const len = Math.hypot(ex, ny) || 1;
+    const ue = ex / len, un = ny / len; // the train's way, at its tail
+    const tail: Position = [...last.back] as Position;
+    const tailUp = (this.map.groundAt(tail) ?? this.altitude) - this.altitude + 1.1;
+    const dt = this.towClock ? Math.min(0.1, (now - this.towClock) / 1000) : 0;
+    this.towClock = now;
+    if (haul.phase === 'fly') {
+      const t = Math.min(1, (now - haul.at) / HAUL_FLY_MS);
+      layer?.setCable({ position: [nose[0] + (haul.from[0] - nose[0]) * t, nose[1] + (haul.from[1] - nose[1]) * t], up: 0.9 + (haul.fromUp - 0.9) * t, wave: 1 });
+      if (t < 1) return;
+      haul.phase = 'towed';
+      haul.at = now;
+      haul.rope = Math.max(3, Math.min(HAUL_SNAP_M, metersBetween(this.vehicle.position, tail) - this.car.length / 2));
+      haul.from = tail;
+      this.towed = true;
+      return;
+    }
+    if (haul.phase === 'reel') {
+      const t = Math.min(1, (now - haul.at) / 1000);
+      haul.rope = (haul.ropeFrom ?? 3) + (2.5 - (haul.ropeFrom ?? 3)) * t * t * (3 - 2 * t);
+      if (t >= 1) haul.phase = 'towed';
+    }
+    // where the rope holds us: behind the tail, on the train's line, nose to it
+    const back = (haul.rope ?? 3) + this.car.length / 2;
+    const spot: Position = [tail[0] - ue * back / kx, tail[1] - un * back / ky];
+    const k = dt ? 1 - Math.exp(-dt * 6) : 0;
+    const before = this.vehicle.position;
+    const next: Position = [before[0] + (spot[0] - before[0]) * k, before[1] + (spot[1] - before[1]) * k];
+    const moved = metersBetween(before, next);
+    this.vehicle.position = next;
+    const want = Math.atan2(ue, un);
+    let turn = (want - this.vehicle.heading) % (Math.PI * 2);
+    if (turn > Math.PI) turn -= Math.PI * 2;
+    if (turn < -Math.PI) turn += Math.PI * 2;
+    this.vehicle.heading += turn * k;
+    // as fast as we are dragged (the speedometer shows it; let go and we roll on with it)
+    if (dt) this.towSpeed += (moved / dt - this.towSpeed) * Math.min(1, dt * 4);
+    this.vehicle.speed = this.towSpeed;
+    this.renderVehicle.reset(this.vehicle);
+    layer?.setCable({ position: tail, up: tailUp, wave: 0 });
+  }
+
+  /** Off the train's cable: we roll on at the speed it dragged us. */
+  private releaseTrain() {
+    this.haul = null;
+    this.towed = false;
+    this.towClock = 0;
+    this.combatLayer?.setCable(null);
+    this.vehicle.speed = this.towSpeed;
+    this.towSpeed = 0;
   }
 
   /** Off the wall: the cable goes, we fall. */
@@ -2422,9 +2595,38 @@ export class GameEngine {
     const quiver = (since: number) => 0.35 * Math.exp(-(now - since) / 180);
 
     if (haul.phase === 'miss') {
-      const t = k(HAUL_MISS_MS), out = t < 0.5 ? t * 2 : (1 - t) * 2;
-      layer?.setCable({ position: mix(nose, haul.from, out), up: 0.9 + (haul.fromUp - 0.9) * out, wave: 1 });
-      if (t >= 1) { layer?.setCable(null); this.haul = null; }
+      // shoots out, hangs there a moment (still quivering), then winds back in
+      const ms = now - haul.at;
+      const out = ms < HAUL_MISS_OUT_MS ? ms / HAUL_MISS_OUT_MS
+        : ms < HAUL_MISS_OUT_MS + HAUL_MISS_HOLD_MS ? 1
+        : Math.max(0, 1 - (ms - HAUL_MISS_OUT_MS - HAUL_MISS_HOLD_MS) / HAUL_MISS_BACK_MS);
+      const wave = ms < HAUL_MISS_OUT_MS ? 1 : 0.5;
+      layer?.setCable({ position: mix(nose, haul.from, out), up: 0.9 + (haul.fromUp - 0.9) * out, wave });
+      if (ms >= HAUL_MISS_OUT_MS + HAUL_MISS_HOLD_MS + HAUL_MISS_BACK_MS) { layer?.setCable(null); this.haul = null; }
+      return;
+    }
+
+    if (haul.kind === 'train') { this.updateTow(haul, now, nose); return; }
+    if (haul.kind === 'coins') {
+      // out to them, then straight back in with them hanging on (no click needed)
+      if (haul.phase === 'fly') {
+        const t = k(HAUL_FLY_MS);
+        layer?.setCable({ position: mix(nose, haul.from, t), up: 0.9 + (haul.fromUp - 0.9) * t, wave: 1 });
+        if (t >= 1) { haul.phase = 'pull'; haul.at = now; }
+        return;
+      }
+      const t = ease(k(HAUL_COINS_MS));
+      const here = this.vehicle.position as Position;
+      for (const coin of haul.coins ?? []) {
+        const pickup = this.pickups.get(coin.id);
+        if (!pickup) continue;
+        const at = mix(coin.start, here, t);
+        pickup.position = at;
+        layer?.movePickup(coin.id, at);
+      }
+      layer?.setCable(t < 0.95 ? { position: mix(haul.from, here, t), up: haul.fromUp + (0.9 - haul.fromUp) * t, wave: 0 } : null);
+      // in reach of the car now: the next step picks them up as if we drove over them
+      if (t >= 1) this.haul = null;
       return;
     }
 
@@ -2504,7 +2706,9 @@ export class GameEngine {
       if (t >= 1) { this.releaseHaul({ position: end, heading }); return; }
     }
     this.placeHauled(haul, position, facing);
-    layer?.setCarried({ id: haul.id, position, heading: facing, up });
+    // on the bed: tilted a little nose down (its tail would sink into the bed's raised back) and with the truck
+    const onBed = haul.phase === 'carry' ? 1 : haul.phase === 'pull' ? Math.min(1, (now - haul.at) / HAUL_PULL_MS) : haul.phase === 'drop' ? 1 - Math.min(1, (now - haul.at) / HAUL_DROP_MS) : 0;
+    layer?.setCarried({ id: haul.id, position, heading: facing, up: up + 0.08 * onBed, pitch: (this.modelPitch - HAUL_TILT) * onBed });
   }
 
   /** The catch's place in the world (so it bumps, is shot at and is seen by others where it is). */
@@ -2526,8 +2730,9 @@ export class GameEngine {
     this.haul = null;
     this.combatLayer?.setCable(null);
     this.combatLayer?.setCarried(null);
-    // off a wall: fall from where we hang
+    // off a wall: fall from where we hang; off a train: roll on
     if (this.hangAltitude != null) { this.hangAltitude = null; this.airborne = true; this.climb = 0; }
+    if (this.towed) { this.towed = false; this.towClock = 0; this.towSpeed = 0; }
     if (!haul || !haul.id) return;
     if (at) this.placeHauled(haul, at.position, at.heading);
     if (haul.kind === 'shared') { this.sharedTraffic.hold(null); return; }
@@ -3207,7 +3412,7 @@ export class GameEngine {
 
   /** Arriving at a hub offers a ticket once; leaving its area re-arms the offer. */
   private updateTravel() {
-    if (this.mode !== 'roam' || this.travelOpen || this.fuelOut) return;
+    if (!this.runReady || this.mode !== 'roam' || this.travelOpen || this.fuelOut) return;
     const hub = hubAt(this.vehicle.position, [...this.hubs.values()]);
     if (!hub) { this.offeredHub = null; return; }
     if (hub.id === this.offeredHub || Math.abs(this.vehicle.speed) > 6) return;
@@ -3246,7 +3451,8 @@ export class GameEngine {
     // arriving (slowly) at a station, service, showroom or bank opens its dialog once per visit
     const here = station ?? shop ?? dealer ?? bank;
     if (!here) this.offeredService = null;
-    else if (here.id !== this.offeredService && Math.abs(this.vehicle.speed) < 7 && !this.serviceOpen && !this.dealerOpen && !this.bankOpen && !this.travelOpen && !this.fuelOut && this.mode === 'roam') {
+    // not before the saved run (purse, garage, health) is in: a dialog would show it empty
+    else if (this.runReady && here.id !== this.offeredService && Math.abs(this.vehicle.speed) < 7 && !this.serviceOpen && !this.dealerOpen && !this.bankOpen && !this.travelOpen && !this.fuelOut && this.mode === 'roam') {
       this.offeredService = here.id;
       if (dealer && here.id === dealer.id) this.tryOpenDealer();
       else if (bank && here.id === bank.id) this.openBank();
@@ -3895,7 +4101,7 @@ export class GameEngine {
         const driveKeys = this.fuel.empty ? new Set([...held].filter(key => !NO_FUEL_KEYS.has(key))) : held;
         const travelled = this.vehicle.distance;
         this.vehicle.step(1 / 60, driveKeys, { ...vehicleConfig, acceleration: this.car.acceleration, maxSpeed: this.car.maxSpeed });
-        if (gridded || this.hangAltitude != null) {
+        if (gridded || this.hangAltitude != null || this.towed) {
           // on the grid: revs may build (clutch launch), the car stays put; on the cable it hangs
           this.vehicle.position = previous;
           this.vehicle.heading = oldHeading;
@@ -4116,6 +4322,7 @@ export class GameEngine {
     if (now - this.overlayTime > 100) this.overlayTime = now;
     if (now - this.hudTime > 100) {
       this.hudTime = now;
+      this.saveCamera(now);
       this.hud(this.vehicle.speed * 3.6, this.vehicle.distance, this.fps, this.hudParticipants());
       const near = nearestStation(this.vehicle.position, [...this.stations.values()]);
       const hub = nearestHub(this.vehicle.position, [...this.hubs.values()]);

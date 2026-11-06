@@ -2,10 +2,11 @@
 import { useState } from 'react';
 import { cars, carPrice } from '@/config/vehicle.config';
 import type { DealerOffer } from '@/game/GameEngine';
-import { formatNumber, t } from '@/i18n';
+import { t } from '@/i18n';
 import { useLang } from '@/i18n/react';
 import CarCarousel from './CarCarousel';
 import Dialog from './ui/Dialog';
+import { Price } from './Price';
 
 /**
  * Car showroom: the same carousel as the menu, one model at a time with its numbers.
@@ -25,7 +26,8 @@ export default function DealershipDialog({ offer, onBuy, onLeave }: {
   const current = car.id === offer.currentId;
   const owned = offer.owned.includes(car.id);
   const affordable = current || owned || price <= offer.money;
-  const deal = current ? t('dealer.yours') : owned ? t('dealer.owned') : t('dealer.pay', { cost: formatNumber(price) });
+  // we only ever buy (nothing goes back to the shop): a car is its price, or ours already
+  const status = current ? t('dealer.yours') : owned ? t('dealer.owned') : null;
 
   return (
     <Dialog
@@ -38,14 +40,13 @@ export default function DealershipDialog({ offer, onBuy, onLeave }: {
         <button type="button" className="ui-btn is-ghost" onClick={onLeave}>{t('dialog.leave')}</button>
       </>}
     >
-      <div className="ui-row ui-wallet"><strong className="ui-coins"><i className="money-coin" aria-hidden="true" />{formatNumber(offer.money)}</strong></div>
+      <div className="ui-row ui-wallet is-reward"><span>{t('dealer.garage', { n: offer.owned.length })}</span><Price value={offer.money} /></div>
       <CarCarousel index={index} onIndex={setIndex}>
         <div className="car-deal">
-          <span>{t('dealer.shelf', { price: formatNumber(price) })}</span>
-          <strong className={affordable ? 'ui-coins' : 'ui-coins is-broke'}>{deal}</strong>
+          <span>{t('dealer.price')}</span>
+          {status ? <strong>{status}</strong> : <strong className={affordable ? undefined : 'is-broke'}><Price value={price} /></strong>}
         </div>
       </CarCarousel>
-      <p className="ui-text">{t('dealer.garage', { n: offer.owned.length })}</p>
     </Dialog>
   );
 }

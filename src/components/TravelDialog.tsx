@@ -7,6 +7,7 @@ import type { TravelOffer } from '@/game/GameEngine';
 import Dialog from './ui/Dialog';
 import { formatNumber, t } from '@/i18n';
 import { useLang } from '@/i18n/react';
+import { Price, priced } from './Price';
 
 const COPY: Record<HubKind, { title: 'travel.airport' | 'travel.port' | 'travel.station'; go: 'travel.fly' | 'travel.sail' | 'travel.ride'; icon: string }> = {
   airport: { title: 'travel.airport', go: 'travel.fly', icon: '✈' },
@@ -63,7 +64,7 @@ export default function TravelDialog({ offer, current, onBuy, onStay }: {
       actions={<button type="button" className="ui-btn is-ghost" onClick={onStay}>{t('travel.stay')}</button>}
     >
       <p className="ui-text">{t('travel.question')}{offer.kind === 'airport' ? ` ${t('travel.planeMore')}` : offer.kind === 'station' ? ` ${t('travel.trainMore')}` : ''}</p>
-      <div className="ui-row ui-wallet"><strong className="ui-coins"><i className="money-coin" aria-hidden="true" />{formatNumber(offer.money)}</strong></div>
+      <div className="ui-row ui-wallet"><Price value={offer.money} /></div>
       <input
         className="ui-input"
         placeholder={t('travel.search')}
@@ -86,7 +87,7 @@ export default function TravelDialog({ offer, current, onBuy, onStay }: {
               title={affordable ? t(copy.go, { city: city.name }) : t('travel.short')}
             >
               <span className="ui-list-main"><b>{target ? `${t('travel.nearTarget')} · ` : ''}{city.name}</b><small>{city.country} · {t('unit.km', { n: formatNumber(km) })}</small></span>
-              <span className="ui-price">{formatNumber(price)}</span>
+              <span className="ui-price"><Price value={price} /></span>
             </button>
           );
         })}

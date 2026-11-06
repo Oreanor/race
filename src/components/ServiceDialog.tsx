@@ -3,11 +3,12 @@ import type { ServiceOffer } from '@/game/GameEngine';
 import { formatNumber, t } from '@/i18n';
 import { useLang } from '@/i18n/react';
 import Dialog from './ui/Dialog';
+import { Price, priced } from './Price';
 
 /** Fuel station or car service: what you can buy here with your coins. */
 export default function ServiceDialog({ offer, onBuy, onLeave }: { offer: ServiceOffer; onBuy: () => void; onLeave: () => void }) {
   useLang();
-  const wallet = <div className="ui-row ui-wallet"><strong className="ui-coins"><i className="money-coin" aria-hidden="true" />{formatNumber(offer.money)}</strong></div>;
+  const wallet = <div className="ui-row ui-wallet"><Price value={offer.money} /></div>;
   const leave = <button type="button" className="ui-btn is-ghost" onClick={onLeave}>{t('dialog.leave')}</button>;
 
   if (offer.kind === 'fuel') {
@@ -15,8 +16,8 @@ export default function ServiceDialog({ offer, onBuy, onLeave }: { offer: Servic
     const affordable = Math.min(room, Math.floor(offer.money / offer.price));
     const full = room < 0.5;
     const label = full ? t('fuelDlg.full')
-      : affordable >= room - 0.01 ? t('fuelDlg.fill', { cost: formatNumber(Math.ceil(room * offer.price)) })
-        : affordable > 0 ? t('fuelDlg.partial', { litres: formatNumber(Math.floor(affordable)), cost: formatNumber(Math.floor(affordable) * offer.price) })
+      : affordable >= room - 0.01 ? priced('fuelDlg.fill', { cost: Math.ceil(room * offer.price) })
+        : affordable > 0 ? priced('fuelDlg.partial', { cost: Math.floor(affordable) * offer.price }, { litres: formatNumber(Math.floor(affordable)) })
           : t('dialog.broke');
     return (
       <Dialog title={<>⛽ {t('fuelDlg.title')}</>} actions={<>
@@ -37,8 +38,8 @@ export default function ServiceDialog({ offer, onBuy, onLeave }: { offer: Servic
   const affordable = Math.min(missing, Math.floor(offer.money / offer.price));
   const fine = missing < 1;
   const label = fine ? t('service.ok')
-    : affordable >= missing ? t('service.repair', { cost: formatNumber(Math.ceil(missing * offer.price)) })
-      : affordable > 0 ? t('service.partial', { points: formatNumber(affordable), cost: formatNumber(Math.ceil(affordable * offer.price)) })
+    : affordable >= missing ? priced('service.repair', { cost: Math.ceil(missing * offer.price) })
+      : affordable > 0 ? priced('service.partial', { cost: Math.ceil(affordable * offer.price) }, { points: formatNumber(affordable) })
         : t('dialog.broke');
   return (
     <Dialog title={<>🔧 {t('service.title')}</>} actions={<>

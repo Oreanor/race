@@ -72,6 +72,7 @@ import DealershipDialog from './DealershipDialog';
 import Dialog from './ui/Dialog';
 import PerfOverlay from './PerfOverlay';
 import { PerfMonitor, benchmark, type BenchResult, type PerfSnapshot } from '@/world3d/perf/PerfMonitor';
+import { Price, priced } from './Price';
 
 type RosterNodes = {
   entry: HTMLDivElement;
@@ -728,12 +729,8 @@ export default function Game() {
               </div>
               <CarCarousel index={car} onIndex={setCar}>
                 <div className="car-deal">
-                  <span>{t('dealer.shelf', { price: formatNumber(starterPrice) })}</span>
-                  <strong className={canBuyStarter ? 'ui-coins' : 'ui-coins is-broke'}>
-                    {canBuyStarter
-                      ? <><i className="money-coin" aria-hidden="true" />{formatNumber(starterPrice)}</>
-                      : t('dialog.broke')}
-                  </strong>
+                  <span>{t('dealer.price')}</span>
+                  <strong className={canBuyStarter ? undefined : 'is-broke'}><Price value={starterPrice} /></strong>
                 </div>
               </CarCarousel>
               <button
@@ -910,7 +907,7 @@ export default function Game() {
           </>}
         >
           <p className="ui-text">{t('bounty.text', { name: bountyOffer.name, car: bountyOffer.car, place: bountyOffer.place, country: bountyOffer.country, km: formatNumber(bountyOffer.km) })}</p>
-          <div className="ui-row ui-wallet is-reward"><span>{t('bounty.reward')}</span><strong className="ui-coins"><i className="money-coin" aria-hidden="true" />{formatNumber(bountyOffer.reward)}</strong></div>
+          <div className="ui-row ui-wallet is-reward"><span>{t('bounty.reward')}</span><Price value={bountyOffer.reward} /></div>
         </Dialog>
       )}
 
@@ -926,9 +923,9 @@ export default function Game() {
         >
           <p className="ui-text">
             {eventOffer.kind === 'delivery'
-              ? t('event.delivery.text', { item: t(`item.${eventOffer.item ?? 'box'}`), km: formatNumber(eventOffer.km ?? 0), reward: formatNumber(eventOffer.reward ?? 0) })
+              ? priced('event.delivery.text', { reward: eventOffer.reward ?? 0 }, { item: t(`item.${eventOffer.item ?? 'box'}`), km: formatNumber(eventOffer.km ?? 0) })
               : eventOffer.kind === 'collect'
-                ? t('event.collect.text', { n: eventOffer.boxes ?? 10, reward: formatNumber(eventOffer.reward ?? 0) })
+                ? priced('event.collect.text', { reward: eventOffer.reward ?? 0 }, { n: eventOffer.boxes ?? 10 })
                 : t(`event.${eventOffer.kind}.text`)}
           </p>
         </Dialog>
@@ -945,13 +942,13 @@ export default function Game() {
         >
           <p className="ui-text">
             {eventResult.kind === 'delivery'
-              ? t('delivery.won', { item: eventResult.name ?? '', reward: formatNumber(eventResult.cash ?? 0) })
+              ? priced('delivery.won', { reward: eventResult.cash ?? 0 }, { item: eventResult.name ?? '' })
               : eventResult.kind === 'collect'
-              ? t('collect.won', { reward: formatNumber(eventResult.cash ?? 0) })
+              ? priced('collect.won', { reward: eventResult.cash ?? 0 })
               : eventResult.kind === 'hijack'
-              ? t('hijack.sold', { car: eventResult.name ?? '', cash: formatNumber(eventResult.cash ?? 0) })
+              ? priced('hijack.sold', { cash: eventResult.cash ?? 0 }, { car: eventResult.name ?? '' })
               : eventResult.kind === 'heist'
-              ? t('heist.escaped', { cash: formatNumber(eventResult.cash ?? 0) })
+              ? priced('heist.escaped', { cash: eventResult.cash ?? 0 })
               : eventResult.kind === 'arena'
                 ? (eventResult.won ? t('arena.won') : t('arena.lost'))
                 : (eventResult.won ? t('race.won') : t('race.lost', { name: eventResult.name ?? '' }))}

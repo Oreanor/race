@@ -16,7 +16,10 @@ export function roadStyle(cls: string, sub: string, ramp: boolean): RoadStyle | 
   const width = rank * pavement * 0.84;
   const fill = pedestrian ? '#c4c1ba' : major ? '#9d9e99' : /secondary|tertiary/.test(cls) ? '#aaaba5' : '#b5b5af';
   const casing = pedestrian ? '#d5d0c6' : major ? '#d2cec5' : /secondary|tertiary/.test(cls) ? '#d6d2c9' : '#dbd7ce';
-  return { width, fill, casing, lift: pedestrian ? 0.05 : major ? 0.12 : 0.09 };
+  // each kind of road on its own level, and no casing at the height of another road's fill:
+  // where two meet, one lies clearly over the other instead of flickering through it
+  const secondary = /secondary|tertiary/.test(cls);
+  return { width, fill, casing, lift: pedestrian ? 0.04 : major ? 0.14 : secondary ? 0.115 : 0.09 };
 }
 
 export function isPedestrian(cls: string, sub: string) {

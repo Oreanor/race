@@ -95,7 +95,7 @@ export type FootprintData = {
 export const ROOF_STRIDE = 8;
 
 /** Small roof props, instanced: chimneys and vents (same rules as BuildingManager). */
-export type AccentData = { chimney: InstanceSet; vent: InstanceSet };
+export type AccentData = { chimney: InstanceSet; vent: InstanceSet; antenna: InstanceSet; dish: InstanceSet; ac: InstanceSet };
 
 export type TileData = {
   tile: TileId;
@@ -324,8 +324,10 @@ class Props {
   matrices: number[] = [];
   ground: number[] = [];
   colors: number[] = [];
-  push(x: number, y: number, z: number, toMerc: number, ground: number, rgb: Pt3) {
-    this.matrices.push(toMerc, 0, 0, 0, 0, 1, 0, 0, 0, 0, toMerc, 0, x, y, z, 1);
+  /** `yaw`: turned about the vertical (radians), +z of the model toward (sin, cos) */
+  push(x: number, y: number, z: number, toMerc: number, ground: number, rgb: Pt3, yaw = 0) {
+    const c = Math.cos(yaw), s = Math.sin(yaw);
+    this.matrices.push(c * toMerc, 0, -s * toMerc, 0, 0, 1, 0, 0, s * toMerc, 0, c * toMerc, 0, x, y, z, 1);
     this.ground.push(ground);
     this.colors.push(rgb[0], rgb[1], rgb[2]);
   }
@@ -369,6 +371,10 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
 
   const chimneys = new Props();
   const vents = new Props();
+  // roof clutter (TV masts, satellite dishes) and air conditioners hung on the walls
+  const antennas = new Props();
+  const dishes = new Props();
+  const coolers = new Props();
   const fpCoords: number[] = [];
   const fpRings: number[] = [];
   const fpBuildings: number[] = [];
@@ -505,8 +511,13 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
         const chunk = builders[gz * n + gx];
         chunk.cx = cxSum / outer.length * k;
         chunk.cz = czSum / outer.length * k;
+        // the ground it stands on: the highest point under its corners; a building cut by the
+        // tile's edge takes it from the cut only, so both halves (built by two tiles, each
+        // seeing its own half) stand at one height instead of one stepping down
+        const onEdge = (p: Pt) => p[0] <= 0.5 || p[1] <= 0.5 || p[0] >= extent - 0.5 || p[1] >= extent - 0.5;
+        const cut = outer.filter(onEdge);
         let crest = 0;
-        for (const p of outer) crest = Math.max(crest, groundAt(p));
+        for (const p of cut.length >= 2 ? cut : outer) crest = Math.max(crest, groundAt(p));
         chunk.buildings++;
         const recipe = options.detailed
           ? createRecipe({ id: 0, key, height: measured, base }, HOUSE_PALETTE, 'auto', options.detailed.region)
@@ -727,6 +738,19 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
             const [x, z] = at(spot);
             vents.push(x, y, z, toMerc, crest, linearRgb(recipe.colors.metal));
           }
+          // a TV mast on one roof in three, a satellite dish on one flat roof in four
+          const roll = (salt: number) => ((recipe.seed ^ salt) * 2654435761 >>> 0) / 4294967296;
+          if (roll(0x51ed) < 0.33) {
+            const spot = ridge
+              ? { x: ridge.ridgeA.x + (ridge.ridgeB.x - ridge.ridgeA.x) * 0.7, z: ridge.ridgeA.z + (ridge.ridgeB.z - ridge.ridgeA.z) * 0.7 }
+              : decorPoint(points, recipe.seed ^ 0x2b7);
+            const [x, z] = at(spot);
+            antennas.push(x, ridge ? ridge.ridgeY : top + 0.42, z, toMerc, crest, [0.18, 0.18, 0.2], roll(0x77) * Math.PI);
+          }
+          if (!ridge && roll(0xd15) < 0.25) {
+            const [x, z] = at(decorPoint(points, recipe.seed ^ 0x4c1));
+            dishes.push(x, top + 0.42, z, toMerc, crest, [0.82, 0.82, 0.8], roll(0x99) * Math.PI * 2);
+          }
         }
       }
     }
@@ -761,6 +785,24 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
       const v1 = grid ? (wallTop - grid.v0) / grid.rowStep : 0;
       chunk.quad(ax, az, bx, bz, y0, wallTop, face.nx, face.nz, face.wall, u1, v0, v1, face.glass, true, [ga, gb, face.crest, face.crest], u0);
       chunk.grid = [0, 0, 0, 0, 0, 0];
+      // air conditioners on some walls of two floors or more: one or two boxes hung out on
+      // the upper floors, never on the ground floor
+      {
+        const span = face.length * (t1 - t0);
+        const seed = (face.recipe.seed ^ Math.round(face.ax * 997) ^ Math.round(face.az * 991)) >>> 0;
+        const roll = (salt: number) => (((seed ^ salt) * 2654435761) >>> 0) / 4294967296;
+        if (span > 5 && wallTop - face.base > 6 && roll(0xac) < 0.3) {
+          const units = roll(0xad) < 0.4 ? 2 : 1;
+          for (let u = 0; u < units; u++) {
+            const along = t0 + (t1 - t0) * (0.2 + 0.6 * roll(0xb0 + u));
+            const floors = Math.max(1, Math.floor((wallTop - face.base - 3.5) / 3.1));
+            const y = face.base + 3.4 + 3.1 * Math.floor(roll(0xc0 + u) * floors) + 0.35;
+            const x = face.ax + (face.bx - face.ax) * along + face.nx * 0.2 * toMerc;
+            const z = face.az + (face.bz - face.az) * along + face.nz * 0.2 * toMerc;
+            coolers.push(x, y, z, toMerc, face.crest, [0.86, 0.86, 0.83], Math.atan2(face.nx, face.nz));
+          }
+        }
+      }
       if (capped) continue;
       const parapetTop = parapetOwners.get(face.owner);
       if (parapetTop != null) {
@@ -819,14 +861,14 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
   };
   stats.bytes += footprints.coords.byteLength + footprints.ringStart.byteLength + footprints.buildingStart.byteLength
     + footprints.bounds.byteLength + footprints.heights.byteLength + footprints.roofs.byteLength;
-  return { tile, corner, metersScale, chunks, footprints, accents: { chimney: chimneys.done(), vent: vents.done() }, stats };
+  return { tile, corner, metersScale, chunks, footprints, accents: { chimney: chimneys.done(), vent: vents.done(), antenna: antennas.done(), dish: dishes.done(), ac: coolers.done() }, stats };
 }
 
 /** Typed arrays to hand to postMessage as transferables. */
 export function transferables(data: TileData): ArrayBuffer[] {
   const f = data.footprints;
   const out: ArrayBuffer[] = [f.coords.buffer, f.ringStart.buffer, f.buildingStart.buffer, f.bounds.buffer, f.heights.buffer, f.roofs.buffer] as ArrayBuffer[];
-  for (const set of [data.accents.chimney, data.accents.vent]) out.push(set.matrices.buffer as ArrayBuffer, set.ground.buffer as ArrayBuffer, set.colors!.buffer as ArrayBuffer);
+  for (const set of [data.accents.chimney, data.accents.vent, data.accents.antenna, data.accents.dish, data.accents.ac]) out.push(set.matrices.buffer as ArrayBuffer, set.ground.buffer as ArrayBuffer, set.colors!.buffer as ArrayBuffer);
   for (const c of data.chunks) {
     out.push(c.positions.buffer as ArrayBuffer, c.normals.buffer as ArrayBuffer, c.colors.buffer as ArrayBuffer,
       c.facade.buffer as ArrayBuffer, c.ground.buffer as ArrayBuffer, c.center.buffer as ArrayBuffer, c.index.buffer as ArrayBuffer,

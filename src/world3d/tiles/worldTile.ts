@@ -791,7 +791,7 @@ function roadMesh(vt: VectorTile, span: number, grid: number, at: Surfaces, brid
         const style = roadStyle(String(p.class ?? ''), String(p.subclass ?? ''), Number(p.ramp) === 1);
         if (!style) continue;
         const half = (style.width / 2 + (pass === 'casing' ? 0.18 : 0)) * toMerc;
-        const y = style.lift + (pass === 'fill' ? 0.03 : 0);
+        const y = style.lift + (pass === 'fill' ? 0.04 : 0);
         const rgb = hex(pass === 'fill' ? style.fill : style.casing);
         // Round joins only where the line actually bends (or ends); straight runs
         // and gentle curves need none. Narrow paths get cheaper discs.
@@ -846,8 +846,65 @@ function roadMesh(vt: VectorTile, span: number, grid: number, at: Surfaces, brid
         builder.groundAt = driveAt;
       }
     }
+    zebraCrossings(builder, layer, ways, k, toMerc, driveAt);
   }
   return meshOf(builder);
+}
+
+/** streets that get zebra crossings at their junctions (not motorways, not lanes and tracks) */
+const ZEBRA_CLASSES = /^(primary|secondary|tertiary|minor)$/;
+
+/**
+ * Zebra crossings. The map data has no crossings at this zoom, so they go where a city
+ * has them: on every arm of a junction of ordinary streets, just before the junction
+ * (clear of the crossing road). White stripes along the road, a metre apart, painted
+ * a hair above the asphalt.
+ */
+function zebraCrossings(builder: RoadBuilder, layer: VectorTile['layers'][string], ways: Map<number, Way>, k: number, toMerc: number, driveAt: (x: number, z: number) => number) {
+  type Arm = { x: number; y: number; dx: number; dy: number; len: number; half: number; lift: number };
+  const nodes = new Map<string, Arm[]>();
+  for (const [i, way] of ways) {
+    if (way.bridge || way.foot) continue;
+    const p = layer.feature(i).properties;
+    const cls = String(p.class ?? '');
+    if (!ZEBRA_CLASSES.test(cls) || p.brunnel === 'tunnel') continue;
+    const style = roadStyle(cls, String(p.subclass ?? ''), Number(p.ramp) === 1);
+    if (!style) continue;
+    for (const line of way.lines) for (let n = 0; n < line.length; n++) {
+      const q = line[n];
+      if (q.x < 0 || q.y < 0 || q.x > layer.extent || q.y > layer.extent) continue;
+      const key = q.x + ',' + q.y;
+      const list = nodes.get(key) ?? [];
+      // the arms leaving this point: back along the line and on along it
+      for (const o of [line[n - 1], line[n + 1]]) {
+        if (!o) continue;
+        const dx = o.x - q.x, dy = o.y - q.y, len = Math.hypot(dx, dy);
+        if (len > 0) list.push({ x: q.x, y: q.y, dx: dx / len, dy: dy / len, len: len * k, half: style.width / 2, lift: style.lift });
+      }
+      nodes.set(key, list);
+    }
+  }
+  const white = hex('#f2f1ea');
+  const stripe = 0.25 * toMerc, run = 1.5 * toMerc;
+  for (const arms of nodes.values()) {
+    if (arms.length < 3) continue; // a bend or a plain joint, no junction
+    const widest = Math.max(...arms.map((a) => a.half));
+    for (const arm of arms) {
+      // past the crossing road's edge, with a step of kerb
+      const back = (widest + 2.6) * toMerc;
+      if (arm.len < back + run * 1.5) continue; // too short an arm to fit one
+      const cx = arm.x * k + arm.dx * back, cz = arm.y * k + arm.dy * back;
+      const px = -arm.dy, pz = arm.dx; // across the road
+      const across = arm.half * 2 * 0.86;
+      const count = Math.max(2, Math.floor(across / 1.0));
+      builder.groundAt = driveAt;
+      for (let s = 0; s < count; s++) {
+        const off = (s - (count - 1) / 2) * 1.0 * toMerc;
+        const sx = cx + px * off, sz = cz + pz * off;
+        builder.segment(sx - arm.dx * run, sz - arm.dy * run, sx + arm.dx * run, sz + arm.dy * run, stripe, arm.lift + 0.055, white);
+      }
+    }
+  }
 }
 
 // ---- assembly --------------------------------------------------------------

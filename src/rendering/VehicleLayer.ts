@@ -23,6 +23,8 @@ type DeathPhase = 'tumble' | 'burn' | 'wreck';
 type CharMat = { material: THREE.MeshPhongMaterial; r: number; g: number; b: number };
 type TargetState = TargetVehicle & {
   root: THREE.Group;
+  /** soft shadow on the ground under it */
+  shadow: THREE.Mesh;
   explosion: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>;
   hp: number;
   destroyed: boolean;
@@ -62,6 +64,8 @@ export type VehicleSceneLayer = MapLayer & {
   /** our engine is on fire (a disabled car): smoke and sparks from the hood, call every frame */
   burnPlayer: () => void;
   setCar: (next: Car) => void;
+  /** our police lights on (flashing) or off */
+  setBeacons: (on: boolean) => void;
   setTargets: (vehicles: TargetVehicle[]) => void;
   /** targets beside the missions' (shared traffic, test cars): by id, never counted for a mission */
   setExtraTargets: (vehicles: TargetVehicle[]) => void;
@@ -90,6 +94,8 @@ export type VehicleSceneLayer = MapLayer & {
   isTargetAlive: (id: string) => boolean;
   targetHealth: () => TargetHealth[];
   setPickups: (pickups: PickupVisual[]) => void;
+  /** move a pickup already shown (the hauler's cable reels it in) */
+  movePickup: (id: string, position: Position) => void;
   setMissionBeacons: (beacons: {
     id: string;
     position: Position;
@@ -98,7 +104,7 @@ export type VehicleSceneLayer = MapLayer & {
   }[]) => void;
   setRaceFinish: (goal: Position | null) => void;
   /** the hauler: a car of ours held at this pose (`up`: m above our car), drawn there and not on its own ground */
-  setCarried: (pose: { id: string; position: Position; heading: number; up: number } | null) => void;
+  setCarried: (pose: { id: string; position: Position; heading: number; up: number; pitch?: number } | null) => void;
   /** the hauler's cable from our car's middle to a point (`up`: m above our car); `wave`: 0 taut … 1 whipping; null hides it */
   setCable: (to: { position: Position; up: number; wave?: number } | null) => void;
   /** the J ramp: low edge at `position`, rising along `heading`; null takes it away */
@@ -167,9 +173,22 @@ export async function loadCar(car: Car) {
  * Volga (GAZ-24 militia) the red one plus a blue on each side. Red and blue take turns.
  */
 const POLICE_LIGHTS: Record<string, ('red' | 'blue')[]> = { '09': ['red'], '16': ['blue', 'red', 'blue'] };
+/**
+ * A model with its own roof lamps: only the glow goes on, over those lamps — `forward`
+ * of the car's middle (m) and `drop` below the model's top (m). Others get lamp boxes on top.
+ */
+const BEACON_FIT: Record<string, { forward: number; drop: number }> = {
+  '09': { forward: 0.15, drop: 0.16 }, // Fleetline: its red lamp on the front of the roof
+  '16': { forward: 0.35, drop: 0.2 }, // Volga: blue, red, blue over the windscreen
+};
 const beaconMats = {
   red: new THREE.MeshBasicMaterial({ color: '#ff2a1f', transparent: true }),
   blue: new THREE.MeshBasicMaterial({ color: '#2f6dff', transparent: true }),
+};
+/** a switched-off lamp: its colour, dull and still */
+const beaconOffMats = {
+  red: new THREE.MeshBasicMaterial({ color: '#5a1a16' }),
+  blue: new THREE.MeshBasicMaterial({ color: '#1a2a52' }),
 };
 const haloTexture = (() => {
   if (typeof document === 'undefined') return null;
@@ -184,36 +203,84 @@ const haloTexture = (() => {
   g.fillRect(0, 0, 64, 64);
   return new THREE.CanvasTexture(c);
 })();
+// The glow of a lamp: a flat card turned to the camera every frame (render() below).
+// Not a Sprite: this layer's camera is all in one projection matrix, so a sprite would
+// not know where the eye is and stand still, edge-on from the side, gone from behind.
 const haloMats = {
-  red: new THREE.SpriteMaterial({ map: haloTexture, color: '#ff3b2e', transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }),
-  blue: new THREE.SpriteMaterial({ map: haloTexture, color: '#3d7bff', transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }),
+  red: new THREE.MeshBasicMaterial({ map: haloTexture, color: '#ff3b2e', transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }),
+  blue: new THREE.MeshBasicMaterial({ map: haloTexture, color: '#3d7bff', transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }),
 };
+const haloGeometry = new THREE.PlaneGeometry(1, 1);
+const haloEye = new THREE.Vector3();
 /** on/off of each colour now: red and blue alternate, ~2.5 flashes a second */
 function beaconLevel(color: 'red' | 'blue') {
   const t = performance.now() / 400;
   const phase = (t % 1) < 0.5;
   return (color === 'red') === phase ? 1 : 0.08;
 }
+/**
+ * Turn every glow card in `scene` to face `eye` (both in the scene's own frame). Built here
+ * from the axes (to the eye, and upright) rather than with lookAt: the scene itself is
+ * placed on the map through a mirrored matrix, and lookAt works in that world frame.
+ */
+const haloParent = new THREE.Quaternion(), haloAxes = new THREE.Matrix4(), haloPos = new THREE.Vector3();
+const haloX = new THREE.Vector3(), haloY = new THREE.Vector3(), haloZ = new THREE.Vector3(), haloUp = new THREE.Vector3(0, 1, 0);
+function faceHalos(scene: THREE.Scene, eye: THREE.Vector3) {
+  scene.traverse((halo) => {
+    if (!halo.userData.halo || !halo.visible) return;
+    // its place and its parents' turn, from the scene down (no scene matrix in it)
+    haloParent.identity();
+    const chain: THREE.Object3D[] = [];
+    for (let o = halo.parent; o && o !== scene; o = o.parent) { o.updateMatrix(); chain.unshift(o); }
+    haloPos.copy(halo.position);
+    for (let i = chain.length - 1; i >= 0; i--) haloPos.applyMatrix4(chain[i].matrix);
+    for (const o of chain) haloParent.multiply(o.quaternion);
+    haloZ.subVectors(eye, haloPos).normalize();
+    haloX.crossVectors(haloUp, haloZ);
+    if (haloX.lengthSq() < 1e-8) haloX.set(1, 0, 0); else haloX.normalize();
+    haloY.crossVectors(haloZ, haloX);
+    haloAxes.makeBasis(haloX, haloY, haloZ);
+    halo.quaternion.setFromRotationMatrix(haloAxes).premultiply(haloParent.invert());
+  });
+}
+
 function addBeacons(root: THREE.Group, car: Car, size: THREE.Vector3, scale: number) {
   const lights = POLICE_LIGHTS[car.id];
   if (!lights) return;
   // the model before the yaw: its long side along x or z; across it is the other one
   const alongX = size.x >= size.z;
-  const top = size.y * scale + 0.06;
+  const fit = BEACON_FIT[car.id];
+  const top = fit ? size.y * scale - fit.drop : size.y * scale + 0.06;
+  // forward is −x of the model (its yaw turns −x to the car's nose)
+  const along = fit ? -fit.forward : 0;
   const spread = Math.min(size.x, size.z) * scale * 0.26;
   lights.forEach((color, i) => {
     const offset = (i - (lights.length - 1) / 2) * spread;
-    const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.14, 0.2), beaconMats[color]);
-    lamp.position.set(alongX ? 0 : offset, top, alongX ? offset : 0);
-    lamp.userData.beacon = true;
-    lamp.onBeforeRender = () => { beaconMats[color].opacity = 0.35 + 0.65 * beaconLevel(color); };
-    const halo = new THREE.Sprite(haloMats[color]);
+    const at = new THREE.Vector3(alongX ? along : offset, top, alongX ? offset : along);
+    if (!fit) {
+      const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.14, 0.2), beaconMats[color]);
+      lamp.position.copy(at);
+      lamp.userData.beacon = true;
+      lamp.userData.color = color;
+      lamp.onBeforeRender = () => { beaconMats[color].opacity = 0.35 + 0.65 * beaconLevel(color); };
+      root.add(lamp);
+    }
+    const halo = new THREE.Mesh(haloGeometry, haloMats[color]);
     halo.scale.setScalar(1.6);
-    halo.position.copy(lamp.position);
+    halo.userData.halo = true;
+    halo.position.copy(at);
     halo.renderOrder = 9;
     halo.userData.beacon = true;
-    halo.onBeforeRender = () => { haloMats[color].opacity = beaconLevel(color); };
-    root.add(lamp, halo);
+    halo.onBeforeRender = (_renderer, _scene, camera) => {
+      haloMats[color].opacity = beaconLevel(color);
+      // a real camera (the car previews in the menu and the showroom): face it here; in the
+      // game the layer's camera is only a projection, and render() turns the glows itself
+      if ((camera as THREE.PerspectiveCamera).isPerspectiveCamera) {
+        halo.lookAt(camera.getWorldPosition(haloEye));
+        halo.updateMatrixWorld();
+      }
+    };
+    root.add(halo);
   });
 }
 
@@ -300,6 +367,50 @@ export function vehicleLayer(
   const root = new THREE.Group();
   root.add(fallbackCar(car.color));
   scene.add(root);
+  // Soft shadows under the cars: a dark rectangle with blurred edges lying on the ground,
+  // one texture and one material for all (no shadow maps)
+  // the texture: a rectangle filling all but a thin rim, its edge fading over that rim
+  // (drawn pixel by pixel: canvas blur filters are not everywhere)
+  const SHADOW_RIM = 0.07; // share of the texture each side that is the soft edge
+  const shadowTexture = (() => {
+    const w = 64, h = 128;
+    const data = new Uint8Array(w * h * 4);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const u = Math.min(x + 0.5, w - x - 0.5) / w, v = Math.min(y + 0.5, h - y - 0.5) / h;
+      const edge = Math.min(u / SHADOW_RIM, v / (SHADOW_RIM * w / h), 1);
+      const i = (y * w + x) * 4;
+      // alphaMap reads the green channel: the same value in all four
+      data[i] = data[i + 1] = data[i + 2] = data[i + 3] = Math.round(255 * edge * edge * (3 - 2 * edge));
+    }
+    const texture = new THREE.DataTexture(data, w, h, THREE.RGBAFormat);
+    texture.magFilter = THREE.LinearFilter;
+    texture.minFilter = THREE.LinearFilter;
+    texture.needsUpdate = true;
+    return texture;
+  })();
+  const shadowGeometry = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+  const shadowMaterial = new THREE.MeshBasicMaterial({ alphaMap: shadowTexture, color: 0x000000, transparent: true, opacity: 0.42, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 });
+  /** the shadow's size for a car: its footprint plus a hand's width of soft edge round it */
+  const shadowScale = (mesh: THREE.Object3D, length: number, width: number) => mesh.scale.set(width + 0.3, 1, length + 0.24);
+  /** a shadow for a car `length` m long and `width` wide */
+  const makeShadow = (length: number, width: number) => {
+    const mesh = new THREE.Mesh(shadowGeometry, shadowMaterial.clone());
+    shadowScale(mesh, length, width);
+    mesh.renderOrder = 1;
+    mesh.frustumCulled = false;
+    scene.add(mesh);
+    return mesh;
+  };
+  /** lay `shadow` on the ground at `ground` (m relative to our car), fading the higher the car is over it */
+  const layShadow = (shadow: THREE.Mesh, x: number, ground: number, z: number, yaw: number, lift: number) => {
+    // over the road's ribbons too (they lie up to ~0.2 m above the ground)
+    shadow.position.set(x, ground + 0.21, z);
+    shadow.rotation.y = yaw;
+    const fade = Math.max(0, 1 - Math.max(0, lift) / 6);
+    (shadow.material as THREE.MeshBasicMaterial).opacity = 0.42 * fade;
+    shadow.visible = fade > 0.02;
+  };
+  const playerShadow = makeShadow(car.length, car.length * 0.44);
   scene.add(new THREE.HemisphereLight(0xfff6ec, 0x8a8172, 1.6));
   const sun = new THREE.DirectionalLight(0xffffff, 2.6);
   sun.position.set(6, 16, 8);
@@ -430,7 +541,7 @@ export function vehicleLayer(
   cable.visible = false;
   scene.add(cable);
   let cableTo: { position: Position; up: number; wave: number } | null = null;
-  let carried: { id: string; position: Position; heading: number; up: number } | null = null;
+  let carried: { id: string; position: Position; heading: number; up: number; pitch?: number } | null = null;
   // muzzle flash, impact sparks and explosions
   const fx = new WorldParticles(scene);
   const explosionGeometry = new THREE.SphereGeometry(1, 10, 8);
@@ -674,7 +785,7 @@ export function vehicleLayer(
   }
 
   // ---- other players ------------------------------------------------------
-  const remotes = new Map<string, { spec: RemoteCar; root: THREE.Group; body: THREE.Group; beam: THREE.Mesh; path: string; flashUntil: number; flashing: boolean }>();
+  const remotes = new Map<string, { spec: RemoteCar; root: THREE.Group; body: THREE.Group; beam: THREE.Mesh; shadow: THREE.Mesh; path: string; flashUntil: number; flashing: boolean }>();
   /** set by the game: our bullet hit another player's car */
   let remoteHitHandler: (id: string) => boolean = () => false;
   /** set by the game: our bullet hit a target */
@@ -716,7 +827,8 @@ export function vehicleLayer(
         beam.renderOrder = 8;
         root.add(beam);
         scene.add(root);
-        remote = { spec, root, body, beam, path: spec.car.path, flashUntil: 0, flashing: false };
+        if (remote) { scene.remove(remote.shadow); (remote.shadow.material as THREE.Material).dispose(); }
+        remote = { spec, root, body, beam, shadow: makeShadow(spec.car.length, spec.car.length * 0.44), path: spec.car.path, flashUntil: 0, flashing: false };
         remotes.set(spec.id, remote);
         const mine = remote;
         loadCar(spec.car).then((model) => {
@@ -724,6 +836,7 @@ export function vehicleLayer(
           disposeObject(mine.body);
           mine.body.clear();
           mine.body.add(model);
+          if (typeof model.userData.width === 'number') shadowScale(mine.shadow, spec.car.length, model.userData.width);
           map?.triggerRepaint();
         }).catch((error: unknown) => console.error(`Failed to load player car ${spec.car.path}`, error));
       }
@@ -733,6 +846,8 @@ export function vehicleLayer(
       if (seen.has(id)) continue;
       remote.root.remove(remote.beam);
       scene.remove(remote.root);
+      scene.remove(remote.shadow);
+      (remote.shadow.material as THREE.Material).dispose();
       disposeObject(remote.body);
       remotes.delete(id);
     }
@@ -750,6 +865,8 @@ export function vehicleLayer(
     putOut(target);
     scene.remove(target.root);
     disposeObject(target.root);
+    scene.remove(target.shadow);
+    (target.shadow.material as THREE.Material).dispose();
     scene.remove(target.explosion);
     target.explosion.material.dispose();
     targets.delete(id);
@@ -790,7 +907,7 @@ export function vehicleLayer(
       explosion.renderOrder = 12;
       scene.add(explosion);
       const target: TargetState = {
-        ...spec, root, explosion, hp: targetMaxHp,
+        ...spec, root, explosion, shadow: makeShadow(spec.car.length, spec.car.length * 0.44), hp: targetMaxHp,
         destroyed: false, deathPhase: null, explodedAt: 0, flashUntil: 0, flashing: false,
         spinX: 0, spinY: 0, spinZ: 0, velUp: 0, blastsLeft: 0, nextBlastAt: 0, charMats: [],
         wreckQuat: null, wreckBakeHeading: 0, wreckRestY: 0.45, altitude: null,
@@ -798,6 +915,7 @@ export function vehicleLayer(
       targets.set(spec.id, target);
       loadCar(spec.car).then(model => {
         if (disposed || targets.get(spec.id) !== target) { disposeObject(model); return; }
+        if (typeof model.userData.width === 'number') shadowScale(target.shadow, spec.car.length, model.userData.width);
         disposeObject(root);
         root.clear();
         root.add(model);
@@ -1141,6 +1259,19 @@ export function vehicleLayer(
   };
   /** our body's width (m): the tyre tracks sit under its wheels */
   let carWidth = 1.9;
+  /** our police lights (F): the glow shown or hidden, the lamps lit or dull */
+  let beaconsOn = true;
+  function applyBeacons() {
+    root.traverse((child) => {
+      if (!child.userData.beacon) return;
+      if (child.userData.halo) child.visible = beaconsOn;
+      else if (child instanceof THREE.Mesh && child.userData.color) {
+        const color = child.userData.color as 'red' | 'blue';
+        child.material = beaconsOn ? beaconMats[color] : beaconOffMats[color];
+      }
+    });
+    map?.triggerRepaint();
+  }
   function installCarModel(model: THREE.Group) {
     for (const child of [...root.children]) {
       root.remove(child);
@@ -1148,7 +1279,9 @@ export function vehicleLayer(
     }
     root.clear();
     root.add(model);
+    applyBeacons();
     if (typeof model.userData.width === 'number') carWidth = model.userData.width;
+    shadowScale(playerShadow, currentCar.length, carWidth);
     map?.triggerRepaint();
   }
 
@@ -1280,8 +1413,16 @@ export function vehicleLayer(
       maxHp: targetMaxHp,
     })),
     setPickups,
+    movePickup(id, position) {
+      const pickup = pickups.get(id);
+      if (!pickup) return;
+      pickup.position = [...position] as Position;
+      pickup.ground = null;
+      pickup.drop = undefined;
+    },
     setMissionBeacons,
     setRaceFinish,
+    setBeacons(on) { beaconsOn = on; applyBeacons(); },
     setCarried(pose) { carried = pose ? { ...pose, position: [...pose.position] as Position } : null; map?.triggerRepaint(); },
     setCable(to) { cableTo = to ? { position: [...to.position] as Position, up: to.up, wave: to.wave ?? 0 } : null; map?.triggerRepaint(); },
     setRamp,
@@ -1342,6 +1483,11 @@ export function vehicleLayer(
         const offset = scenePoint(here, spec.position, heading, spec.altitude - height());
         car.visible = Math.hypot(offset.x, offset.z) < 1600;
         car.position.copy(offset);
+        {
+          const ground = (map.groundAt(spec.position) ?? spec.altitude) - height();
+          layShadow(remote.shadow, offset.x, ground, offset.z, heading - spec.heading, offset.y - ground);
+          remote.shadow.visible &&= car.visible;
+        }
         // hit: a red flash (their health is the overhead meter, as for bots)
         const flashing = now < remote.flashUntil;
         if (flashing !== remote.flashing) { remote.flashing = flashing; tintVehicle(remote.body, flashing); }
@@ -1373,6 +1519,9 @@ export function vehicleLayer(
         // held by the hauler: where it is put, not on its own ground
         const held = carried && carried.id === target.id && !target.destroyed ? carried : null;
         const offset = held ? scenePoint(here, held.position, heading, held.up) : scenePoint(here, target.position, heading, targetLift(target));
+        // a wreck or a car up on the hauler casts none on the road
+        if (target.destroyed || held) target.shadow.visible = false;
+        else layShadow(target.shadow, offset.x, offset.y, offset.z, heading - target.heading, 0);
         if (target.destroyed) {
           const age = now - target.explodedAt;
           const tumbleMs = 1100;
@@ -1444,7 +1593,9 @@ export function vehicleLayer(
           continue;
         }
         target.root.position.copy(offset);
-        target.root.rotation.y = heading - (held ? held.heading : target.heading);
+        // a held car leans with the truck under it (pitch > 0: nose up)
+        target.root.rotation.order = 'YXZ';
+        target.root.rotation.set(held ? -(held.pitch ?? 0) : 0, heading - (held ? held.heading : target.heading), 0);
         tintTarget(target, now < target.flashUntil);
       }
       for (const pickup of pickups.values()) {
@@ -1524,6 +1675,11 @@ export function vehicleLayer(
       const perMeter = mercatorPerMeter(vehicle.position[1]);
       const place = { x: mercatorX01(vehicle.position[0]), y: mercatorY01(vehicle.position[1]), z: height() * perMeter };
       const meters = perMeter;
+      {
+        // ours: on the ground under us, fading as we fly
+        const ground = (map.groundAt(vehicle.position) ?? height()) - height();
+        layShadow(playerShadow, 0, ground, 0, 0, -ground);
+      }
       root.rotation.order = 'XYZ';
       root.rotation.x = -pitch(); // pitch is nose-up positive; +x rotation here lowers the nose
       root.rotation.z = roll();
@@ -1532,6 +1688,15 @@ export function vehicleLayer(
       // camera position in this layer's local frame, for camera-facing particles
       const clipToLocal = new THREE.Matrix4().fromArray(Array.from(args.defaultProjectionData.mainMatrix)).multiply(matrix).invert();
       const eye = new THREE.Vector4(0, 0, -1, 1).applyMatrix4(clipToLocal);
+      {
+        // every lamp's glow faces the camera itself (the point the projection sends to
+        // infinity, w = 0), not the middle of the near plane: round from any side
+        const lens = new THREE.Vector4(0, 0, 1, 0).applyMatrix4(clipToLocal);
+        const at = Math.abs(lens.w) > 1e-9
+          ? new THREE.Vector3(lens.x / lens.w, lens.y / lens.w, lens.z / lens.w)
+          : new THREE.Vector3(eye.x / eye.w, eye.y / eye.w, eye.z / eye.w);
+        faceHalos(scene, at);
+      }
       fx.altitude = height();
       fx.update(now, dt, here, heading, new THREE.Vector3(eye.x / eye.w, eye.y / eye.w, eye.z / eye.w));
       fireEye.value.set(eye.x / eye.w, eye.y / eye.w, eye.z / eye.w);

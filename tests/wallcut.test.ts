@@ -51,3 +51,22 @@ test('a curved front cut into different facets by two outlines is one wall', () 
   const left = cutCoveredWalls([...tall, ...low], 0.4).filter((p) => low.includes(p.wall as typeof low[number]));
   assert.equal(left.length, 0, `low facets left: ${left.length}`);
 });
+
+test('back to back at one height: both walls are inside the block and go', () => {
+  const a = { ax: 0, az: 0, bx: 20, bz: 0, y0: -1e6, y1: 9, order: 0, nx: 0, nz: 1 };
+  const b = { ax: 20, az: 0.1, bx: 0, bz: 0.1, y0: -1e6, y1: 9.1, order: 1, nx: 0, nz: -1 };
+  assert.equal(cutCoveredWalls([a, b], 0.4).length, 0);
+  // one block taller: its wall shows above the other roof and stays
+  const tall = { ...b, y1: 15 };
+  assert.deepEqual(cutCoveredWalls([a, tall], 0.4).map((p) => p.wall), [tall]);
+});
+
+test('two houses in a narrow wedge keep a wall where they part (no hole to the ground)', () => {
+  // back to back, but 6° apart: 0 at x = 0, ~2 m apart at x = 20
+  const a = { ax: 0, az: 0, bx: 20, bz: 0, y0: -1e6, y1: 9, order: 0, nx: 0, nz: 1 };
+  const b = { ax: 20, az: 2.1, bx: 0, bz: 0, y0: -1e6, y1: 9, order: 1, nx: 0.1, nz: -1 };
+  const left = cutCoveredWalls([a, b], 0.4);
+  // along a: wherever the wedge is open beyond the touch, a's wall is still there
+  const aPieces = left.filter((p) => p.wall === a);
+  assert.ok(aPieces.some((p) => p.t1 === 1), 'the open end of the wedge keeps a wall');
+});

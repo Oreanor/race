@@ -48,6 +48,10 @@ export type VegetationData = {
   shelterGlass: InstanceSet;
   /** football goals */
   goals: InstanceSet;
+  /** street clutter by the lamps: litter bins, big waste containers, bollards at the kerb */
+  bins: InstanceSet;
+  dumpsters: InstanceSet;
+  bollards: InstanceSet;
   /**
    * What a car cannot drive through (pedestals, basins, shelters), SOLID_STRIDE
    * floats each: x, z (tile-local mercator), ground, half width, half length (m), yaw, height (m)
@@ -329,10 +333,39 @@ export function buildVegetation(
     solids.push(spot.x, spot.z, ground, 1.7, 0.75, spot.yaw, 2.6);
   }
   for (const goal of furniture.goals) at(goals, goal, 0, groundAt(goal.x, goal.z), goal.scale);
+  // ---- street clutter, beside the lamps (they stand at the kerb, arm over the road) ----
+  // every third lamp has a litter bin a step along the pavement, one in eight a big waste
+  // container farther along, one in five three bollards at the kerb edge
+  const bins = new Instances(), dumpsters = new Instances(), bollards = new Instances();
+  for (const lamp of streets.lamps) {
+    const h = ((Math.round(lamp.x * 7919) ^ Math.round(lamp.z * 6271)) * 2654435761 >>> 0) / 4294967296;
+    const roadX = Math.cos(lamp.yaw), roadZ = -Math.sin(lamp.yaw); // toward the road (the arm)
+    const alongX = Math.sin(lamp.yaw), alongZ = Math.cos(lamp.yaw); // along the pavement
+    const spot = (along: number, out: number) => ({ x: lamp.x + (alongX * along + roadX * out) * toMerc, z: lamp.z + (alongZ * along + roadZ * out) * toMerc, yaw: lamp.yaw });
+    if (h < 0.33) {
+      const s = spot(1.3, 0.1);
+      if (inside(s.x, s.z)) at(bins, s, 0, groundAt(s.x, s.z));
+    }
+    if (h > 0.875) {
+      const s = spot(-3.2, -0.3);
+      if (inside(s.x, s.z)) {
+        const ground = groundAt(s.x, s.z);
+        at(dumpsters, s, 0, ground);
+        solids.push(s.x, s.z, ground, 0.85, 0.6, s.yaw + Math.PI / 2, 1.3);
+      }
+    }
+    if (h > 0.4 && h < 0.6) {
+      for (const along of [-2.4, -1.2, 2.5, 3.7]) {
+        const s = spot(along, 0.55);
+        if (inside(s.x, s.z)) at(bollards, s, 0, groundAt(s.x, s.z));
+      }
+    }
+  }
   return {
     flora: flora.map((f) => f.done(true)), preset: presetId, posts: posts.done(), rails: rails.done(), lamps: lamps.done(),
     plinths: plinths.done(), plinthsLong: plinthsLong.done(), figures: figures.done(), riders: riders.done(),
     fountains: fountains.done(), fountainWater: fountainWater.done(), shelters: shelters.done(), shelterGlass: shelterGlass.done(), goals: goals.done(),
+    bins: bins.done(), dumpsters: dumpsters.done(), bollards: bollards.done(),
     solids: new Float32Array(solids),
     fell: new Float32Array(fell), lampLight,
   };
@@ -340,7 +373,7 @@ export function buildVegetation(
 
 export function vegetationTransferables(v: VegetationData): ArrayBuffer[] {
   const out: ArrayBuffer[] = [];
-  for (const set of [...v.flora, v.posts, v.rails, v.lamps, v.plinths, v.plinthsLong, v.figures, v.riders, v.fountains, v.fountainWater, v.shelters, v.shelterGlass, v.goals]) {
+  for (const set of [...v.flora, v.posts, v.rails, v.lamps, v.plinths, v.plinthsLong, v.figures, v.riders, v.fountains, v.fountainWater, v.shelters, v.shelterGlass, v.goals, v.bins, v.dumpsters, v.bollards]) {
     out.push(set.matrices.buffer as ArrayBuffer, set.ground.buffer as ArrayBuffer);
     for (const extra of [set.colors, set.bark, set.traits]) if (extra) out.push(extra.buffer as ArrayBuffer);
   }

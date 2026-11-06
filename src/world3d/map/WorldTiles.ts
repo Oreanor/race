@@ -260,6 +260,11 @@ export class WorldTiles {
       type: 'world', id, tile,
       vectorUrl: this.url(this.template!, tile),
       demUrl: this.options.demTemplate ? this.url(this.options.demTemplate, tile) : null,
+      demNeighbours: this.options.demTemplate ? [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]].map(([dx, dy]) => {
+        const size = 2 ** tile.z, y = tile.y + dy;
+        if (y < 0 || y >= size) return null;
+        return this.url(this.options.demTemplate!, { ...tile, x: ((tile.x + dx) % size + size) % size, y });
+      }) : null,
       options: { chunks: 4, inset: 0, grid: this.options.grid, region: this.options.region },
     });
   }

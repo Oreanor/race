@@ -19,8 +19,8 @@ const pieces = createPieceGeometries();
 // tree / shrub shape per tile (all in one material), plus fences, lamps and
 // roof props. Ground height and fog in the shader.
 
-type Kind = 'post' | 'rail' | 'chimney' | 'vent' | 'lamp' | 'plinth' | 'plinthLong' | 'figure' | 'rider'
-  | 'fountain' | 'fountainWater' | 'shelter' | 'shelterGlass' | 'goal';
+type Kind = 'post' | 'rail' | 'chimney' | 'vent' | 'antenna' | 'dish' | 'ac' | 'lamp' | 'plinth' | 'plinthLong' | 'figure' | 'rider'
+  | 'fountain' | 'fountainWater' | 'shelter' | 'shelterGlass' | 'goal' | 'bin' | 'dumpster' | 'bollard';
 
 /** Merge simple pieces into one shape, no uvs. */
 function shape(pieces: THREE.BufferGeometry[]) {
@@ -28,6 +28,56 @@ function shape(pieces: THREE.BufferGeometry[]) {
   merged.deleteAttribute('uv');
   merged.computeVertexNormals();
   return merged;
+}
+
+/** A street litter bin: a round can with a rim, on the pavement. */
+function binGeometry() {
+  return shape([
+    new THREE.CylinderGeometry(0.26, 0.22, 0.85, 10).translate(0, 0.425, 0),
+    new THREE.CylinderGeometry(0.29, 0.29, 0.07, 10).translate(0, 0.86, 0),
+  ]);
+}
+
+/** A big wheeled waste container with a lid (long side along x). */
+function dumpsterGeometry() {
+  return shape([
+    new THREE.BoxGeometry(1.7, 1.05, 1.1).translate(0, 0.68, 0),
+    new THREE.BoxGeometry(1.76, 0.08, 1.2).translate(0, 1.24, -0.02),
+    ...[-0.7, 0.7].flatMap((x) => [-0.42, 0.42].map((z) => new THREE.CylinderGeometry(0.08, 0.08, 0.06, 8).rotateZ(Math.PI / 2).translate(x, 0.1, z))),
+  ]);
+}
+
+/** A kerb bollard: a short post with a cap. */
+function bollardGeometry() {
+  return shape([
+    new THREE.CylinderGeometry(0.09, 0.1, 0.85, 8).translate(0, 0.425, 0),
+    new THREE.CylinderGeometry(0.11, 0.11, 0.07, 8).translate(0, 0.87, 0),
+  ]);
+}
+
+/** A rooftop TV mast: a pole with three cross bars of falling length. */
+function antennaGeometry() {
+  return shape([
+    new THREE.BoxGeometry(0.06, 2.4, 0.06).translate(0, 1.2, 0),
+    new THREE.BoxGeometry(1.3, 0.04, 0.04).translate(0, 2.25, 0),
+    new THREE.BoxGeometry(1.0, 0.04, 0.04).translate(0, 1.95, 0),
+    new THREE.BoxGeometry(0.7, 0.04, 0.04).translate(0, 1.65, 0),
+  ]);
+}
+
+/** A satellite dish on a short post, tilted up toward +z. */
+function dishGeometry() {
+  const bowl = new THREE.CylinderGeometry(0.42, 0.12, 0.16, 12).rotateX(-1.0).translate(0, 0.62, 0.05);
+  return shape([new THREE.BoxGeometry(0.07, 0.55, 0.07).translate(0, 0.27, 0), bowl]);
+}
+
+/** An air conditioner box hung on a wall (its back against the wall at z = −0.2). */
+function acGeometry() {
+  return shape([
+    new THREE.BoxGeometry(0.85, 0.58, 0.32).translate(0, 0, -0.04),
+    new THREE.BoxGeometry(0.06, 0.06, 0.3).translate(-0.3, -0.31, -0.05),
+    new THREE.BoxGeometry(0.06, 0.06, 0.3).translate(0.3, -0.31, -0.05),
+  ]);
 }
 
 /** A stone pedestal: two steps, a shaft and a cornice; top at 2.7 m. */
@@ -273,6 +323,8 @@ export class VegetationRenderer {
       // same shapes as the old detailed layer's roof props
       chimney: pieces.chimney,
       vent: pieces.vent,
+      antenna: antennaGeometry(), dish: dishGeometry(), ac: acGeometry(),
+      bin: binGeometry(), dumpster: dumpsterGeometry(), bollard: bollardGeometry(),
       lamp: this.classicLamp,
       plinth: plinthGeometry(), plinthLong: plinthLongGeometry(), figure: figureGeometry(), rider: riderGeometry(),
       fountain: fountainGeometry(), fountainWater: fountainWaterGeometry(), shelter: shelterGeometry(), shelterGlass: shelterGlassGeometry(), goal: goalGeometry(),
@@ -281,6 +333,8 @@ export class VegetationRenderer {
     this.materials = {
       post: lambert('#4a4036'), rail: lambert('#5c5145'),
       chimney: lambert(0xffffff), vent: lambert(0xffffff),
+      antenna: lambert(0xffffff), dish: lambert(0xffffff), ac: lambert(0xffffff),
+      bin: lambert('#3f5a48'), dumpster: lambert('#4d6b52'), bollard: lambert('#3a3d40'),
       lamp: simpleLit('#9aa1a8', uniforms, { shiny: true, glow: true }),
       // pale stone, dark bronze
       plinth: lambert('#c9c1b3'), plinthLong: lambert('#c9c1b3'),
@@ -297,8 +351,13 @@ export class VegetationRenderer {
   }
 
   /** Chimneys and vents of a tile (colours per instance). */
-  buildAccents(accents: { chimney: InstanceSet; vent: InstanceSet }) {
-    return [...this.instanced('chimney', this.geometries.chimney, this.materials.chimney, accents.chimney), ...this.instanced('vent', this.geometries.vent, this.materials.vent, accents.vent)];
+  buildAccents(accents: { chimney: InstanceSet; vent: InstanceSet; antenna?: InstanceSet; dish?: InstanceSet; ac?: InstanceSet }) {
+    const out = [...this.instanced('chimney', this.geometries.chimney, this.materials.chimney, accents.chimney), ...this.instanced('vent', this.geometries.vent, this.materials.vent, accents.vent)];
+    for (const kind of ['antenna', 'dish', 'ac'] as const) {
+      const set = accents[kind];
+      if (set) out.push(...this.instanced(kind, this.geometries[kind], this.materials[kind], set));
+    }
+    return out;
   }
 
   /** Meshes for one tile, ready to add to the tile group. Flora meshes are named `flora<shape index>`. */
@@ -306,8 +365,9 @@ export class VegetationRenderer {
     const out: THREE.InstancedMesh[] = [];
     data.flora.forEach((set, i) => out.push(...this.instanced(`flora${i}`, this.flora[i], this.floraMat, set)));
     for (const [kind, set] of [['post', data.posts], ['rail', data.rails], ['lamp', data.lamps], ['plinth', data.plinths], ['plinthLong', data.plinthsLong], ['figure', data.figures], ['rider', data.riders],
-      ['fountain', data.fountains], ['fountainWater', data.fountainWater], ['shelter', data.shelters], ['shelterGlass', data.shelterGlass], ['goal', data.goals]] as [Kind, InstanceSet][]) {
-      out.push(...this.instanced(kind, this.geometries[kind], this.materials[kind], set));
+      ['fountain', data.fountains], ['fountainWater', data.fountainWater], ['shelter', data.shelters], ['shelterGlass', data.shelterGlass], ['goal', data.goals],
+      ['bin', data.bins], ['dumpster', data.dumpsters], ['bollard', data.bollards]] as [Kind, InstanceSet | undefined][]) {
+      if (set) out.push(...this.instanced(kind, this.geometries[kind], this.materials[kind], set));
     }
     // every lamp's cone of light, on its own copy of the matrices: a lamp knocked down puts it out
     out.push(...this.instanced('lampBeam', this.beam, this.beamMat, { ...data.lamps, matrices: data.lamps.matrices.slice() }).map((mesh) => { mesh.renderOrder = 6; return mesh; }));
