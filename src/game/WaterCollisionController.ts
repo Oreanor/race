@@ -1,5 +1,5 @@
 import { circleHitsPolygon, type Polygon } from './BuildingCollisions.ts';
-import { type Position, metersBetween } from './VehicleController.ts';
+import { type Position, metersBetween, METERS_PER_DEGREE } from './VehicleController.ts';
 
 type Point = [number, number];
 type LocalPolygon = { rings: Polygon; bounds: number[] };
@@ -11,7 +11,7 @@ export type MapFeature = {
   properties?: Record<string, unknown> | null;
 };
 
-const METERS = 111319.49;
+const METERS = METERS_PER_DEGREE;
 const REACH = 900;
 
 function inside(point: Point, ring: Point[]) {
@@ -84,8 +84,32 @@ export class WaterCollisionController {
   private polygons: LocalPolygon[] = [];
   private bridges: LocalBridge[] = [];
 
+  /** True when water polygons around the car are loaded near `position`. */
+  near(position: Position, meters = 220) {
+    return this.ready && metersBetween(this.anchor, position) < meters;
+  }
+
+  /** True when `position` sits in water (bridge decks count as dry). */
   covers(position: Position) {
-    return this.ready && metersBetween(this.anchor, position) < 220;
+    if (!this.ready) return false;
+    return this.wet(this.local(position), 1.1) != null;
+  }
+
+  /**
+   * Beacon / mission placement: wet if our loaded polygons say so, else fall back
+   * to the map's water features (spots can be far beyond the car's water cache).
+   */
+  inSea(position: Position, water: Iterable<MapFeature>) {
+    if (this.ready && metersBetween(this.origin, position) < REACH) {
+      return this.wet(this.local(position), 0.8) != null;
+    }
+    const point = position as Point;
+    for (const feature of water) {
+      for (const shape of polygonsOf(feature.geometry)) {
+        if (contained(point, shape)) return true;
+      }
+    }
+    return false;
   }
 
   collect(origin: Position, water: Iterable<MapFeature>, roads: Iterable<MapFeature>) {

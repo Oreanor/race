@@ -1,5 +1,5 @@
 'use client';
-import type { BankOffer } from '@/game/GameEngine';
+import type { BankOffer } from '@/game/offers';
 import { t } from '@/i18n';
 import { useLang } from '@/i18n/react';
 import Dialog from './ui/Dialog';

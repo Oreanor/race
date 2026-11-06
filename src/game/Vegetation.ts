@@ -1,6 +1,6 @@
 import { polygonPenetrationDepth, type Polygon } from './BuildingCollisions.ts';
 import type { MapFeature } from './WaterCollisionController.ts';
-import type { Position } from './VehicleController.ts';
+import { METERS_PER_DEGREE, type Position } from './VehicleController.ts';
 
 export type Plant = { key: string; position: Position; x: number; z: number; seed: number; bush: boolean; variant: number };
 export type FenceEdge = { ax: number; az: number; bx: number; bz: number };
@@ -9,7 +9,7 @@ export const PLANT_CAP = 1800;
 export const FENCE_REACH = 880;
 const PLANT_DENSITY = 0.5;
 type Area = { rings: Position[][]; bounds: number[]; kind: string };
-const M = 111319.49;
+const M = METERS_PER_DEGREE;
 export function plantRandom(x: number, y: number, salt = 0) {
   let h = Math.imul(x ^ 0x45d9f3b, 374761393) ^ Math.imul(y ^ salt, 668265263);
   h = Math.imul(h ^ (h >>> 13), 1274126177);

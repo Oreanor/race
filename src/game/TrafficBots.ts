@@ -1,8 +1,7 @@
 import type { Car } from '@/config/vehicle.config';
 import type { MapFeature } from './WaterCollisionController';
-import { VehicleController, type Position, metersBetween } from './VehicleController.ts';
+import { VehicleController, type Position, metersBetween, METERS_PER_DEGREE } from './VehicleController.ts';
 
-const METERS_PER_DEGREE = 111319.49;
 const ROAD_CLASSES = new Set(['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'minor', 'service']);
 const NODE_SNAP_METERS = 2.5;
 const SAMPLE_METERS = 10;

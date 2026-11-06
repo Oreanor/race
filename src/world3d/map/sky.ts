@@ -34,12 +34,16 @@ const SUN = /* glsl */ `
   varying vec2 vUv;
   void main() {
     float r = length(vUv);
+    // kill glow before the billboard's square edge — otherwise additive bleed
+    // draws as vertical/horizontal seams on the sky
+    if (r > 0.98) discard;
     float disc = smoothstep(0.16, 0.14, r);
-    float glow = exp(-r * r * 9.0) * 0.55 + exp(-r * 3.2) * 0.25;
+    float glow = exp(-r * r * 14.0) * 0.55 + exp(-r * 4.5) * 0.22;
+    glow *= smoothstep(0.92, 0.55, r);
     vec3 hot = mix(vec3(1.0, 0.97, 0.88), vec3(1.0, 0.62, 0.32), uWarm);
     vec3 color = hot * (disc * 1.6 + glow);
     float a = clamp(disc + glow, 0.0, 1.0) * uFade;
-    if (a < 0.003) discard;
+    if (a < 0.004) discard;
     gl_FragColor = linearToOutputTexel(vec4(color * uFade, 1.0));
   }
 `;

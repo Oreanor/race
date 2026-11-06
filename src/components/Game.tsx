@@ -6,9 +6,19 @@ import { NetHud, type NetFeed } from './NetHud';
 import ServerStatus from './ServerStatus';
 import { findPlaces } from '@/game/findPlaces';
 import { healthColor } from '@/game/health';
-import { GameEngine, type BountyOffer, type DealerOffer, type EventOffer, type EventResult, type FuelHud, type HudParticipant, type PlayerCarry, type BankOffer, type ServiceOffer, type Settings, type Theme, type TravelOffer } from '@/game/GameEngine';
+import { GameEngine } from '@/game/GameEngine';
+import type { BountyOffer, DealerOffer, EventOffer, EventResult, FuelHud, HudParticipant, PlayerCarry, BankOffer, RideOffer, ServiceOffer, Settings, Theme, TravelOffer } from '@/game/offers';
 import { EVACUATION_COST } from '@/game/Fuel';
-import { clearSave, loadSave, writeSave, type GameSave } from '@/game/save';
+import { loadSave, writeSave, type GameSave } from '@/game/save';
+import {
+  loadMapLabelFilters,
+  MAP_LABEL_KINDS,
+  mapLabelMessageKey,
+  saveMapLabelFilters,
+  type MapLabelFilters,
+  type MapLabelKind,
+} from '@/game/mapLabels';
+import { ARENA_FEE, RACE_FEE } from '@/game/tuning';
 import { formatNumber, getLang, LANGS, setLang, t, type Lang, type MessageKey } from '@/i18n';
 import { useLang } from '@/i18n/react';
 
@@ -72,7 +82,7 @@ import DealershipDialog from './DealershipDialog';
 import Dialog from './ui/Dialog';
 import PerfOverlay from './PerfOverlay';
 import { PerfMonitor, benchmark, type BenchResult, type PerfSnapshot } from '@/world3d/perf/PerfMonitor';
-import { Price, priced } from './Price';
+import { Price } from './Price';
 
 type RosterNodes = {
   entry: HTMLDivElement;
@@ -232,9 +242,8 @@ export default function Game() {
     }
     return cheapestCarIndex();
   });
-  // mid-drive save: skip the intro shelf and land back on the road
-  const [driving, setDriving] = useState(() => Boolean(bootSave()));
-  const [approaching, setApproaching] = useState(() => Boolean(bootSave()));
+  const [driving, setDriving] = useState(false);
+  const [approaching, setApproaching] = useState(false);
   const [booted, setBooted] = useState(false);
   const [exitConfirm, setExitConfirm] = useState(false);
   const [search, setSearch] = useState('');
@@ -243,11 +252,12 @@ export default function Game() {
   const [looking, setLooking] = useState(false);
   const [searchFailed, setSearchFailed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [mapLabels, setMapLabels] = useState<MapLabelFilters>(() => loadMapLabelFilters());
+  const [mapViewOpen, setMapViewOpen] = useState(false);
   const [eventOffer, setEventOffer] = useState<EventOffer | null>(null);
   const [eventResult, setEventResult] = useState<EventResult | null>(null);
   const [status, setStatus] = useState(() => t('loading.city'));
   const [statusToast, setStatusToast] = useState('');
-  const [spawnPin, setSpawnPin] = useState<[number, number] | null>(null);
   // performance stats: off by default, switched on in the settings (remembered)
   const [perfOn, setPerfOn] = useState(() => {
     try { return localStorage.getItem('cityRider.stats') === '1' || new URLSearchParams(window.location.search).has('perf'); } catch { return false; }
@@ -275,22 +285,29 @@ export default function Game() {
   const [bankOffer, setBankOffer] = useState<BankOffer | null>(null);
   const [dealerOffer, setDealerOffer] = useState<DealerOffer | null>(null);
   const [bountyOffer, setBountyOffer] = useState<BountyOffer | null>(null);
-  // a bought ticket / page-reload purse: what the player takes into the next engine
+  const [rideOffer, setRideOffer] = useState<RideOffer | null>(null);
+  // Ticket / reload / menu exit: purse taken into the next engine (same intro either way)
   const carryRef = useRef<PlayerCarry | null>(null);
   const arriveRef = useRef(false);
-  const resumeRef = useRef(false);
-  const resumeAtRef = useRef<{ position: [number, number]; heading: number; hp: number } | null>(null);
-  // one-time: restore mid-drive progress from localStorage
-  const resumeBoot = useRef(false);
-  if (!resumeBoot.current) {
-    resumeBoot.current = true;
+  const [purse, setPurse] = useState(() => bootSave()?.money ?? STARTING_CASH);
+  const [garageIds, setGarageIds] = useState<string[]>(() => {
+    const save = bootSave();
+    if (!save) return [...GIFT_CARS];
+    const owned = Array.isArray(save.garage)
+      ? save.garage.filter((id): id is string => typeof id === 'string')
+      : [save.carId];
+    return [...new Set([...owned, ...GIFT_CARS])];
+  });
+  // one-time: restore purse / garage / last spot from localStorage into the intro
+  const progressBoot = useRef(false);
+  if (!progressBoot.current) {
+    progressBoot.current = true;
     const save = bootSave();
     if (save) {
-      const at = { position: save.position, heading: save.heading, hp: save.hp };
       carryRef.current = {
         money: save.money,
         fuel: save.fuel,
-        at,
+        at: { position: save.position, heading: save.heading, hp: save.hp },
         collected: save.collected ?? [],
         loan: Number.isFinite(save.loan) ? save.loan : 0,
         garage: [
@@ -298,10 +315,42 @@ export default function Game() {
           ...GIFT_CARS,
         ],
       };
-      resumeAtRef.current = at;
-      resumeRef.current = true;
     }
   }
+
+  /** Keep money/garage when the engine remounts (city change) or after leaving the road. */
+  const stashProgress = useCallback((nextPlace?: City) => {
+    const game = engine.current;
+    const where = nextPlace ?? place;
+    const save = game?.snapshot({ name: place.name, country: place.country, coords: place.coords });
+    if (save) {
+      writeSave({
+        ...save,
+        place: { name: where.name, country: where.country, coords: [...where.coords] as [number, number] },
+        // new city: spawn there; same city: keep the last road position
+        position: nextPlace ? [...where.coords] as [number, number] : save.position,
+        heading: nextPlace ? where.heading * Math.PI / 180 : save.heading,
+      });
+      setPurse(save.money);
+      setGarageIds(save.garage ?? [save.carId]);
+      carryRef.current = {
+        money: save.money,
+        fuel: save.fuel,
+        loan: save.loan ?? 0,
+        garage: save.garage,
+        collected: save.collected,
+        at: nextPlace
+          ? undefined
+          : { position: save.position, heading: save.heading, hp: save.hp },
+      };
+      return;
+    }
+    const prev = carryRef.current;
+    if (!prev) return;
+    if (nextPlace) {
+      carryRef.current = { ...prev, at: undefined };
+    }
+  }, [place]);
   const [settings, setSettings] = useState<Settings>(() => {
     // like language: saved choice, else the browser's light/dark preference
     let theme: Theme = 'light';
@@ -313,6 +362,7 @@ export default function Game() {
     const defaults: Settings = {
       terrain: true,
       follow: true,
+      streetNames: false,
       sensitivity: 1,
       quality: 'high',
       buildingDetail: 'high',
@@ -344,7 +394,6 @@ export default function Game() {
     setStatus(t('loading.city'));
     setApproaching(false);
     setBooted(false);
-    setSpawnPin(null);
     let game: GameEngine | undefined;
     let clockAt = 0;
     // the purse this engine starts with (a save or a ticket); handed back if it is torn down unused
@@ -396,23 +445,12 @@ export default function Game() {
       );
       carryRef.current = null;
       const live = game;
+      live.setMapLabelFilters(mapLabels);
       live.onApproach = (active) => setApproaching(active);
       live.onBoot = (ready) => {
         setBooted(ready);
         if (!ready) return;
-        if (resumeRef.current) {
-          resumeRef.current = false;
-          const at = resumeAtRef.current;
-          resumeAtRef.current = null;
-          if (at) live.resumeFrom(at);
-          setDriving(true);
-          // driving may already be true from boot — push it into the engine explicitly
-          live.setDriving(true);
-          // the fly-in may already be over (it can run before boot): only wait for one in flight,
-          // else the HUD stays hidden for good
-          setApproaching(live.approaching);
-          return;
-        }
+        // Same calm intro for reload and a fresh city — only a bought ticket auto-drives in.
         if (arriveRef.current) {
           arriveRef.current = false;
           setDriving(true);
@@ -429,7 +467,7 @@ export default function Game() {
         if (index >= 0) setCar(index);
       };
       game.onBountyOffer = (offer) => setBountyOffer(offer);
-      game.onSpawnSet = (pos) => setSpawnPin(pos);
+      game.onRideOffer = (offer) => setRideOffer(offer);
       game.onEventOffer = (offer) => setEventOffer(offer);
       game.onEventResult = (result) => setEventResult(result);
       game.onFuel = (fuel) => fuelListener.current?.(fuel);
@@ -437,6 +475,7 @@ export default function Game() {
       game.onChat = (line) => netFeed.current?.chat(line);
       game.onNetNotice = (notice) => netFeed.current?.notice(notice);
       game.onFuelOut = (out) => setFuelOut(out);
+      game.onMapView = (open) => setMapViewOpen(open);
       engine.current = game;
       game.joinNetwork(nameRef.current);
     } catch (error) {
@@ -477,10 +516,19 @@ export default function Game() {
   }, [search]);
 
   useEffect(() => engine.current?.applySettings(settings), [settings]);
+  useEffect(() => engine.current?.setMapLabelFilters(mapLabels), [mapLabels]);
   useEffect(() => engine.current?.setDriving(driving), [driving]);
+
+  const toggleMapLabel = useCallback((kind: MapLabelKind) => {
+    setMapLabels((prev) => {
+      const next = { ...prev, [kind]: !prev[kind] };
+      saveMapLabelFilters(next);
+      return next;
+    });
+  }, []);
   useEffect(() => {
-    engine.current?.setPaused((settingsOpen || exitConfirm || Boolean(eventOffer) || Boolean(eventResult) || Boolean(bountyOffer) || fuelOut || Boolean(travelOffer) || Boolean(serviceOffer) || Boolean(dealerOffer) || towAsk || keysOpen || Boolean(bankOffer)) && driving);
-  }, [settingsOpen, exitConfirm, eventOffer, eventResult, bountyOffer, fuelOut, travelOffer, serviceOffer, dealerOffer, towAsk, keysOpen, bankOffer, driving]);
+    engine.current?.setPaused((settingsOpen || exitConfirm || Boolean(eventOffer) || Boolean(eventResult) || Boolean(bountyOffer) || Boolean(rideOffer) || fuelOut || Boolean(travelOffer) || Boolean(serviceOffer) || Boolean(dealerOffer) || towAsk || keysOpen || Boolean(bankOffer)) && driving);
+  }, [settingsOpen, exitConfirm, eventOffer, eventResult, bountyOffer, rideOffer, fuelOut, travelOffer, serviceOffer, dealerOffer, towAsk, keysOpen, bankOffer, driving]);
   useEffect(() => {
     drivingRef.current = driving;
     if (!driving) {
@@ -489,7 +537,8 @@ export default function Game() {
       setStatusToast('');
       setEventOffer(null);
       setEventResult(null);
-      // menu: keep the player plaque in the corner (money + full HP)
+      setRideOffer(null);
+      // menu: keep the player plaque in the corner (purse + full HP)
       if (rosterRef.current) {
         syncRoster(rosterRef.current, rosterStoreRef.current, [{
           id: 'player',
@@ -497,14 +546,14 @@ export default function Game() {
           color: '',
           hp: 1000,
           maxHp: 1000,
-          money: STARTING_CASH,
+          money: purse,
           wins: 0,
         }]);
       } else {
         engine.current?.joinNetwork(shownName);
       }
     }
-  }, [driving, playerName, defaultName, shownName]);
+  }, [driving, playerName, defaultName, shownName, purse]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.code === 'Escape') {
@@ -548,7 +597,7 @@ export default function Game() {
       }
       if (e.code !== 'KeyW' || e.repeat) return;
       if (drivingRef.current || !booted) return;
-      if (carPrice(cars[car]) > STARTING_CASH) return;
+      if (!(garageIds.includes(cars[car].id) || carPrice(cars[car]) <= purse)) return;
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement) return;
       e.preventDefault();
       setApproaching(true);
@@ -599,32 +648,36 @@ export default function Game() {
   const askExit = () => setExitConfirm(true);
   const cancelExit = () => setExitConfirm(false);
   const confirmExit = () => {
-    clearSave();
-    engine.current?.resetRun();
+    // Same intro as a reload: keep money / garage, calm map — do not wipe the run.
+    stashProgress();
+    engine.current?.leaveToMenu();
     setExitConfirm(false);
     setSettingsOpen(false);
     setDriving(false);
     setApproaching(false);
-    setSpawnPin(null);
     setFuelOut(false);
     setTravelOffer(null);
     setServiceOffer(null);
     setDealerOffer(null);
     setBountyOffer(null);
+    setRideOffer(null);
+    setBankOffer(null);
     setEventOffer(null);
     setEventResult(null);
-    setCar(cheapestCarIndex());
-    carryRef.current = null;
   };
 
-  // keep mid-drive progress so a refresh lands back on the road
+  // Persist progress while driving so a refresh returns to the same intro + purse
   useEffect(() => {
     if (!driving) return;
     const persist = () => {
       const game = engine.current;
       // null while the engine is still booting — keep the old save untouched
       const save = game?.snapshot({ name: place.name, country: place.country, coords: place.coords });
-      if (save) writeSave(save);
+      if (save) {
+        writeSave(save);
+        setPurse(save.money);
+        if (save.garage) setGarageIds(save.garage);
+      }
     };
     persist();
     const id = window.setInterval(persist, 2500);
@@ -640,13 +693,15 @@ export default function Game() {
 
   const query = search.trim().toLowerCase();
   const starterPrice = carPrice(cars[car]);
-  const canBuyStarter = starterPrice <= STARTING_CASH;
+  const ownsStarter = garageIds.includes(cars[car].id);
+  const canBuyStarter = ownsStarter || starterPrice <= purse;
   const chosen = (c: City) => c.name === place.name && Math.abs(c.coords[0] - place.coords[0]) < 1e-4 && Math.abs(c.coords[1] - place.coords[1]) < 1e-4;
   const option = (c: City) => (
     <button
       key={c.name + '|' + c.coords[0].toFixed(3) + '|' + c.coords[1].toFixed(3)}
       className={'city-option ' + (chosen(c) ? 'selected' : '')}
       onClick={() => {
+        stashProgress(c);
         setPlace(c);
         setSearch(c.name);
         setSearchOpen(false);
@@ -661,6 +716,9 @@ export default function Game() {
     </button>
   );
 
+  const mapLabelMid = Math.ceil(MAP_LABEL_KINDS.length / 2);
+  const mapLabelRows = [MAP_LABEL_KINDS.slice(0, mapLabelMid), MAP_LABEL_KINDS.slice(mapLabelMid)];
+
   return (
     <main className={`game-shell${driving ? ' is-driving' : ''}`} data-theme={settings.theme}>
       <div ref={host} className="map" />
@@ -672,103 +730,116 @@ export default function Game() {
         </div>
       </div>
       {perfOn && <PerfOverlay mode={t('settings.stats')} perf={perf} bench={bench} onBench={runBench} />}
-      {!booted && (
-        <div className="map-loader" aria-live="polite">
-          <span className="live-dot" />
-          <span>{status || t('loading.city')}</span>
+      {!driving && (
+        <div className={`brand-stage${!booted ? ' is-booting' : ''}`}>
+          {!booted && <div className="map-loader-bg" aria-hidden="true" />}
+          <div className="brand-stage-stack">
+            <a className="brand stage-brand" href="/" aria-label="City Rider">
+              <span className="brand-icon">↗</span> city rider
+            </a>
+            {!booted ? (
+              <div className="brand-stage-slot" aria-live="polite">
+                <div className="boot-preload">
+                  <span className="live-dot" />
+                  <span>{status || t('loading.city')}</span>
+                </div>
+              </div>
+            ) : (
+              <section className="intro">
+                <div className="trip-card">
+                  <input
+                    className="ui-input"
+                    aria-label={t('net.name')}
+                    placeholder={defaultName}
+                    maxLength={24}
+                    value={playerName}
+                    onChange={e => {
+                      const value = e.target.value;
+                      setPlayerName(value);
+                      try { localStorage.setItem('cityRider.name', value.trim()); } catch { /* private mode */ }
+                      engine.current?.joinNetwork(value.trim() || defaultName);
+                    }}
+                  />
+                  <CarCarousel index={car} onIndex={setCar}>
+                    <div className="car-deal">
+                      <span>{t('dealer.price')}</span>
+                      <strong className={canBuyStarter ? undefined : 'is-broke'}><Price value={starterPrice} /></strong>
+                    </div>
+                  </CarCarousel>
+                  <div className="city-search">
+                    <label className="search">
+                      <input
+                        className="ui-input"
+                        aria-label={t('intro.destination')}
+                        placeholder={t('intro.destination')}
+                        value={search}
+                        onFocus={() => setSearchOpen(search.trim().length >= 2)}
+                        onChange={e => {
+                          const value = e.target.value;
+                          setSearch(value);
+                          setSearchOpen(value.trim().length >= 2);
+                        }}
+                      />
+                    </label>
+                    {searchOpen && query.length >= 2 && (
+                      <div className="city-list">
+                        {found.map(option)}
+                        {looking && <p className="empty">{t('search.looking')}</p>}
+                        {!looking && searchFailed && <p className="empty">{t('search.failed')}</p>}
+                        {!looking && !searchFailed && !found.length && <p className="empty">{t('search.none')}</p>}
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    className="ui-btn drive"
+                    disabled={!canBuyStarter}
+                    title={canBuyStarter ? undefined : t('dialog.broke')}
+                    onClick={() => { setApproaching(true); setDriving(true); setSettingsOpen(false); }}
+                  >
+                    {t('drive')}
+                  </button>
+                </div>
+              </section>
+            )}
+          </div>
         </div>
       )}
-      <header className={driving ? 'game-header is-driving' : 'game-header'}>
-        <a className="brand" href="/" aria-label="City Rider">
-          <span className="brand-icon">↗</span> city rider
-        </a>
-      </header>
+      <header className={driving ? 'game-header is-driving' : 'game-header'} />
+      {booted && mapViewOpen && (
+        <div className="map-label-filters" role="toolbar" aria-label={t('map.labels')}>
+          {mapLabelRows.map((row, rowIndex) => (
+            <div key={rowIndex} className="map-label-row">
+              {row.map((kind, index) => {
+                const on = mapLabels[kind];
+                return (
+                  <span key={kind} className="map-label-item">
+                    {index > 0 && <span className="map-label-sep" aria-hidden>·</span>}
+                    <button
+                      type="button"
+                      className={`map-label-chip is-${kind}${on ? '' : ' is-off'}`}
+                      aria-pressed={on}
+                      onClick={() => toggleMapLabel(kind)}
+                    >
+                      {t(mapLabelMessageKey(kind))}
+                    </button>
+                  </span>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      )}
+      {booted && (
+        <div className="clock-hud" aria-hidden="true">
+          <span className="local-clock" ref={clockRef} />
+        </div>
+      )}
       <div className="meta-hud" aria-hidden="true">
         <span className="fps" ref={fpsRef}>— FPS</span>
-        <span className="local-clock" ref={clockRef} />
       </div>
       <div className="roster-hud" ref={rosterRef} aria-label={t('hud.racers')} />
 
-      {!driving ? (
-        <>
-          <section className="intro">
-            <div className="trip-card">
-              <input
-                className="ui-input"
-                aria-label={t('net.name')}
-                placeholder={defaultName}
-                maxLength={24}
-                value={playerName}
-                onChange={e => {
-                  const value = e.target.value;
-                  setPlayerName(value);
-                  try { localStorage.setItem('cityRider.name', value.trim()); } catch { /* private mode */ }
-                  engine.current?.joinNetwork(value.trim() || defaultName);
-                }}
-              />
-              <div className="city-search">
-                <label className="search">
-                  <input
-                    className="ui-input"
-                    aria-label={t('intro.destination')}
-                    placeholder={t('intro.destination')}
-                    value={search}
-                    onFocus={() => setSearchOpen(search.trim().length >= 2)}
-                    onChange={e => {
-                      const value = e.target.value;
-                      setSearch(value);
-                      setSearchOpen(value.trim().length >= 2);
-                    }}
-                  />
-                </label>
-                {searchOpen && query.length >= 2 && (
-                  <div className="city-list">
-                    {found.map(option)}
-                    {looking && <p className="empty">{t('search.looking')}</p>}
-                    {!looking && searchFailed && <p className="empty">{t('search.failed')}</p>}
-                    {!looking && !searchFailed && !found.length && <p className="empty">{t('search.none')}</p>}
-                  </div>
-                )}
-              </div>
-              <CarCarousel index={car} onIndex={setCar}>
-                <div className="car-deal">
-                  <span>{t('dealer.price')}</span>
-                  <strong className={canBuyStarter ? undefined : 'is-broke'}><Price value={starterPrice} /></strong>
-                </div>
-              </CarCarousel>
-              <button
-                className="ui-btn drive"
-                disabled={!booted || !canBuyStarter}
-                title={canBuyStarter ? undefined : t('dialog.broke')}
-                onClick={() => { setApproaching(true); setDriving(true); setSettingsOpen(false); }}
-              >
-                {t('drive')}
-              </button>
-            </div>
-          </section>
-          {booted && (
-            <div className="map-hint" role="status">
-              {spawnPin
-                ? <>
-                    <span>📍 {t('spawn.chosen')}</span>
-                    <button type="button" className="map-hint-action" onClick={() => { engine.current?.clearCustomSpawn(); }}>{t('spawn.reset')}</button>
-                  </>
-                : <span>{t('spawn.hint')}</span>}
-            </div>
-          )}
-          <aside className="destination">
-            <span className="eyebrow">{t('next.stop')}</span>
-            <h2>{place.name}<span>↗</span></h2>
-            <div className="coordinates">
-              {Math.abs(place.coords[1]).toFixed(4)}° {place.coords[1] < 0 ? 'S' : 'N'} &nbsp; {Math.abs(place.coords[0]).toFixed(4)}° {place.coords[0] < 0 ? 'W' : 'E'}
-            </div>
-          </aside>
-          <footer>
-            <span>{t('tagline')}</span>
-            <span>{t('tagline.sub')}</span>
-          </footer>
-        </>
-      ) : !approaching ? (
+      {driving && !approaching ? (
         <>
           <FuelGauge subscribe={subscribeFuel} />
           <NetHud subscribe={subscribeNet} send={sendChat} />
@@ -903,7 +974,7 @@ export default function Game() {
 
       {bountyOffer && driving && !settingsOpen && (
         <Dialog
-          title={<>🎯 {t('bounty.title')}</>}
+          title={t('bounty.title')}
           actions={<>
             <button type="button" className="ui-btn" autoFocus onClick={() => engine.current?.acceptBounty()}>{t('bounty.take')}</button>
             <button type="button" className="ui-btn is-ghost" onClick={() => engine.current?.declineBounty()}>{t('bounty.later')}</button>
@@ -914,11 +985,32 @@ export default function Game() {
         </Dialog>
       )}
 
-      {eventOffer && !settingsOpen && !eventResult && (
+      {rideOffer && driving && !settingsOpen && (
+        <Dialog
+          title={t(rideOffer.kind === 'bus' ? 'bus.offer.title' : 'taxi.offer.title')}
+          actions={<>
+            <button type="button" className="ui-btn" autoFocus onClick={() => engine.current?.acceptRide()}>
+              {t(rideOffer.kind === 'bus' ? 'bus.take' : 'taxi.take')}
+            </button>
+            <button type="button" className="ui-btn is-ghost" onClick={() => engine.current?.declineRide()}>
+              {t(rideOffer.kind === 'bus' ? 'bus.later' : 'taxi.later')}
+            </button>
+          </>}
+        >
+          <p className="ui-text">
+            {rideOffer.kind === 'bus'
+              ? t('bus.offer.text', { n: formatNumber(rideOffer.n), place: rideOffer.place, km: formatNumber(rideOffer.km) })
+              : t('taxi.offer.text', { km: formatNumber(rideOffer.km) })}
+          </p>
+          <div className="ui-row ui-wallet is-reward"><span>{t('bounty.reward')}</span><Price value={rideOffer.reward} /></div>
+        </Dialog>
+      )}
+
+      {eventOffer && driving && !settingsOpen && !eventResult && (
         <Dialog
           title={t(`event.${eventOffer.kind}`)}
           actions={<>
-            <button type="button" className="ui-btn" onClick={() => engine.current?.acceptEvent()}>
+            <button type="button" className="ui-btn" autoFocus onClick={() => engine.current?.acceptEvent()}>
               {eventOffer.kind === 'delivery' || eventOffer.kind === 'collect' ? t('event.take') : t('event.play')}
             </button>
             <button type="button" className="ui-btn is-ghost" onClick={() => engine.current?.declineEvent()}>{t('event.later')}</button>
@@ -926,51 +1018,65 @@ export default function Game() {
         >
           <p className="ui-text">
             {eventOffer.kind === 'delivery'
-              ? priced('event.delivery.text', { reward: eventOffer.reward ?? 0 }, { item: t(`item.${eventOffer.item ?? 'box'}`), km: formatNumber(eventOffer.km ?? 0) })
+              ? t('event.delivery.text', { item: t(`item.${eventOffer.item ?? 'box'}`), km: formatNumber(eventOffer.km ?? 0) })
               : eventOffer.kind === 'collect'
-                ? priced('event.collect.text', { reward: eventOffer.reward ?? 0 }, { n: eventOffer.boxes ?? 10 })
-                : t(`event.${eventOffer.kind}.text`)}
+                ? t('event.collect.text', { n: eventOffer.boxes ?? 10 })
+                : eventOffer.kind === 'arena'
+                  ? t('event.arena.text', { fee: formatNumber(ARENA_FEE) })
+                  : eventOffer.kind === 'race'
+                    ? t('event.race.text', { fee: formatNumber(RACE_FEE) })
+                    : t(`event.${eventOffer.kind}.text`)}
           </p>
-        </Dialog>
-      )}
-
-      {eventResult && driving && !settingsOpen && (
-        <Dialog
-          title={
-            eventResult.kind === 'hijack' ? t('hijack.title')
-              : eventResult.kind === 'heist' ? t('heist.title')
-                : eventResult.kind === 'fire' ? t('event.fire')
-                  : eventResult.kind === 'impound' ? t('event.impound')
-                    : t(`event.${eventResult.kind}`)
-          }
-          tone={eventResult.won ? 'default' : 'alert'}
-          onBackdrop={() => setEventResult(null)}
-          actions={
-            <button type="button" className="ui-btn" autoFocus onClick={() => setEventResult(null)}>{t('event.result.ok')}</button>
-          }
-        >
-          <p className="ui-text">
-            {eventResult.kind === 'delivery'
-              ? priced('delivery.won', { reward: eventResult.cash ?? 0 }, { item: eventResult.name ?? '' })
-              : eventResult.kind === 'collect'
-              ? priced('collect.won', { reward: eventResult.cash ?? 0 })
-              : eventResult.kind === 'fire'
-              ? priced('fire.won', { reward: eventResult.cash ?? 0 }, { n: eventResult.name ?? '' })
-              : eventResult.kind === 'impound'
-              ? priced('impound.won', { reward: eventResult.cash ?? 0 })
-              : eventResult.kind === 'hijack'
-              ? priced('hijack.sold', { cash: eventResult.cash ?? 0 }, { car: eventResult.name ?? '' })
-              : eventResult.kind === 'heist'
-              ? priced('heist.escaped', { cash: eventResult.cash ?? 0 })
-              : eventResult.kind === 'arena'
-                ? (eventResult.won ? t('arena.won') : t('arena.lost'))
-                : (eventResult.won ? t('race.won') : t('race.lost', { name: eventResult.name ?? '' }))}
-          </p>
-          {(eventResult.kind === 'fire' || eventResult.kind === 'impound') && eventResult.won && (
-            <div className="ui-row ui-wallet is-reward"><span>{t('bounty.reward')}</span><Price value={eventResult.cash ?? 0} /></div>
+          {eventOffer.reward != null && (
+            <div className="ui-row ui-wallet is-reward"><span>{t('bounty.reward')}</span><Price value={eventOffer.reward} /></div>
           )}
         </Dialog>
       )}
+
+      {eventResult && driving && !settingsOpen && (() => {
+        const busParts = eventResult.kind === 'bus' ? (eventResult.name ?? '').split(':') : null;
+        const busStop = Boolean(busParts && busParts[0] !== 'tour');
+        const cash = eventResult.cash ?? 0;
+        const title =
+          eventResult.kind === 'hijack' ? t('hijack.title')
+            : eventResult.kind === 'heist' ? t('heist.title')
+              : eventResult.kind === 'bounty' ? t('bounty.title')
+                : eventResult.kind === 'fire' ? t('event.fire')
+                  : eventResult.kind === 'impound' ? t('event.impound')
+                    : eventResult.kind === 'taxi' ? t('event.taxi')
+                      : eventResult.kind === 'bus' ? t('event.bus')
+                        : t(`event.${eventResult.kind}`);
+        const text = busStop
+          ? t(busParts![0] === 'alight' ? 'bus.alight' : 'bus.board', {
+              n: busParts![1] || String(Math.max(1, Math.round(cash / 10))),
+            })
+          : eventResult.kind === 'hijack' && eventResult.won
+            ? t('hijack.won', { car: eventResult.name ?? '' })
+            : eventResult.kind === 'heist' && eventResult.won
+              ? t('heist.won')
+              : eventResult.kind === 'bounty' && !eventResult.won
+                ? t('bounty.escaped', { name: eventResult.name ?? '' })
+                : eventResult.kind === 'arena' && !eventResult.won
+                  ? t('arena.lost')
+                  : eventResult.kind === 'race' && !eventResult.won
+                    ? t('race.lost', { name: eventResult.name ?? '' })
+                    : t('event.success');
+        return (
+          <Dialog
+            title={title}
+            tone={eventResult.won ? 'default' : 'alert'}
+            onBackdrop={() => setEventResult(null)}
+            actions={
+              <button type="button" className="ui-btn" autoFocus onClick={() => setEventResult(null)}>{t('event.result.ok')}</button>
+            }
+          >
+            <p className="ui-text">{text}</p>
+            {eventResult.won && cash > 0 && (
+              <div className="ui-row ui-wallet is-reward"><span>+ <Price value={cash} /></span></div>
+            )}
+          </Dialog>
+        );
+      })()}
     </main>
   );
 }

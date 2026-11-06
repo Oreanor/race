@@ -1,25 +1,39 @@
-import { BurningHouse, type FirePaneSpec } from './BurningHouse';
+import { BurningHouse } from './BurningHouse';
 import { TireTracks } from './TireTracks';
 import { WorldParticles, type Enu, type Surface } from './effects/WorldParticles';
 import { fireEye, WreckFire } from './effects/WreckFire';
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import type { MapLayer, ThreeMap } from '@/world3d/map/ThreeMap';
+import type { ThreeMap } from '@/world3d/map/ThreeMap';
 import { mercatorPerMeter, mercatorX01, mercatorY01 } from '@/world3d/map/camera';
 import type { Car } from '@/config/vehicle.config';
-import { offsetPosition, type Position } from '@/game/VehicleController';
+import { METERS_PER_DEGREE, offsetPosition, type Position } from '@/game/VehicleController';
+
 import type { Pose } from '@/game/VehiclePose';
 import { t } from '@/i18n';
+import {
+  DROP_MS,
+  type AimPoint,
+  type PickupVisual,
+  type RemoteCar,
+  type TargetHealth,
+  type TargetVehicle,
+  type VehicleSceneLayer,
+} from './vehicleLayer/types';
+import {
+  WATER_TRUCK_ID,
+  applyBeaconPower,
+  disposeObject,
+  faceHalos,
+  fallbackCar,
+  loadCar,
+} from './vehicleLayer/carModel';
+import { eastNorth, puffMesh, smokeTexture } from './vehicleLayer/geo';
+import { colorsForBeacon, makeBeacon, makeBox, makeCash, makeCoin } from './vehicleLayer/missionVisuals';
 
-export type TargetVehicle = { id: string; driver: string; car: Car; position: Position; heading: number };
-/** Another player's car (multiplayer): drawn only, never shot or hit here. Altitude in meters as drawn. */
-export type RemoteCar = { id: string; car: Car; position: Position; heading: number; altitude: number; pitch: number; roll: number; hp?: number };
-export type TargetHealth = { id: string; driver: string; color: string; hp: number; maxHp: number };
-/** `drop`: a coin thrown out of a wreck — it flies from `from` to `position` from time `at`, bouncing */
-export type PickupVisual = { id: string; position: Position; color: string; kind?: 'ball' | 'coin' | 'cash' | 'box'; drop?: { from: Position; at: number; up?: number } };
+export type { AimPoint, PickupVisual, RemoteCar, TargetHealth, TargetVehicle, VehicleSceneLayer } from './vehicleLayer/types';
+export { DROP_MS } from './vehicleLayer/types';
+export { disposeObject, loadCar, polish } from './vehicleLayer/carModel';
 
-/** how long a coin from a wreck bounces and rolls before it lies still (ms) */
-export const DROP_MS = 1300;
 type DeathPhase = 'tumble' | 'burn' | 'wreck';
 type CharMat = { material: THREE.MeshPhongMaterial; r: number; g: number; b: number };
 type TargetState = TargetVehicle & {
@@ -47,315 +61,6 @@ type TargetState = TargetVehicle & {
   /** the ground under it (m), its own: a bot under a bridge stays under it */
   altitude: number | null;
 };
-export type AimPoint = { ground: Position; screen: [number, number] };
-export type VehicleSceneLayer = MapLayer & {
-  /** host-drawn mode: the host renders `scene` placed by `placement` (local → mercator) */
-  scene: THREE.Scene;
-  placement: THREE.Matrix4;
-  fuse: () => void;
-  /** headlamp glow, 0 off … 1 full (night) */
-  setHeadlights: (on: number) => void;
-  setAim: (aim: AimPoint | null) => void;
-  /** what the cursor points at as the camera sees it: the first wall on its ray, else the ground */
-  aimTarget: () => { position: Position; altitude: number; wall: boolean } | null;
-  setFiring: (firing: boolean) => void;
-  flashPlayer: (duration: number) => void;
-  /** a hunting target fires at our car: muzzle flash, a tracer, and sparks on us or beside us */
-  enemyShot: (fromId: string, hit: boolean) => void;
-  /** our engine is on fire (a disabled car): smoke and sparks from the hood, call every frame */
-  burnPlayer: () => void;
-  setCar: (next: Car) => void;
-  /** our police lights on (flashing) or off */
-  setBeacons: (on: boolean) => void;
-  setTargets: (vehicles: TargetVehicle[]) => void;
-  /** targets beside the missions' (shared traffic, test cars): by id, never counted for a mission */
-  setExtraTargets: (vehicles: TargetVehicle[]) => void;
-  /** a target's health as its owner says (shared traffic); 0 blows it up */
-  setTargetHp: (id: string, hp: number) => void;
-  targetHp: (id: string) => number | null;
-  /** the extra targets still standing, for the HUD's health meters */
-  extraHealth: () => (TargetHealth & { position: Position })[];
-  /** our bullet hit a target */
-  onTargetHit: (id: string) => void;
-  /** any target blew up (shot, rammed, or reported by its owner) */
-  onTargetDestroyed: (id: string, position: Position) => void;
-  /** our bullet hit a vintage train here */
-  onTrainCoin: (point: Position, altitude: number) => void;
-  /** other players, every frame; cars come and go with the list */
-  setRemotes: (cars: RemoteCar[]) => void;
-  /** our bullet hit another player's car */
-  /** true when the hit counts (no damage, e.g. on a player busy on a mission: no red flash) */
-  onRemoteHit: (id: string) => boolean;
-  /** our own car blows up (another player got us): a burst on the spot */
-  explodePlayer: () => void;
-  updateTargets: (vehicles: TargetVehicle[]) => void;
-  flashTarget: (id: string, duration: number) => void;
-  damageTarget: (id: string, amount: number) => boolean;
-  aliveTargetCount: () => number;
-  isTargetAlive: (id: string) => boolean;
-  targetHealth: () => TargetHealth[];
-  setPickups: (pickups: PickupVisual[]) => void;
-  /** move a pickup already shown (the hauler's cable reels it in) */
-  movePickup: (id: string, position: Position) => void;
-  setMissionBeacons: (beacons: {
-    id: string;
-    position: Position;
-    kind?: 'arena' | 'race' | 'bounty' | 'fire' | 'impound';
-    colors?: { pole: string; glow: string; orb: string };
-  }[]) => void;
-  setRaceFinish: (goal: Position | null) => void;
-  /** fire call: ignite these existing-façade panes; null clears */
-  setFireHouse: (site: { panes: FirePaneSpec[] } | null) => void;
-  /** panes still burning (null if no house) */
-  fireWindowsLeft: () => number | null;
-  /** called when a burning pane is put out for the first time */
-  onFireWindowOut: (left: number) => void;
-  /** the hauler: a car of ours held at this pose (`up`: m above our car), drawn there and not on its own ground */
-  setCarried: (pose: { id: string; position: Position; heading: number; up: number; pitch?: number } | null) => void;
-  /** the hauler's cable from our car's middle to a point (`up`: m above our car); `wave`: 0 taut … 1 whipping; null hides it */
-  setCable: (to: { position: Position; up: number; wave?: number } | null) => void;
-  /** the J ramp: low edge at `position`, rising along `heading`; null takes it away */
-  setRamp: (ramp: { position: Position; heading: number; ground: number; tilt: number; length: number; height: number; width: number } | null) => void;
-};
-
-export function disposeObject(object: THREE.Object3D) {
-  object.traverse((child) => {
-    if (!(child instanceof THREE.Mesh)) return;
-    child.geometry.dispose();
-    if (child.userData.beacon) return; // police lamps share their materials
-    const materials = Array.isArray(child.material) ? child.material : [child.material];
-    for (const material of materials) {
-      for (const value of Object.values(material)) if (value instanceof THREE.Texture) value.dispose();
-      material.dispose();
-    }
-  });
-}
-
-function glossy(material: THREE.Material) {
-  const source = material as THREE.MeshStandardMaterial;
-  const paint = new THREE.MeshPhongMaterial({
-    map: source.map ?? null,
-    color: source.color ?? new THREE.Color('#ffffff'),
-    shininess: 62,
-    specular: new THREE.Color('#d8dde8'),
-    reflectivity: 0.28,
-  });
-  source.map = null;
-  source.dispose();
-  return paint;
-}
-
-export function polish(object: THREE.Object3D) {
-  object.traverse((child) => {
-    if (!(child instanceof THREE.Mesh)) return;
-    const current = Array.isArray(child.material) ? child.material : [child.material];
-    const next = current.map(glossy);
-    child.material = Array.isArray(child.material) ? next : next[0];
-  });
-}
-
-export async function loadCar(car: Car) {
-  const gltf = await new GLTFLoader().loadAsync(car.path);
-  const model = gltf.scene;
-  const box = new THREE.Box3().setFromObject(model);
-  const size = box.getSize(new THREE.Vector3());
-  const center = box.getCenter(new THREE.Vector3());
-  const scale = car.length / Math.max(size.x, size.z);
-  model.position.set(-center.x, -box.min.y, -center.z);
-  const group = new THREE.Group();
-  group.add(model);
-  group.scale.setScalar(scale);
-  const root = new THREE.Group();
-  root.add(group);
-  root.rotation.y = car.yaw;
-  polish(root);
-  addBeacons(root, car, size, scale);
-  // the body's width (its shorter side once scaled), for where its wheels leave their tracks
-  root.userData.width = Math.min(size.x, size.z) * scale;
-  return root;
-}
-
-/**
- * Police lights on the roof: the Chevy (Fleetline Police) one red lamp in the middle, the
- * Volga (GAZ-24 militia) the red one plus a blue on each side. Red and blue take turns.
- */
-const POLICE_LIGHTS: Record<string, ('red' | 'blue')[]> = {
-  '09': ['red'],
-  '16': ['blue', 'red', 'blue'],
-};
-/** Holds LMB for a water jet instead of bullets. */
-const WATER_TRUCK_ID = '18';
-/**
- * A model with its own roof lamps: only the glow goes on, over those lamps — `forward`
- * of the car's middle (m) and `drop` below the model's top (m). Others get lamp boxes on top.
- */
-const BEACON_FIT: Record<string, { forward: number; drop: number }> = {
-  '09': { forward: 0.15, drop: 0.16 }, // Fleetline: its red lamp on the front of the roof
-  '16': { forward: 0.35, drop: 0.2 }, // Volga: blue, red, blue over the windscreen
-};
-const beaconMats = {
-  red: new THREE.MeshBasicMaterial({ color: '#ff2a1f', transparent: true }),
-  blue: new THREE.MeshBasicMaterial({ color: '#2f6dff', transparent: true }),
-};
-/** a switched-off lamp: its colour, dull and still */
-const beaconOffMats = {
-  red: new THREE.MeshBasicMaterial({ color: '#5a1a16' }),
-  blue: new THREE.MeshBasicMaterial({ color: '#1a2a52' }),
-};
-const haloTexture = (() => {
-  if (typeof document === 'undefined') return null;
-  const c = document.createElement('canvas');
-  c.width = c.height = 64;
-  const g = c.getContext('2d')!;
-  const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
-  grad.addColorStop(0, 'rgba(255,255,255,1)');
-  grad.addColorStop(0.35, 'rgba(255,255,255,0.45)');
-  grad.addColorStop(1, 'rgba(255,255,255,0)');
-  g.fillStyle = grad;
-  g.fillRect(0, 0, 64, 64);
-  return new THREE.CanvasTexture(c);
-})();
-// The glow of a lamp: a flat card turned to the camera every frame (render() below).
-// Not a Sprite: this layer's camera is all in one projection matrix, so a sprite would
-// not know where the eye is and stand still, edge-on from the side, gone from behind.
-const haloMats = {
-  red: new THREE.MeshBasicMaterial({ map: haloTexture, color: '#ff3b2e', transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }),
-  blue: new THREE.MeshBasicMaterial({ map: haloTexture, color: '#3d7bff', transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }),
-};
-const haloGeometry = new THREE.PlaneGeometry(1, 1);
-const haloEye = new THREE.Vector3();
-/** on/off of each colour now: red and blue alternate, ~2.5 flashes a second */
-function beaconLevel(color: 'red' | 'blue') {
-  const t = performance.now() / 400;
-  const phase = (t % 1) < 0.5;
-  return (color === 'red') === phase ? 1 : 0.08;
-}
-/**
- * Turn every glow card in `scene` to face `eye` (both in the scene's own frame). Built here
- * from the axes (to the eye, and upright) rather than with lookAt: the scene itself is
- * placed on the map through a mirrored matrix, and lookAt works in that world frame.
- */
-const haloParent = new THREE.Quaternion(), haloAxes = new THREE.Matrix4(), haloPos = new THREE.Vector3();
-const haloX = new THREE.Vector3(), haloY = new THREE.Vector3(), haloZ = new THREE.Vector3(), haloUp = new THREE.Vector3(0, 1, 0);
-function faceHalos(scene: THREE.Scene, eye: THREE.Vector3) {
-  scene.traverse((halo) => {
-    if (!halo.userData.halo || !halo.visible) return;
-    // its place and its parents' turn, from the scene down (no scene matrix in it)
-    haloParent.identity();
-    const chain: THREE.Object3D[] = [];
-    for (let o = halo.parent; o && o !== scene; o = o.parent) { o.updateMatrix(); chain.unshift(o); }
-    haloPos.copy(halo.position);
-    for (let i = chain.length - 1; i >= 0; i--) haloPos.applyMatrix4(chain[i].matrix);
-    for (const o of chain) haloParent.multiply(o.quaternion);
-    haloZ.subVectors(eye, haloPos).normalize();
-    haloX.crossVectors(haloUp, haloZ);
-    if (haloX.lengthSq() < 1e-8) haloX.set(1, 0, 0); else haloX.normalize();
-    haloY.crossVectors(haloZ, haloX);
-    haloAxes.makeBasis(haloX, haloY, haloZ);
-    halo.quaternion.setFromRotationMatrix(haloAxes).premultiply(haloParent.invert());
-  });
-}
-
-function addBeacons(root: THREE.Group, car: Car, size: THREE.Vector3, scale: number) {
-  const lights = POLICE_LIGHTS[car.id];
-  if (!lights) return;
-  // the model before the yaw: its long side along x or z; across it is the other one
-  const alongX = size.x >= size.z;
-  const fit = BEACON_FIT[car.id];
-  const top = fit ? size.y * scale - fit.drop : size.y * scale + 0.06;
-  // forward is −x of the model (its yaw turns −x to the car's nose)
-  const along = fit ? -fit.forward : 0;
-  const spread = Math.min(size.x, size.z) * scale * 0.26;
-  lights.forEach((color, i) => {
-    const offset = (i - (lights.length - 1) / 2) * spread;
-    const at = new THREE.Vector3(alongX ? along : offset, top, alongX ? offset : along);
-    if (!fit) {
-      const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.14, 0.2), beaconMats[color]);
-      lamp.position.copy(at);
-      lamp.userData.beacon = true;
-      lamp.userData.color = color;
-      lamp.onBeforeRender = () => { beaconMats[color].opacity = 0.35 + 0.65 * beaconLevel(color); };
-      root.add(lamp);
-    }
-    const halo = new THREE.Mesh(haloGeometry, haloMats[color]);
-    halo.scale.setScalar(1.6);
-    halo.userData.halo = true;
-    halo.position.copy(at);
-    halo.renderOrder = 9;
-    halo.userData.beacon = true;
-    halo.onBeforeRender = (_renderer, _scene, camera) => {
-      haloMats[color].opacity = beaconLevel(color);
-      // a real camera (the car previews in the menu and the showroom): face it here; in the
-      // game the layer's camera is only a projection, and render() turns the glows itself
-      if ((camera as THREE.PerspectiveCamera).isPerspectiveCamera) {
-        halo.lookAt(camera.getWorldPosition(haloEye));
-        halo.updateMatrixWorld();
-      }
-    };
-    root.add(halo);
-  });
-}
-
-function fallbackCar(color: string) {
-  const root = new THREE.Group();
-  const body = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.65, 4.2), new THREE.MeshStandardMaterial({ color }));
-  body.position.y = 0.7;
-  root.add(body);
-  const top = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.65, 2), new THREE.MeshStandardMaterial({ color: '#5a7475' }));
-  top.position.set(0, 1.3, -0.2);
-  root.add(top);
-  for (const x of [-0.9, 0.9]) for (const z of [-1.3, 1.3]) {
-    const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 0.25, 16), new THREE.MeshStandardMaterial({ color: '#232b2b', roughness: 0.85, metalness: 0 }));
-    wheel.rotation.z = Math.PI / 2;
-    wheel.position.set(x, 0.35, z);
-    root.add(wheel);
-  }
-  polish(root);
-  return root;
-}
-
-const earth = 6378137;
-
-function eastNorth(origin: Position, point: Position) {
-  const lat = origin[1] * Math.PI / 180;
-  return {
-    east: (point[0] - origin[0]) * Math.PI / 180 * earth * Math.cos(lat),
-    north: (point[1] - origin[1]) * Math.PI / 180 * earth,
-  };
-}
-
-function smokeTexture() {
-  const canvas = document.createElement('canvas');
-  canvas.width = 64;
-  canvas.height = 64;
-  const draw = canvas.getContext('2d')!;
-  const glow = draw.createRadialGradient(32, 32, 2, 32, 32, 31);
-  glow.addColorStop(0, 'rgba(255,255,255,0.9)');
-  glow.addColorStop(0.4, 'rgba(236,236,232,0.45)');
-  glow.addColorStop(1, 'rgba(255,255,255,0)');
-  draw.fillStyle = glow;
-  draw.fillRect(0, 0, 64, 64);
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  return texture;
-}
-
-function puffMesh(texture: THREE.Texture) {
-  const material = new THREE.MeshBasicMaterial({ map: texture, color: '#8b887f', transparent: true, depthWrite: false, depthTest: false, side: THREE.DoubleSide, opacity: 0 });
-  const flat = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), material);
-  flat.rotation.x = -Math.PI / 2;
-  const upright = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), material);
-  const cross = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), material);
-  cross.rotation.y = Math.PI / 2;
-  const group = new THREE.Group();
-  for (const mesh of [flat, upright, cross]) {
-    mesh.frustumCulled = false;
-    mesh.renderOrder = 3;
-    group.add(mesh);
-  }
-  group.visible = false;
-  return group;
-}
 
 export function vehicleLayer(
   car: Car,
@@ -452,77 +157,12 @@ export function vehicleLayer(
   const targets = new Map<string, TargetState>();
   const pickups = new Map<string, { position: Position; mesh: THREE.Object3D; phase: number; coin: boolean; ground: number | null; drop?: { from: Position; at: number; up?: number } }>();
   const pickupGeometry = new THREE.SphereGeometry(0.38, 16, 12);
-  // a gold coin 1 m across, standing on its edge: disc, raised rim, a star on both faces
-  const coinParts = (() => {
-    const gold = new THREE.MeshStandardMaterial({ color: '#ffd54a', emissive: '#c88a10', emissiveIntensity: 0.45, metalness: 0.25, roughness: 0.3 });
-    const deep = new THREE.MeshStandardMaterial({ color: '#f0b62a', emissive: '#a06c08', emissiveIntensity: 0.4, metalness: 0.2, roughness: 0.35 });
-    const disc = new THREE.CylinderGeometry(0.5, 0.5, 0.09, 40).rotateX(Math.PI / 2);
-    const rim = new THREE.TorusGeometry(0.46, 0.045, 8, 40);
-    const star = new THREE.Shape();
-    for (let i = 0; i < 10; i++) {
-      const r = i % 2 ? 0.12 : 0.27;
-      const a = Math.PI / 2 + i * Math.PI / 5;
-      if (i) star.lineTo(Math.cos(a) * r, Math.sin(a) * r);
-      else star.moveTo(Math.cos(a) * r, Math.sin(a) * r);
-    }
-    const starGeometry = new THREE.ExtrudeGeometry(star, { depth: 0.13, bevelEnabled: false }).translate(0, 0, -0.065);
-    return { gold, deep, disc, rim, star: starGeometry };
-  })();
-  function makeCoin() {
-    const coin = new THREE.Group();
-    coin.add(new THREE.Mesh(coinParts.disc, coinParts.deep));
-    coin.add(new THREE.Mesh(coinParts.rim, coinParts.gold));
-    coin.add(new THREE.Mesh(coinParts.star, coinParts.gold));
-    coin.traverse((part) => { part.frustumCulled = false; part.renderOrder = 8; });
-    return coin;
-  }
   const pickupMaterials = new Map<string, THREE.MeshStandardMaterial>();
-  function makeBeacon(pole: string, glow: string, orb: string, _base: string) {
-    const group = new THREE.Group();
-    // inverted drop / map pin: tip on the ground, fat bulb up
-    const profile = [
-      new THREE.Vector2(0, 0),
-      new THREE.Vector2(0.28, 0.55),
-      new THREE.Vector2(0.72, 1.45),
-      new THREE.Vector2(1.15, 2.35),
-      new THREE.Vector2(1.35, 3.15),
-      new THREE.Vector2(1.2, 3.95),
-      new THREE.Vector2(0.7, 4.55),
-      new THREE.Vector2(0, 4.85),
-    ];
-    const tip = new THREE.Mesh(
-      new THREE.LatheGeometry(profile, 28),
-      new THREE.MeshStandardMaterial({ color: pole, emissive: glow, emissiveIntensity: 0.7, metalness: 0.18, roughness: 0.32 }),
-    );
-    tip.frustumCulled = false;
-    const core = new THREE.Mesh(
-      new THREE.SphereGeometry(0.55, 16, 12),
-      new THREE.MeshStandardMaterial({ color: orb, emissive: pole, emissiveIntensity: 1.05, metalness: 0.05, roughness: 0.22 }),
-    );
-    core.position.y = 3.35;
-    core.frustumCulled = false;
-    group.add(tip, core);
-    group.visible = false;
-    group.frustumCulled = false;
-    scene.add(group);
-    return { group, tip: core };
-  }
   const missionBeacons = new Map<string, {
-    kind?: 'arena' | 'race' | 'bounty' | 'fire' | 'impound';
+    kind?: 'arena' | 'race' | 'bounty' | 'fire' | 'impound' | 'taxi' | 'bus';
     position: Position;
     visual: ReturnType<typeof makeBeacon>;
   }>();
-  function colorsForBeacon(beacon: {
-    kind?: 'arena' | 'race' | 'bounty' | 'fire' | 'impound';
-    colors?: { pole: string; glow: string; orb: string };
-  }) {
-    if (beacon.colors) return beacon.colors;
-    if (beacon.kind === 'arena') return { pole: '#2f7dff', glow: '#1a4fb8', orb: '#6eb6ff' };
-    if (beacon.kind === 'bounty') return { pole: '#d63a2f', glow: '#8a1c14', orb: '#ff8a7a' };
-    if (beacon.kind === 'fire') return { pole: '#e85d04', glow: '#9a3412', orb: '#fb923c' };
-    if (beacon.kind === 'impound') return { pole: '#7c3aed', glow: '#5b21b6', orb: '#c4b5fd' };
-    return { pole: '#ff7a1a', glow: '#b84a00', orb: '#ffb86b' };
-  }
   let onFireWindowOut: (left: number) => void = () => {};
   const raceFinish = new THREE.Group();
   const finishPole = new THREE.Mesh(
@@ -618,28 +258,10 @@ export function vehicleLayer(
     }
   }
 
-  /** A cardboard box with a strip of tape over the top (the box hunt). */
-  function makeBox() {
-    const group = new THREE.Group();
-    const box = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.7, 0.9), new THREE.MeshLambertMaterial({ color: '#b8742a' }));
-    const tape = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.72, 0.92), new THREE.MeshLambertMaterial({ color: '#e8d8a8' }));
-    group.add(box, tape);
-    return group;
-  }
-
-  /** A bundle of banknotes: a green brick with a paper band round its middle. */
-  function makeCash() {
-    const group = new THREE.Group();
-    const notes = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.36, 0.55), new THREE.MeshLambertMaterial({ color: '#3f8f4e' }));
-    const band = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.38, 0.57), new THREE.MeshLambertMaterial({ color: '#f1ead2' }));
-    group.add(notes, band);
-    return group;
-  }
-
   function setMissionBeacons(beacons: {
     id: string;
     position: Position;
-    kind?: 'arena' | 'race' | 'bounty' | 'fire' | 'impound';
+    kind?: 'arena' | 'race' | 'bounty' | 'fire' | 'impound' | 'taxi' | 'bus';
     colors?: { pole: string; glow: string; orb: string };
   }[]) {
     const active = new Set(beacons.map(beacon => beacon.id));
@@ -652,7 +274,8 @@ export function vehicleLayer(
       let entry = missionBeacons.get(beacon.id);
       if (!entry) {
         const colors = colorsForBeacon(beacon);
-        const visual = makeBeacon(colors.pole, colors.glow, colors.orb, colors.glow);
+        const visual = makeBeacon(colors.pole, colors.glow, colors.orb);
+        scene.add(visual.group);
         entry = { kind: beacon.kind, position: [...beacon.position], visual };
         missionBeacons.set(beacon.id, entry);
       }
@@ -991,8 +614,8 @@ export function vehicleLayer(
     const camAlt = ground + Math.cos(pitchRad) * distance;
     const horiz = Math.sin(pitchRad) * distance;
     const camPos: Position = [
-      center.lng - Math.sin(bearingRad) * horiz / (111319.49 * Math.max(0.05, cos)),
-      center.lat - Math.cos(bearingRad) * horiz / 111319.49,
+      center.lng - Math.sin(bearingRad) * horiz / (METERS_PER_DEGREE * Math.max(0.05, cos)),
+      center.lat - Math.cos(bearingRad) * horiz / METERS_PER_DEGREE,
     ];
     const offset = eastNorth(here, camPos);
     return { position: camPos, altitude: camAlt, east: offset.east, north: offset.north, up: camAlt - carAlt };
@@ -1028,18 +651,32 @@ export function vehicleLayer(
       const elev = (t * 52) * Math.PI / 180;
       const landAlt = (map.groundAt(aim.ground) ?? carAlt) - carAlt;
       fx.altitude = carAlt;
-      const { flightMs, land } = fx.hose(here, muzzleAt, dirE, dirN, elev, landAlt, now);
-      // walk the lob: first burning façade pane near the jet wins, else ground splash
+      // walk the lob: train or burning façade stops the jet — water must not pass through cars
       let houseHit: { e: number; n: number; u: number; fresh: boolean; at: Position; altitude: number } | null = null;
+      let trainHit: Enu | null = null;
+      let prevPos = offsetPosition(here, muzzleAt.e, muzzleAt.n);
+      let prevAlt = carAlt + muzzleAt.u;
       for (const pt of fx.hoseArc(muzzleAt, dirE, dirN, elev, landAlt, 28)) {
+        const at = offsetPosition(here, pt.e, pt.n);
+        const alt = carAlt + pt.u;
+        const train = resolveTrain(prevPos, prevAlt, at, alt);
+        if (train) {
+          const d = eastNorth(here, train.point);
+          trainHit = { e: d.east, n: d.north, u: train.altitude - carAlt + 1.2 };
+          break;
+        }
         const hit = burningHouse.douseAt(here, carAlt, pt, now, 1.85);
         if (hit) { houseHit = hit; break; }
+        prevPos = at;
+        prevAlt = alt;
       }
-      const splashAt = houseHit ?? land;
-      const splashNormal: Enu = houseHit
+      const clip = houseHit ?? trainHit;
+      const { flightMs, land } = fx.hose(here, muzzleAt, dirE, dirN, elev, landAlt, now, clip);
+      const splashAt = clip ?? land;
+      const splashNormal: Enu = clip
         ? { e: muzzleAt.e - splashAt.e, n: muzzleAt.n - splashAt.n, u: 0.35 }
         : { e: 0, n: 0, u: 1 };
-      if (flightMs > 0) fx.splash(here, splashAt, splashNormal, now + flightMs, houseHit ? 1.05 : 0.85);
+      if (flightMs > 0) fx.splash(here, splashAt, splashNormal, now + flightMs, clip ? 1.05 : 0.85);
       if (houseHit?.fresh) {
         const de = splashAt.e - muzzleAt.e, dn = splashAt.n - muzzleAt.n;
         const hl = Math.hypot(de, dn) || 1;
@@ -1355,14 +992,7 @@ export function vehicleLayer(
   /** our police lights (F): the glow shown or hidden, the lamps lit or dull */
   let beaconsOn = true;
   function applyBeacons() {
-    root.traverse((child) => {
-      if (!child.userData.beacon) return;
-      if (child.userData.halo) child.visible = beaconsOn;
-      else if (child instanceof THREE.Mesh && child.userData.color) {
-        const color = child.userData.color as 'red' | 'blue';
-        child.material = beaconsOn ? beaconMats[color] : beaconOffMats[color];
-      }
-    });
+    applyBeaconPower(root, beaconsOn);
     map?.triggerRepaint();
   }
   function installCarModel(model: THREE.Group) {

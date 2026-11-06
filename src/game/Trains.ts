@@ -1,4 +1,5 @@
-import type { Position } from './VehicleController.ts';
+import { METERS_PER_DEGREE, metersBetween, type Position } from './VehicleController.ts';
+
 
 // Trains and trams on the real tracks. The network is built from the
 // `transportation` features (main lines only, no tunnels); trains are born and
@@ -10,10 +11,8 @@ type Feature = { geometry: { type: string; coordinates: unknown }; properties?: 
 export type TrackKind = 'rail' | 'tram';
 type Node = { id: string; position: Position; kind: TrackKind; links: Set<string> };
 
-const M = 111319.49;
 function meters(a: Position, b: Position) {
-  const cos = Math.cos(a[1] * Math.PI / 180);
-  return Math.hypot((b[0] - a[0]) * M * cos, (b[1] - a[1]) * M);
+  return metersBetween(a, b);
 }
 
 /** Track kind of a transportation feature, or null when trains don't run there. */
@@ -211,12 +210,12 @@ export class TrainTraffic {
       if (train.cum[i - 1] > from + look) break;
       const a = train.points[i - 1], b = train.points[i];
       const cos = Math.cos(a[1] * Math.PI / 180);
-      const bx = (b[0] - a[0]) * M * cos, by = (b[1] - a[1]) * M;
+      const bx = (b[0] - a[0]) * METERS_PER_DEGREE * cos, by = (b[1] - a[1]) * METERS_PER_DEGREE;
       const len2 = bx * bx + by * by || 1;
       for (const car of others) {
         if (car.trainId === train.id) continue;
         for (const point of [car.front, car.back]) {
-          const px = (point[0] - a[0]) * M * cos, py = (point[1] - a[1]) * M;
+          const px = (point[0] - a[0]) * METERS_PER_DEGREE * cos, py = (point[1] - a[1]) * METERS_PER_DEGREE;
           const t = Math.max(0, Math.min(1, (px * bx + py * by) / len2));
           const off = Math.hypot(px - bx * t, py - by * t);
           if (off > 2.4) continue; // a parallel track is 4–5 m away

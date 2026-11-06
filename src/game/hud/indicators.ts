@@ -56,16 +56,26 @@ export function placeIndicator(view: IndicatorView, marker: Indicator, from: Pos
     return;
   }
   const meters = metersBetween(from, target);
-  marker.distance.textContent = formatRange(meters);
+  // Map view: the MapLibre plaque is the label — no range text stacked on it.
+  marker.distance.textContent = onMap ? '' : formatRange(meters);
+  marker.element.classList.toggle('is-map', onMap);
   marker.element.style.display = 'flex';
   const point = view.project(target);
   const projected = Number.isFinite(point.x) && Number.isFinite(point.y);
   const sideMargin = Math.min(64, width * 0.1);
   const topMargin = Math.min(96, height * 0.15);
   const bottomMargin = Math.min(64, height * 0.11);
+  const inFrame = projected && point.x >= 0 && point.x <= width && point.y >= 0 && point.y <= height;
   const inSafe = projected
     && point.x >= sideMargin && point.x <= width - sideMargin
     && point.y >= topMargin && point.y <= height - bottomMargin;
+  // Mission HUD yields to the map pin as soon as the target is anywhere in the viewport.
+  if (inFrame && (onMap || meters < pinMeters) && marker.element.classList.contains('mission-indicator')) {
+    marker.element.classList.add('is-onscreen');
+    marker.element.classList.remove('is-edge');
+    marker.element.style.display = 'none';
+    return;
+  }
   if (inSafe && (onMap || meters < pinMeters)) {
     marker.element.classList.add('is-onscreen');
     marker.element.classList.remove('is-edge');

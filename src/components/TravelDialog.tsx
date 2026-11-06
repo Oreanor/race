@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { cities, type City } from '@/config/vehicle.config';
 import { findPlaces } from '@/game/findPlaces';
 import { kilometres, ticketPrice, type HubKind } from '@/game/Travel';
-import type { TravelOffer } from '@/game/GameEngine';
+import type { TravelOffer } from '@/game/offers';
 import Dialog from './ui/Dialog';
 import { formatNumber, t } from '@/i18n';
 import { useLang } from '@/i18n/react';

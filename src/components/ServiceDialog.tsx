@@ -1,5 +1,5 @@
 'use client';
-import type { ServiceOffer } from '@/game/GameEngine';
+import type { ServiceOffer } from '@/game/offers';
 import { formatNumber, t } from '@/i18n';
 import { useLang } from '@/i18n/react';
 import Dialog from './ui/Dialog';

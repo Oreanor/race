@@ -419,6 +419,14 @@ function deckProfile(line: Pt[], ends: [number, number], at: Surfaces, needs: Ne
       if (free[1]) h[i] = Math.min(h[i], h1 + RAMP_SLOPE * (length - s[i]) / at.toMerc);
     }
   }
+  // Re-assert clearance after free ramps. Short пешеходный переход spans were
+  // crushed flat by the free-end min, so neighbouring stubs met on the ground
+  // (or left a stair portal beside a floating walkway) instead of in the air.
+  for (const need of needs) {
+    for (let i = 0; i < h.length; i++) {
+      h[i] = Math.max(h[i], need.h - RAMP_SLOPE * Math.abs(s[i] - need.s) / at.toMerc);
+    }
+  }
   // never under the ground: a straight line between the ends dips into any rise between
   // them (a hump, a bank higher than the ends), and the road beside it tears; there it
   // runs on the ground like a causeway
@@ -472,6 +480,30 @@ function crossing(a: XY, b: XY, c: XY, d: XY): number | null {
   const t = ((c.x - a.x) * sy - (c.y - a.y) * sx) / den;
   const u = ((c.x - a.x) * ry - (c.y - a.y) * rx) / den;
   return t >= 0 && t <= 1 && u >= 0 && u <= 1 ? t : null;
+}
+
+/** Same as `crossing`, for deck points in mercator metres. */
+function crossingMerc(a: Pt, b: Pt, c: Pt, d: Pt): number | null {
+  return crossing({ x: a[0], y: a[1] }, { x: b[0], y: b[1] }, { x: c[0], y: c[1] }, { x: d[0], y: d[1] });
+}
+
+/**
+ * |cos| of the two segment directions. ~1 = parallel / tangential merge,
+ * ~0 = right-angle crossing. Stack only the latter.
+ */
+function segmentAlign(a: XY, b: XY, c: XY, d: XY) {
+  const ax = b.x - a.x, ay = b.y - a.y, bx = d.x - c.x, by = d.y - c.y;
+  return Math.abs(ax * bx + ay * by) / ((Math.hypot(ax, ay) * Math.hypot(bx, by)) || 1);
+}
+
+/** Above this |cos|, a geometric cross is a merge/split — keep coplanar. */
+const TANGENT_COS = 0.55;
+
+/** Raise a finished deck so it clears `minH` at arc length `atS`. */
+function liftDeckClear(deck: Deck, atS: number, minH: number, toMerc: number) {
+  for (let i = 0; i < deck.h.length; i++) {
+    deck.h[i] = Math.max(deck.h[i], minH - RAMP_SLOPE * Math.abs(deck.s[i] - atS) / toMerc);
+  }
 }
 
 /** Roads and railways of the tile, by feature index (tunnels left out). */
@@ -530,7 +562,13 @@ export function planBridges(ways: Map<number, Way>, extent: number, span: number
         const box = boxes.get(line)!;
         const needs: Need[] = [];
         for (const [o, other] of ways) {
-          if (o === i || other.level >= way.level || other.foot) continue;
+          if (o === i || other.foot) continue;
+          // Lower OSM layer always goes under. Same layer: only stack when the
+          // other is also a bridge and we win the id order — and only for
+          // near-orthogonal crosses (tangential merges stay coplanar).
+          const same = other.level === way.level;
+          const below = other.level < way.level || (same && other.bridge && o < i);
+          if (!below) continue;
           for (const ol of other.lines) {
             const ob = boxes.get(ol)!;
             if (ob[0] > box[2] || ob[2] < box[0] || ob[1] > box[3] || ob[3] < box[1]) continue;
@@ -538,6 +576,7 @@ export function planBridges(ways: Map<number, Way>, extent: number, span: number
             for (let a = 0; a + 1 < line.length; a++) for (let b = 0; b + 1 < ol.length; b++) {
               const t = crossing(line[a], line[a + 1], ol[b], ol[b + 1]);
               if (t == null) continue;
+              if (same && segmentAlign(line[a], line[a + 1], ol[b], ol[b + 1]) > TANGENT_COS) continue;
               const x = pts[a][0] + (pts[a + 1][0] - pts[a][0]) * t, z = pts[a][1] + (pts[a + 1][1] - pts[a][1]) * t;
               const under = (other.bridge ? sampleDecks(full.get(o), x, z) : null) ?? at.driveAt(x, z);
               needs.push({ s: s[a] + (s[a + 1] - s[a]) * t, h: under + OVER_CLEAR });
@@ -589,7 +628,106 @@ export function planBridges(ways: Map<number, Way>, extent: number, span: number
     }
     if (ramped) plan.set(i, planned);
   }
+  // Elevated ribbons that cross steeply (ramps included) must not share a deck
+  // height — that leaves parapets across the carriageway. Tangential merges stay put.
+  stackOrthogonalDecks(plan, at);
+  // Footbridges and split OSM ways often meet a few metres apart with different
+  // tip heights — snap those ends so the crossing is one continuous deck.
+  joinNearbyDeckEnds(plan, at.toMerc);
   return plan;
+}
+
+/**
+ * Raise matching elevated tips that nearly meet (common for пешеходный переход
+ * pieces tagged as separate ways). Without this, one stub floats beside another
+ * at a different height and the stair tower fills the gap as a black portal.
+ */
+function joinNearbyDeckEnds(plan: Map<number, Planned>, toMerc: number) {
+  type End = { deck: Deck; tip: number; x: number; z: number; h: number; s: number };
+  const ends: End[] = [];
+  for (const planned of plan.values()) for (const deck of planned.decks) {
+    if (deck.pts.length < 2) continue;
+    const last = deck.pts.length - 1;
+    if (deck.h[0] - deck.bed[0] > 1.5) {
+      ends.push({ deck, tip: 0, x: deck.pts[0][0], z: deck.pts[0][1], h: deck.h[0], s: deck.s[0] });
+    }
+    if (deck.h[last] - deck.bed[last] > 1.5) {
+      ends.push({ deck, tip: last, x: deck.pts[last][0], z: deck.pts[last][1], h: deck.h[last], s: deck.s[last] });
+    }
+  }
+  const reach = 4.5 * toMerc;
+  for (let i = 0; i < ends.length; i++) {
+    for (let j = i + 1; j < ends.length; j++) {
+      const a = ends[i], b = ends[j];
+      if (a.deck === b.deck) continue;
+      if (Math.hypot(a.x - b.x, a.z - b.z) > reach) continue;
+      const target = Math.max(a.h, b.h);
+      if (target - a.h > 0.12) liftDeckClear(a.deck, a.s, target, toMerc);
+      if (target - b.h > 0.12) liftDeckClear(b.deck, b.s, target, toMerc);
+      a.deck.h[a.tip] = Math.max(a.deck.h[a.tip], target);
+      b.deck.h[b.tip] = Math.max(b.deck.h[b.tip], target);
+      a.h = a.deck.h[a.tip];
+      b.h = b.deck.h[b.tip];
+    }
+  }
+}
+
+/** True when another elevated deck tip sits here — the walkway continues, no stair. */
+function deckContinuesNear(plan: Map<number, Planned>, self: Deck, x: number, z: number, h: number, toMerc: number) {
+  const reach = 3.5 * toMerc;
+  for (const planned of plan.values()) {
+    for (const other of planned.decks) {
+      if (other === self || other.pts.length < 2) continue;
+      for (const tip of [0, other.pts.length - 1]) {
+        const [ox, oz] = other.pts[tip];
+        if (Math.hypot(ox - x, oz - z) > reach) continue;
+        if (Math.abs(other.h[tip] - h) < 2.8) return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * Lift higher-id decks over lower-id ones wherever they cross at a steep angle
+ * and sit within a clearance of each other. Several rounds so A-over-B-over-C settles.
+ */
+function stackOrthogonalDecks(plan: Map<number, Planned>, at: Surfaces) {
+  const ids = [...plan.keys()].sort((a, b) => a - b);
+  for (let round = 0; round < 3; round++) {
+    let changed = false;
+    for (let ai = 0; ai < ids.length; ai++) {
+      for (let bi = 0; bi < ai; bi++) {
+        const hiId = ids[ai], loId = ids[bi];
+        const hiDecks = plan.get(hiId)?.decks ?? [];
+        const loDecks = plan.get(loId)?.decks ?? [];
+        for (const hi of hiDecks) for (const lo of loDecks) {
+          for (let a = 1; a < hi.pts.length; a++) for (let b = 1; b < lo.pts.length; b++) {
+            const t = crossingMerc(hi.pts[a - 1], hi.pts[a], lo.pts[b - 1], lo.pts[b]);
+            if (t == null) continue;
+            const align = segmentAlign(
+              { x: hi.pts[a - 1][0], y: hi.pts[a - 1][1] },
+              { x: hi.pts[a][0], y: hi.pts[a][1] },
+              { x: lo.pts[b - 1][0], y: lo.pts[b - 1][1] },
+              { x: lo.pts[b][0], y: lo.pts[b][1] },
+            );
+            if (align > TANGENT_COS) continue;
+            const x = hi.pts[a - 1][0] + (hi.pts[a][0] - hi.pts[a - 1][0]) * t;
+            const z = hi.pts[a - 1][1] + (hi.pts[a][1] - hi.pts[a - 1][1]) * t;
+            const hLo = sampleDecks([lo], x, z);
+            const hHi = sampleDecks([hi], x, z);
+            if (hLo == null || hHi == null) continue;
+            const need = hLo + OVER_CLEAR;
+            if (hHi >= need - 0.35) continue;
+            const sHi = hi.s[a - 1] + (hi.s[a] - hi.s[a - 1]) * t;
+            liftDeckClear(hi, sHi, need, at.toMerc);
+            changed = true;
+          }
+        }
+      }
+    }
+    if (!changed) break;
+  }
 }
 
 /** Lay a ribbon along the deck (the road or rail bed on it), piece by piece. */
@@ -610,8 +748,17 @@ function deckRibbon(builder: RoadBuilder, deck: Pick<Deck, 'pts' | 'h'>, half: n
  * Stair towers at a footbridge's ends that hang in the air: a concrete box from the
  * ground up past the parapet. Ends cut by the tile border are not ends. `seen` keeps
  * one tower per spot where a bridge and its approach meet.
+ * Skip when another deck continues nearby — otherwise the tower sits as a black
+ * portal beside the real walkway (broken пешеходный переход join).
  */
-function stairTowers(builder: RoadBuilder, deck: Deck, toMerc: number, span: number, seen: Set<string>) {
+function stairTowers(
+  builder: RoadBuilder,
+  deck: Deck,
+  toMerc: number,
+  span: number,
+  seen: Set<string>,
+  plan?: Map<number, Planned>,
+) {
   const n = deck.pts.length;
   if (n < 2) return;
   const shade = (rgb: [number, number, number], f: number): [number, number, number] => [rgb[0] * f, rgb[1] * f, rgb[2] * f];
@@ -621,6 +768,7 @@ function stairTowers(builder: RoadBuilder, deck: Deck, toMerc: number, span: num
     if (x < edge || z < edge || x > span - edge || z > span - edge) continue;
     const h = deck.h[i], bed = deck.bed[i];
     if (h - bed < 2.2) continue;
+    if (plan && deckContinuesNear(plan, deck, x, z, h, toMerc)) continue;
     const key = `${Math.round(x / toMerc)},${Math.round(z / toMerc)}`;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -643,10 +791,48 @@ function stairTowers(builder: RoadBuilder, deck: Deck, toMerc: number, span: num
 }
 
 /**
+ * True when this deck span crosses another elevated ribbon at nearly the same
+ * height (a coplanar junction). Parapets there would fence the crossing shut.
+ */
+function coplanarDeckCross(deck: Deck, a: number, plan: Map<number, Planned> | undefined, selfId: number) {
+  if (!plan) return false;
+  const [ax, az] = deck.pts[a - 1], [bx, bz] = deck.pts[a];
+  const ha = deck.h[a - 1], hb = deck.h[a];
+  for (const [id, planned] of plan) {
+    if (id === selfId) continue;
+    for (const other of planned.decks) {
+      for (let b = 1; b < other.pts.length; b++) {
+        const t = crossingMerc(deck.pts[a - 1], deck.pts[a], other.pts[b - 1], other.pts[b]);
+        if (t == null) continue;
+        const align = segmentAlign(
+          { x: ax, y: az }, { x: bx, y: bz },
+          { x: other.pts[b - 1][0], y: other.pts[b - 1][1] },
+          { x: other.pts[b][0], y: other.pts[b][1] },
+        );
+        // only open parapets at steep crosses; tangential merges keep their walls
+        if (align > TANGENT_COS) continue;
+        const hHere = ha + (hb - ha) * t;
+        const hThere = other.h[b - 1] + (other.h[b] - other.h[b - 1]) * (
+          (() => {
+            const [cx, cz] = other.pts[b - 1], [dx, dz] = other.pts[b];
+            const px = ax + (bx - ax) * t, pz = az + (bz - az) * t;
+            const len2 = (dx - cx) ** 2 + (dz - cz) ** 2 || 1;
+            return Math.max(0, Math.min(1, ((px - cx) * (dx - cx) + (pz - cz) * (dz - cz)) / len2));
+          })()
+        );
+        if (Math.abs(hHere - hThere) < 2.2) return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
  * The bridge itself where it stands clear of the ground: the slab's sides and
  * underside, a low parapet on each side and concrete piers down into the river.
+ * Parapets open where another deck crosses coplanarly (steep angle).
  */
-function deckStructure(builder: RoadBuilder, deck: Deck, half: number, toMerc: number) {
+function deckStructure(builder: RoadBuilder, deck: Deck, half: number, toMerc: number, plan?: Map<number, Planned>, selfId = -1) {
   const n = deck.pts.length;
   const up = deck.h.map((h, i) => h - deck.bed[i] > 1.2);
   const side = (nx: number, nz: number) => 0.7 + 0.2 * (nx * 0.6 + nz * 0.8);
@@ -658,15 +844,21 @@ function deckStructure(builder: RoadBuilder, deck: Deck, half: number, toMerc: n
     const len = Math.hypot(bx - ax, bz - az) || 1;
     const nx = -(bz - az) / len, nz = (bx - ax) / len;
     const ha = deck.h[i - 1], hb = deck.h[i];
+    const open = coplanarDeckCross(deck, i, plan, selfId);
     for (const sgn of [-1, 1]) {
       const ox = nx * half * sgn, oz = nz * half * sgn;
       const ix = nx * (half - wall) * sgn, iz = nz * (half - wall) * sgn;
       const f = side(nx * sgn, nz * sgn);
-      // outer face: from under the slab to the parapet top
-      builder.quad([[ax + ox, az + oz, ha, -SLAB], [bx + ox, bz + oz, hb, -SLAB], [bx + ox, bz + oz, hb, PARAPET], [ax + ox, az + oz, ha, PARAPET]], shade(CONCRETE, f));
-      // parapet top and inner face
-      builder.quad([[ax + ox, az + oz, ha, PARAPET], [bx + ox, bz + oz, hb, PARAPET], [bx + ix, bz + iz, hb, PARAPET], [ax + ix, az + iz, ha, PARAPET]], PARAPET_TOP, 'up');
-      builder.quad([[ax + ix, az + iz, ha, PARAPET], [bx + ix, bz + iz, hb, PARAPET], [bx + ix, bz + iz, hb, 0.05], [ax + ix, az + iz, ha, 0.05]], shade(CONCRETE, 1.05 - f * 0.25));
+      if (open) {
+        // slab edge only — leave the carriageway clear for the crossing road
+        builder.quad([[ax + ox, az + oz, ha, -SLAB], [bx + ox, bz + oz, hb, -SLAB], [bx + ox, bz + oz, hb, 0.05], [ax + ox, az + oz, ha, 0.05]], shade(CONCRETE, f));
+      } else {
+        // outer face: from under the slab to the parapet top
+        builder.quad([[ax + ox, az + oz, ha, -SLAB], [bx + ox, bz + oz, hb, -SLAB], [bx + ox, bz + oz, hb, PARAPET], [ax + ox, az + oz, ha, PARAPET]], shade(CONCRETE, f));
+        // parapet top and inner face
+        builder.quad([[ax + ox, az + oz, ha, PARAPET], [bx + ox, bz + oz, hb, PARAPET], [bx + ix, bz + iz, hb, PARAPET], [ax + ix, az + iz, ha, PARAPET]], PARAPET_TOP, 'up');
+        builder.quad([[ax + ix, az + iz, ha, PARAPET], [bx + ix, bz + iz, hb, PARAPET], [bx + ix, bz + iz, hb, 0.05], [ax + ix, az + iz, ha, 0.05]], shade(CONCRETE, 1.05 - f * 0.25));
+      }
     }
     // underside
     builder.quad([[ax + nx * half, az + nz * half, ha, -SLAB], [bx + nx * half, bz + nz * half, hb, -SLAB], [bx - nx * half, bz - nz * half, hb, -SLAB], [ax - nx * half, az - nz * half, ha, -SLAB]], UNDERSIDE, 'down');
@@ -729,7 +921,7 @@ function railTracks(builder: RoadBuilder, layer: VectorTile['layers'][string], k
     const planned = plan.get(i);
     for (const deck of planned?.decks ?? []) {
       const half = 2.1 * toMerc;
-      deckStructure(builder, deck, half, toMerc);
+      deckStructure(builder, deck, half, toMerc, plan, i);
       pushDeck(bridges, deck, half);
       if (!tram) deckRibbon(builder, deck, 1.5 * toMerc, 0.06, bed, 0);
       for (const sideSign of [-1, 1]) {
@@ -800,10 +992,11 @@ function roadMesh(vt: VectorTile, span: number, grid: number, at: Surfaces, brid
         for (const deck of planned?.decks ?? []) {
           if (pass === 'casing') {
             // the parapets stand just outside the pavement, on a concrete edge
-            deckStructure(builder, deck, half + 0.35 * toMerc, toMerc);
+            deckStructure(builder, deck, half + 0.35 * toMerc, toMerc, plan, i);
             // footbridges: stair towers where an end hangs in the air
-            if (style.width < 1.5) stairTowers(builder, deck, toMerc, span, towerSpots);
-            deckRibbon(builder, deck, half + 0.35 * toMerc, y - 0.01, CONCRETE, 0);
+            if (style.width < 1.5) stairTowers(builder, deck, toMerc, span, towerSpots, plan);
+            // round joins on the concrete edge too — otherwise bends show a notch
+            deckRibbon(builder, deck, half + 0.35 * toMerc, y - 0.01, CONCRETE, 6);
           } else pushDeck(bridges, deck, half);
           deckRibbon(builder, deck, half, y, rgb, steps);
         }
@@ -833,8 +1026,8 @@ function roadMesh(vt: VectorTile, span: number, grid: number, at: Surfaces, brid
             const prev = line[j - 1], q = line[j], r = line[j + 1];
             const ux = q.x - prev.x, uy = q.y - prev.y, vx = r.x - q.x, vy = r.y - q.y;
             const cos = (ux * vx + uy * vy) / ((Math.hypot(ux, uy) * Math.hypot(vx, vy)) || 1);
-            // sharp bends: a round join; gentle ones: just the outer wedge (no notch, no bulge)
-            if (cos < 0.9) builder.disc(ax, az, half, y, rgb, steps);
+            // round join for anything but a near-straight run — bevel alone left slits at bends
+            if (cos < 0.985) builder.disc(ax, az, half, y, rgb, steps);
             else if (cos < 0.99999) builder.bevel(ax, az, ux, uy, vx, vy, half, y, rgb);
           }
           const last = line.length - 1;

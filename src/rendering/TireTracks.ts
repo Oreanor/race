@@ -1,12 +1,11 @@
 import * as THREE from 'three';
-import { offsetPosition, type Position } from '@/game/VehicleController';
+import { METERS_PER_DEGREE, offsetPosition, type Position } from '@/game/VehicleController';
 import { ribbonEdges } from '@/game/trailGeometry';
 
 type Sample = { position: Position; elevation: number; stroke: number; width: number };
-const M=111319.49;
 /** how far behind the car the tracks reach (m), and the points kept per wheel (one per 0.35 m or more) */
 const LENGTH=56, KEEP=192;
-function local(origin: Position,p: Position){return {x:(p[0]-origin[0])*M*Math.cos(origin[1]*Math.PI/180),y:(p[1]-origin[1])*M};}
+function local(origin: Position,p: Position){return {x:(p[0]-origin[0])*METERS_PER_DEGREE*Math.cos(origin[1]*Math.PI/180),y:(p[1]-origin[1])*METERS_PER_DEGREE};}
 export class TireTracks {
   private samples: Sample[][]=[[],[]];
   private last: Position|null=null;

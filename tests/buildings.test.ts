@@ -4,6 +4,7 @@ import { createRecipe, HOUSE_PALETTE, indexFor, portuguesePastel } from '../src/
 import { facadeBands, layoutFacade, pieceExtents } from '../src/game/buildings/FacadeGenerator.ts';
 import { buildRoof, canPitch } from '../src/game/buildings/RoofGenerator.ts';
 import { PIECES } from '../src/game/buildings/pieces.ts';
+import { buildingStyleKey, primaryTileSeam } from '../src/game/buildings/wallOverlap.ts';
 
 const palette = ['#f0c43a', '#7a6fe0', '#4aa3e8', '#ef6f93', '#f08a3c', '#63c47a'];
 
@@ -86,6 +87,39 @@ test('the same building keeps its style after a reload', () => {
   const second = createRecipe({ id: 7, key: '7:10:1:2', height: 14, base: 0, kind: 'house' }, palette, 'auto', 'Portugal');
   assert.deepEqual(first, second);
   assert.equal(createRecipe({ id: 7, key: '7:10:1:2', height: 14, base: 0 }, palette, 'portuguese', 'Portugal').style, 'portuguese');
+});
+
+test('tile-split halves share a style key via the seam', () => {
+  // Same cut, different sample density — midpoint quantisation must match.
+  const leftSeam: [number, number][] = [[-8.41, 40.20], [-8.41, 40.2005], [-8.41, 40.201]];
+  const rightSeam: [number, number][] = [[-8.41, 40.20], [-8.41, 40.201]];
+  const left: [number, number][] = [[-8.412, 40.20], ...leftSeam, [-8.412, 40.201]];
+  const right: [number, number][] = [...rightSeam, [-8.408, 40.201], [-8.408, 40.20]];
+  const a = buildingStyleKey(12, 0, left, leftSeam);
+  const b = buildingStyleKey(12, 0, right, rightSeam);
+  assert.equal(a, b);
+  assert.notEqual(buildingStyleKey(12, 0, left), buildingStyleKey(12, 0, right));
+});
+
+test('thin edge sliver uses the primary cut, not every on-edge vertex', () => {
+  // Left tile: a 2px-wide sliver against x=extent. Almost every vertex is "on edge"
+  // if we take all four sides; primary seam must be the east cut only.
+  const extent = 4096;
+  const sliver = [
+    { x: extent - 2, y: 100 },
+    { x: extent, y: 100 },
+    { x: extent, y: 200 },
+    { x: extent - 2, y: 200 },
+  ];
+  const seam = primaryTileSeam(sliver, extent);
+  assert.ok(seam.every((p) => p.x >= extent - 0.5));
+  assert.equal(seam.length, 2);
+  // Neighbour tile west edge at the same geographic cut → same style mid key
+  const leftLng: [number, number][] = [[-8.41001, 40.2], [-8.41, 40.2], [-8.41, 40.201], [-8.41001, 40.201]];
+  const rightLng: [number, number][] = [[-8.41, 40.2], [-8.4099, 40.2], [-8.4099, 40.201], [-8.41, 40.201]];
+  const leftSeam: [number, number][] = [[-8.41, 40.2], [-8.41, 40.201]];
+  const rightSeam: [number, number][] = [[-8.41, 40.2], [-8.41, 40.201]];
+  assert.equal(buildingStyleKey(14, 0, leftLng, leftSeam), buildingStyleKey(14, 0, rightLng, rightSeam));
 });
 
 test('many Portuguese homes use double-width windows and keep them at low detail', () => {

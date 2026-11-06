@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { cars, carPrice } from '@/config/vehicle.config';
-import type { DealerOffer } from '@/game/GameEngine';
+import type { DealerOffer } from '@/game/offers';
 import { t } from '@/i18n';
 import { useLang } from '@/i18n/react';
 import CarCarousel from './CarCarousel';

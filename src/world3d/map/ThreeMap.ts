@@ -11,6 +11,8 @@ import { SkyBodies } from './sky';
 import { LensFlare } from './LensFlare';
 import { skyDirection } from '../astro';
 import { PAINTED_SKINS, SKIN_DATA, type Skin, type SkinId } from '../buildings/skins';
+import { METERS_PER_DEGREE } from '@/game/meters';
+
 
 /** bullet hole decals; the oldest one goes when a new one comes */
 const MAX_HOLES = 1024;
@@ -160,6 +162,10 @@ export class ThreeMap {
   private readonly headUp = new THREE.Vector3();
   /** player car (lng/lat, altitude m) for the see-through buildings in front of it */
   private focusCar: { at: [number, number]; altitude: number; heading: number; pitch: number } | null = null;
+  /** first-frame shader compile so the opening lap does not hitch on program link */
+  private programsWarmed = false;
+  /** while the map is hidden: fill a full tile ring and drain GPU uploads faster */
+  private streamBurst = true;
   loaded = false;
 
   constructor(options: ThreeMapOptions) {
@@ -336,6 +342,9 @@ export class ThreeMap {
   setInteractive(on: { pan: boolean; rotate: boolean }) { this.interactive = { ...on }; }
   /** Everything inside the fog is in: the world can be shown without anything popping in later. */
   areTilesLoaded() { return this.world.loadedAround(this.camera.state.center, this.uniforms.uFogFar.value); }
+
+  /** Leave boot streaming (full ring + fast uploads) once the map is shown. */
+  endStreamBurst() { this.streamBurst = false; }
 
   /** GeoJSON features of a tile layer near the view (all loaded layers, incl. poi…). */
   features(layer: string): GeoFeature[] {
@@ -658,8 +667,11 @@ export class ThreeMap {
     this.rebase();
     const cam = this.camera;
     cam.update();
-    // stream around what the camera looks at, plus a bit toward the viewer
-    this.world.update(cam.state.center);
+    // stream ahead of travel so the first lap hitches behind the car, not under it.
+    // boot burst: isotropic ring + faster uploads until the map is revealed.
+    const streamHeading = this.focusCar?.heading
+      ?? (-cam.state.bearing * Math.PI / 180);
+    this.world.update(cam.state.center, streamHeading, this.streamBurst);
     worldTime.value = performance.now() / 1000;
     this.uniforms.uClock.value = worldTime.value;
     this.updateSeason();
@@ -668,9 +680,18 @@ export class ThreeMap {
     // and fill the GPU with tower overdraw.
     const above = Math.max(0, cam.cameraAltitude() - cam.state.elevation);
     const fogLift = Math.min(450, above * 0.35);
-    this.uniforms.uFogNear.value = 900 + fogLift;
-    this.uniforms.uFogFar.value = 1600 + fogLift * 1.15;
-    this.world.cullBeyond(cam.state.center, this.uniforms.uFogFar.value + 80);
+    let fogNear = 900 + fogLift;
+    let fogFar = 1600 + fogLift * 1.15;
+    // M-map / top-down: ground sits ~`above` metres from the camera. Chase fog
+    // (≤2.1 km) then paints the whole city as solid sky — pink at dusk. Push the
+    // haze past the ground so the map underfoot stays readable.
+    if (cam.state.pitch < 25 && above > 900) {
+      fogNear = above + 600;
+      fogFar = above + 2200;
+    }
+    this.uniforms.uFogNear.value = fogNear;
+    this.uniforms.uFogFar.value = fogFar;
+    this.world.cullBeyond(cam.state.center, fogFar + 80);
 
     const clip = new THREE.Matrix4().copy(cam.mainMatrix).multiply(this.sceneToMercator);
     // The chain mirrors once (mercator y points south). Pick the face side once.
@@ -719,6 +740,10 @@ export class ThreeMap {
       layer.scene!.matrixWorldNeedsUpdate = true;
     }
     this.renderer.autoClear = true;
+    if (!this.programsWarmed) {
+      this.programsWarmed = true;
+      try { this.renderer.compile(this.scene, this.sceneCamera); } catch { /* ignore */ }
+    }
     this.renderer.render(this.scene, this.sceneCamera);
     for (const layer of this.layers) {
       if (!this.fused.includes(layer)) layer.render?.(gl, args);
@@ -805,8 +830,8 @@ export class ThreeMap {
     const alt = eye.z / perMeter;
     const [east, up, south] = skyDirection(l.sunPos);
     const toward = (meters: number): [number, number, number] => [
-      lng + east * meters / (111319.49 * Math.cos(lat * Math.PI / 180)),
-      lat - south * meters / 111319.49,
+      lng + east * meters / (METERS_PER_DEGREE * Math.cos(lat * Math.PI / 180)),
+      lat - south * meters / METERS_PER_DEGREE,
       alt + up * meters,
     ];
     const far = toward(5000);

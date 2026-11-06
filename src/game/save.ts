@@ -1,4 +1,4 @@
-/** Mid-drive progress: survives a page reload, cleared when you exit to the menu. */
+/** Progress: survives a reload and a return to the intro (money, garage, last spot). */
 export type GameSave = {
   money: number;
   /** tank fill 0…1 */

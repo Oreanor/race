@@ -67,8 +67,8 @@ export function isVintageTrain(trainId: string) {
   return ONLY_VINTAGE || hash(`${trainId}:age`) < 0.33;
 }
 
-/** for now every consist runs vintage (set false to bring the modern ones back, ~2 in 3) */
-const ONLY_VINTAGE = true;
+/** Force every consist vintage (false = mix, ~1 in 3 vintage). */
+const ONLY_VINTAGE = false;
 
 function modelFor(car: CarPose): ModelName {
   const vintage = isVintageTrain(car.trainId);

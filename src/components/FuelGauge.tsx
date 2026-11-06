@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import type { FuelHud } from '@/game/GameEngine';
+import type { FuelHud } from '@/game/offers';
 import { formatDistance, t } from '@/i18n';
 import { useLang } from '@/i18n/react';
 

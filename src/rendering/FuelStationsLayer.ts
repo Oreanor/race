@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { MapLayer, ThreeMap } from '@/world3d/map/ThreeMap';
-import type { Station } from '@/game/Fuel';
+import type { Station } from '@/game/poi';
 import { mercatorPerMeter, mercatorX01, mercatorY01 } from '@/world3d/map/camera';
 import { simpleLit, standaloneUniforms, type SimpleLitUniforms } from '@/world3d/map/simpleLit';
 

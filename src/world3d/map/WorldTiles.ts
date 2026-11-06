@@ -14,6 +14,8 @@ import { simpleLit } from './simpleLit';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { bakeLampLight, FELL_STRIDE, LAMP_ARM, LAMP_MAP, lampRegion, SOLID_STRIDE } from '../tiles/vegetationTile';
 import { roofClearanceAt, type RoofProfile } from '@/game/buildings/RoofGenerator';
+import { METERS_PER_DEGREE } from '@/game/meters';
+
 
 /** top of the pavement above the terrain (road ribbons sit 0.09–0.15 m up) */
 export const ROAD_TOP = 0.12;
@@ -49,8 +51,9 @@ export const defaultWorldOptions: WorldTilesOptions = {
   unloadRadius: 3600,
   // POIs (stations, hubs) are known before they come out of the fog
   featureRadius: 2400,
-  maxInFlight: 4,
-  uploadsPerFrame: 2,
+  maxInFlight: 6,
+  // base GPU uploads/frame; bursts higher when a backlog would hitch the first lap
+  uploadsPerFrame: 3,
   // ~20 m terrain cells: fine enough for real (unflattened) relief
   grid: 96,
   demTemplate: null,
@@ -218,11 +221,42 @@ export class WorldTiles {
     live.group.updateMatrixWorld(true);
   }
 
-  update(focus: LngLat) {
+  /**
+   * Stream tiles around the view. Pass `heading` (rad, 0 = north) so driving
+   * prefers the road ahead. Pass `burst` during boot so the start ring fills
+   * isotropically and GPU uploads drain faster before the player moves.
+   */
+  update(focus: LngLat, heading = 0, burst = false) {
     if (this.disposed || !this.template) return;
     const o = this.options;
-    const wanted = tilesAround(focus, o.loadRadius, o.zoom);
+    // pull the load centre a few hundred metres forward so hitching stays behind the car
+    // (boot: stay on the spawn so the whole first-lap ring is warm, not just ahead)
+    const cosLat = Math.cos(focus[1] * Math.PI / 180);
+    const aheadM = burst ? 0 : 520;
+    const stream: LngLat = [
+      focus[0] + Math.sin(heading) * aheadM / (METERS_PER_DEGREE * cosLat),
+      focus[1] + Math.cos(heading) * aheadM / METERS_PER_DEGREE,
+    ];
+    const wanted = tilesAround(stream, o.loadRadius, o.zoom);
+    // prefer tiles in front of travel when several are equally near
+    if (!burst) {
+      const he = Math.sin(heading), hn = Math.cos(heading);
+      const mx = mercatorX(stream[0]), my = mercatorY(stream[1]);
+      const mScale = Math.cos(stream[1] * Math.PI / 180);
+      wanted.sort((a, b) => {
+        const score = (p: typeof a) => {
+          const [cx, cy] = tileCorner(p.tile);
+          const span = tileSpan(p.tile.z);
+          const te = ((cx + span / 2) - mx) * mScale;
+          const tn = (my - (cy - span / 2)) * mScale; // mercator y south → north
+          const ahead = te * he + tn * hn;
+          return p.distance - Math.max(0, ahead) * 0.5;
+        };
+        return score(a) - score(b);
+      });
+    }
     const keep = new Set(tilesAround(focus, o.unloadRadius, o.zoom).map((t) => t.key));
+    for (const p of wanted) keep.add(p.key);
     for (const [key, live] of this.tiles) if (!keep.has(key)) this.unload(key, live);
     for (const [key, job] of this.pending) {
       if (keep.has(key)) continue;
@@ -230,14 +264,20 @@ export class WorldTiles {
       this.pending.delete(key);
     }
     const now = performance.now();
+    const flightCap = burst ? Math.max(o.maxInFlight, 10) : o.maxInFlight;
     for (const plan of wanted) {
       if (this.tiles.has(plan.key) || this.pending.has(plan.key)) continue;
       const failed = this.failures.get(plan.key);
       if (failed && (failed.count >= 4 || now < failed.at)) continue;
-      if (this.pending.size >= o.maxInFlight) break;
+      if (this.pending.size >= flightCap) break;
       this.request(plan.key, plan.tile);
     }
-    let budget = o.uploadsPerFrame;
+    let backlog = 0;
+    for (const plan of wanted) backlog += this.tiles.get(plan.key)?.waiting.length ?? 0;
+    // boot / first-lap hitch: data is ready but uploads are throttled — catch up
+    let budget = burst ? Math.max(o.uploadsPerFrame, 10) : o.uploadsPerFrame;
+    if (backlog > 12) budget = Math.min(burst ? 16 : 8, budget + (burst ? 6 : 4));
+    else if (backlog > 5) budget = Math.min(burst ? 12 : 6, budget + (burst ? 4 : 2));
     for (const plan of wanted) {
       const live = this.tiles.get(plan.key);
       while (live && live.waiting.length && budget > 0) { live.waiting.shift()!(); budget--; }
@@ -305,9 +345,10 @@ export class WorldTiles {
     group.matrixAutoUpdate = false;
     group.name = `world ${key}`;
     const lampMap = new THREE.DataTexture(data.vegetation.lampLight, LAMP_MAP, LAMP_MAP, THREE.RedFormat, THREE.UnsignedByteType);
-    lampMap.minFilter = THREE.LinearMipmapLinearFilter;
+    // no mipmaps: generating them on the main thread hitchs every new tile on the first lap
+    lampMap.minFilter = THREE.LinearFilter;
     lampMap.magFilter = THREE.LinearFilter;
-    lampMap.generateMipmaps = true;
+    lampMap.generateMipmaps = false;
     lampMap.needsUpdate = true;
     const live: Live = { key, tile: data.tile, data, group, waiting: [], roads: null, disposables: [lampMap], extra: new Map(), props: new Map(), propCells: null, footprintCells: null, footprintSeen: null, lampMap, spires: null };
     this.place(live);
@@ -678,8 +719,8 @@ export class WorldTiles {
     if (!best) return null;
     const house = best as Cand;
     const toE = (lng: number, lat: number) => ({
-      e: (lng - house.middle[0]) * 111319.49 * cos,
-      n: (lat - house.middle[1]) * 111319.49,
+      e: (lng - house.middle[0]) * METERS_PER_DEGREE * cos,
+      n: (lat - house.middle[1]) * METERS_PER_DEGREE,
     });
     const streetDir = toE(street[0], street[1]);
     const streetLen = Math.hypot(streetDir.e, streetDir.n) || 1;
@@ -724,8 +765,8 @@ export class WorldTiles {
       // street-facing: at least somewhat toward the road pin
       if (oe * streetDir.e + on * streetDir.n < 0.12) continue;
       // accessible: a few metres out is not inside a neighbour
-      const probeLng = house.middle[0] + (midE + oe * 4) / (111319.49 * cos);
-      const probeLat = house.middle[1] + (midN + on * 4) / 111319.49;
+      const probeLng = house.middle[0] + (midE + oe * 4) / (METERS_PER_DEGREE * cos);
+      const probeLat = house.middle[1] + (midN + on * 4) / METERS_PER_DEGREE;
       if (neighbours.some((n) => insideLngLat([probeLng, probeLat], n))) continue;
 
       const columns = Math.max(1, Math.floor((length - 0.6) / SPACING));
@@ -738,8 +779,8 @@ export class WorldTiles {
           const alongE = ae.e + de * t + oe * 0.08;
           const alongN = ae.n + dn * t + on * 0.08;
           const at: LngLat = [
-            house.middle[0] + alongE / (111319.49 * cos),
-            house.middle[1] + alongN / 111319.49,
+            house.middle[0] + alongE / (METERS_PER_DEGREE * cos),
+            house.middle[1] + alongN / METERS_PER_DEGREE,
           ];
           panes.push({ at, altitude, oe, on });
         }
@@ -1108,7 +1149,7 @@ export class WorldTiles {
    */
   raycastBuildings(from: LngLat, fromAlt: number, to: LngLat, toAlt: number, exaggeration: number) {
     const cos = Math.cos(from[1] * Math.PI / 180);
-    const dx = (to[0] - from[0]) * 111319.49 * cos, dy = (to[1] - from[1]) * 111319.49;
+    const dx = (to[0] - from[0]) * METERS_PER_DEGREE * cos, dy = (to[1] - from[1]) * METERS_PER_DEGREE;
     const length = Math.hypot(dx, dy);
     if (length < 0.5) return null;
     const mid: LngLat = [(from[0] + to[0]) / 2, (from[1] + to[1]) / 2];
@@ -1119,7 +1160,7 @@ export class WorldTiles {
     });
     if (!candidates.length) return null;
     const steps = Math.ceil(length / 0.75);
-    const m = (q: LngLat): [number, number] => [(q[0] - from[0]) * 111319.49 * cos, (q[1] - from[1]) * 111319.49];
+    const m = (q: LngLat): [number, number] => [(q[0] - from[0]) * METERS_PER_DEGREE * cos, (q[1] - from[1]) * METERS_PER_DEGREE];
     for (let s = 1; s <= steps; s++) {
       const t = s / steps;
       const p: LngLat = [from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t];
@@ -1211,8 +1252,8 @@ function roofInMeters(roof: RoofProfile, originLng: number, originLat: number): 
   }
   const cos = Math.cos(originLat * Math.PI / 180);
   const toLocal = (lng: number, lat: number) => ({
-    x: (lng - originLng) * 111319.49 * cos,
-    z: (lat - originLat) * 111319.49,
+    x: (lng - originLng) * METERS_PER_DEGREE * cos,
+    z: (lat - originLat) * METERS_PER_DEGREE,
   });
   return {
     eaves: roof.eaves,

@@ -14,7 +14,7 @@ import { layoutFacade } from '../../game/buildings/FacadeGenerator.ts';
 import { buildRoof, canPitch, simplifyRing, type RoofKind as PitchedKind, type RoofPoint } from '../../game/buildings/RoofGenerator.ts';
 import { PIECES, ROOF_LIP } from '../../game/buildings/pieces.ts';
 import type { InstanceSet } from './vegetationTile.ts';
-import { footprintKey } from '../../game/buildings/wallOverlap.ts';
+import { buildingStyleKey, primaryTileSeam } from '../../game/buildings/wallOverlap.ts';
 import { cutCoveredWalls } from './wallCut.ts';
 import { tileCorner, tileSpan, latFromMercator, type TileId } from '../mercator.ts';
 import { DEM_SIZE, sampleDem } from './dem.ts';
@@ -487,18 +487,13 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
         const outer = prepareRing(polygon[0], extent);
         if (outer.length < 3) continue;
         const rings = [outer, ...polygon.slice(1).map((ring) => prepareRing(ring, extent)).filter((ring) => ring.length >= 3)];
-        let key: string;
-        if (options.legacyColors) {
-          // CityBuildings colours by `${height}:${base}:${footprintKey(lng/lat rings)}`
-          const geo = polygon.map((ring) => ring.map((p) => lngLatOf(tile, extent, p.x, p.y)));
-          key = `${Math.round(measured)}:${base.toFixed(1)}:${footprintKey(geo)}`;
-        } else {
-          // Stable per-building key from its global position. Feature ids are not
-          // per building: OpenFreeMap merges many buildings into one MultiPolygon.
-          let minX = Infinity, minY = Infinity;
-          for (const p of polygon[0]) { if (p.x < minX || (p.x === minX && p.y < minY)) { minX = p.x; minY = p.y; } }
-          key = `p${tile.z}:${tile.x * extent + minX}:${tile.y * extent + minY}`;
-        }
+        // Colour/style seed: full footprint inside the tile; on a tile seam only the
+        // primary cut edge (busiest of N/E/S/W). A thin sliver has most vertices
+        // "on edge" — hashing all of them made the two halves diverge.
+        const ringLngLat = outer.map((p) => lngLatOf(tile, extent, p[0], p[1]));
+        const seamPx = primaryTileSeam(outer.map((p) => ({ x: p[0], y: p[1] })), extent);
+        const seamLngLat = seamPx.map((p) => lngLatOf(tile, extent, p.x, p.y));
+        const key = buildingStyleKey(measured, base, ringLngLat, seamLngLat);
         const seed = hashSeed(key);
         let wall = WALLS[indexFor(WALLS.length, seed)];
         let roof = ROOFS[indexFor(ROOFS.length, seed ^ 0x51f0c3)];

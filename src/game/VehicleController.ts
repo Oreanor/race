@@ -63,11 +63,7 @@ export function resolveVehicleCollision(a: VehicleBody, b: VehicleBody, scale = 
   };
 }
 
-/** Ground distance between two lng/lat points in meters (flat-earth, fine for a city). */
-export function metersBetween(a: Position, b: Position) {
-  const cos = Math.cos(((a[1] + b[1]) / 2) * Math.PI / 180);
-  return Math.hypot((b[0] - a[0]) * 111319.49 * cos, (b[1] - a[1]) * 111319.49);
-}
+export { metersBetween, METERS_PER_DEGREE, metersScale, eastNorth, offsetMeters } from './meters';
 
 export class VehicleController {
   position: Position; heading: number; speed=0; distance=0; throttle=0; slip=0;

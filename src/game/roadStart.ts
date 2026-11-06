@@ -1,7 +1,6 @@
 import type { ThreeMap } from '@/world3d/map/ThreeMap';
-import type { Position } from './VehicleController';
+import { METERS_PER_DEGREE, type Position } from './VehicleController';
 
-const METERS_PER_DEGREE = 111319.49;
 const DRIVABLE_ROADS = new Set(['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'minor', 'service']);
 
 // Project the configured start onto a nearby drivable road once, never while driving.

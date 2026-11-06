@@ -374,9 +374,10 @@ export class WorldParticles {
   /**
    * Fire hose: fixed muzzle speed, elevation from the player (mouse Y).
    * Lands where the lob falls — short/long = aim higher/lower or drive closer/farther.
+   * Optional `clip` stops the jet early (train / façade) so spit does not pass through.
    * Returns flight time (ms) and the ENU point where the spit meets the ground (u ≈ groundRel).
    */
-  hose(here: Position, from: Enu, dirE: number, dirN: number, elev: number, groundRel: number, now: number): { flightMs: number; land: Enu } {
+  hose(here: Position, from: Enu, dirE: number, dirN: number, elev: number, groundRel: number, now: number, clip?: Enu | null): { flightMs: number; land: Enu } {
     const g = 9.8;
     const speedUp = 3;
     const v0 = 26; // m/s real; particles run 3× faster on the same arc
@@ -401,12 +402,17 @@ export class WorldParticles {
     }
     if (!(tLand > 0.05)) tLand = Math.max(0.2, (2 * v0 * Math.max(0.05, sin)) / g);
     tLand = Math.min(tLand, 2.2);
-    const range = v0 * cos * tLand;
-    const land: Enu = {
-      e: from.e + ue * range,
-      n: from.n + un * range,
+    let land: Enu = {
+      e: from.e + ue * v0 * cos * tLand,
+      n: from.n + un * v0 * cos * tLand,
       u: groundRel,
     };
+    if (clip) {
+      const flat = v0 * Math.max(0.08, cos);
+      const reach = Math.hypot(clip.e - from.e, clip.n - from.n);
+      tLand = Math.min(tLand, Math.max(0.05, reach / flat));
+      land = { e: clip.e, n: clip.n, u: clip.u };
+    }
     const flightMs = Math.min(900, Math.max(80, (tLand / speedUp) * 1000));
     // dense rope of spit — many small stretched beads, staggered along the lob so gaps close
     const gobs = 11 + Math.floor(Math.random() * 4);

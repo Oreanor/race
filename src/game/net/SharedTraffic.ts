@@ -2,7 +2,7 @@ import { cars as carsConfig, vehicleConfig, type Car } from '@/config/vehicle.co
 import { HIT_DAMAGE, NET_HZ, TRAFFIC_MAX, type TrafficCar } from '@/net/protocol';
 import type { TargetVehicle, VehicleSceneLayer } from '@/rendering/VehicleLayer';
 import { advanceTrafficBot, createTrafficBot, type TrafficBot, type TrafficRoadNetwork } from '../TrafficBots';
-import { metersBetween, VehicleController, type Position } from '../VehicleController';
+import { METERS_PER_DEGREE, metersBetween, VehicleController, type Position } from '../VehicleController';
 
 // Light traffic everybody around sees and can shoot at. Among players near each
 // other, the one who joined first drives it: a couple of cars going about their
@@ -252,7 +252,7 @@ export class SharedTraffic {
     this.host.lots().forEach((lot, n) => {
       const count = 2 + Math.floor(spotHash(`${lot[0].toFixed(5)}:${lot[1].toFixed(5)}`) * 2);
       for (let k = 0; k < count; k++) {
-        const at: Position = [lot[0] + (k - (count - 1) / 2) * 2.8 / (111319.49 * Math.cos(lot[1] * Math.PI / 180)), lot[1]];
+        const at: Position = [lot[0] + (k - (count - 1) / 2) * 2.8 / (METERS_PER_DEGREE * Math.cos(lot[1] * Math.PI / 180)), lot[1]];
         add(`lot${n}:${lot[0].toFixed(4)}:${lot[1].toFixed(4)}:${k}`, at, 0);
       }
     });

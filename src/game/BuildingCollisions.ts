@@ -1,5 +1,6 @@
-import type { Position } from './VehicleController';
+import { METERS_PER_DEGREE, type Position } from './VehicleController';
 import { roofClearanceAt, type RoofProfile } from './buildings/RoofGenerator';
+
 
 type Point = [number, number];
 export type Polygon = Point[][];
@@ -72,13 +73,13 @@ export class BuildingCollisions {
 
   local(position: Position): Point {
     return [
-      (position[0] - this.origin[0]) * 111319.49 * this.cos,
-      (position[1] - this.origin[1]) * 111319.49,
+      (position[0] - this.origin[0]) * METERS_PER_DEGREE * this.cos,
+      (position[1] - this.origin[1]) * METERS_PER_DEGREE,
     ];
   }
 
   private world(point: Point): Position {
-    return [this.origin[0] + point[0] / (111319.49 * this.cos), this.origin[1] + point[1] / 111319.49];
+    return [this.origin[0] + point[0] / (METERS_PER_DEGREE * this.cos), this.origin[1] + point[1] / METERS_PER_DEGREE];
   }
 
   /** Absolute roof altitude at a local-metre point. */
@@ -157,7 +158,7 @@ export class BuildingCollisions {
     return this.hits(this.local(from), this.local(to), heading, scale, altitude);
   }
 
-  /** Glancing hits slide along the wall; head-on stops. */
+  /** Glancing hits slide along the wall; head-on stops. Corners skim instead of snagging. */
   resolve(from: Position, to: Position, heading: number, scale = 1, altitude = -Infinity) {
     const start = this.local(from);
     const end = this.local(to);
@@ -167,11 +168,12 @@ export class BuildingCollisions {
       return { position: to, stopped: false, slid: false };
     }
     const slid = this.slide(start, end, heading, scale, altitude);
-    if (slid && !this.hits(start, slid, heading, scale, altitude)) {
-      return { position: this.world(slid), stopped: false, slid: true };
-    }
-    if (slid && this.hits(start, start, heading, scale, altitude) && !this.deepens(start, slid, heading, scale, altitude)) {
-      return { position: this.world(slid), stopped: false, slid: true };
+    if (slid) {
+      const slidDepth = this.depth(slid, heading, scale, altitude);
+      // Accept slides that skim or ease out — including corner grazes that still touch.
+      if (slidDepth <= startDepth + 0.12 && !this.deepens(start, slid, heading, scale, altitude)) {
+        return { position: this.world(slid), stopped: false, slid: true };
+      }
     }
     const clamped = this.clamp(start, end, heading, scale, altitude);
     const moved = Math.hypot(clamped[0] - start[0], clamped[1] - start[1]) > 0.05;
@@ -236,45 +238,87 @@ export class BuildingCollisions {
     return best;
   }
 
+  /** Unit outward normal at `point`; near vertices, blend both edges so corners don't snag. */
   private outward(point: Point, polygon: CollisionPolygon): Point {
-    let best = Infinity;
-    let ax = 0, ay = 0, bx = 0, by = 0;
-    for (const ring of polygon.rings) {
-      for (let i = 0; i < ring.length; i++) {
-        const a = ring[i];
-        const b = ring[(i + 1) % ring.length];
-        const distance = Math.sqrt(distanceSquared(point, a, b));
-        if (distance < best) {
-          best = distance;
-          ax = a[0]; ay = a[1];
-          bx = b[0]; by = b[1];
+    type EdgeHit = { ax: number; ay: number; bx: number; by: number; t: number; dist: number };
+    let best: EdgeHit | null = null;
+    let ring = polygon.rings[0] ?? [];
+    let index = 0;
+    for (const candidate of polygon.rings) {
+      for (let i = 0; i < candidate.length; i++) {
+        const a = candidate[i];
+        const b = candidate[(i + 1) % candidate.length];
+        const dx = b[0] - a[0], dy = b[1] - a[1];
+        const span2 = dx * dx + dy * dy || 1;
+        const t = Math.max(0, Math.min(1, ((point[0] - a[0]) * dx + (point[1] - a[1]) * dy) / span2));
+        const cx = a[0] + t * dx, cy = a[1] + t * dy;
+        const dist = Math.hypot(point[0] - cx, point[1] - cy);
+        if (!best || dist < best.dist) {
+          best = { ax: a[0], ay: a[1], bx: b[0], by: b[1], t, dist };
+          ring = candidate;
+          index = i;
         }
       }
     }
-    const dx = bx - ax;
-    const dy = by - ay;
-    const t = Math.max(0, Math.min(1, ((point[0] - ax) * dx + (point[1] - ay) * dy) / (dx * dx + dy * dy || 1)));
-    const closest: Point = [ax + t * dx, ay + t * dy];
-    let nx = point[0] - closest[0];
-    let ny = point[1] - closest[1];
-    const length = Math.hypot(nx, ny);
-    if (length < 0.001) {
+    if (!best) return [0, 1];
+
+    const edgeNormal = (ax: number, ay: number, bx: number, by: number): Point => {
+      const dx = bx - ax, dy = by - ay;
       const span = Math.hypot(dx, dy) || 1;
-      nx = -dy / span;
-      ny = dx / span;
+      // outward for CCW rings: right-hand perpendicular
+      let nx = dy / span, ny = -dx / span;
+      const mid: Point = [(ax + bx) / 2, (ay + by) / 2];
+      if (inside([mid[0] + nx * 0.35, mid[1] + ny * 0.35], polygon.rings[0] ?? [])) {
+        nx = -nx;
+        ny = -ny;
+      }
+      return [nx, ny];
+    };
+
+    let nx: number;
+    let ny: number;
+    const corner = 0.22; // metres along the edge — blend so sharp corners feel rounded
+    if (best.t <= corner || best.t >= 1 - corner) {
+      const prev = ring[(index - 1 + ring.length) % ring.length];
+      const a = ring[index];
+      const b = ring[(index + 1) % ring.length];
+      const next = ring[(index + 2) % ring.length];
+      const n0 = edgeNormal(prev[0], prev[1], a[0], a[1]);
+      const n1 = edgeNormal(a[0], a[1], b[0], b[1]);
+      const n2 = edgeNormal(b[0], b[1], next[0], next[1]);
+      const blend = best.t <= corner ? (corner - best.t) / corner : (best.t - (1 - corner)) / corner;
+      const left = best.t <= corner ? n0 : n1;
+      const right = best.t <= corner ? n1 : n2;
+      nx = left[0] * blend + right[0] * (1 - blend);
+      ny = left[1] * blend + right[1] * (1 - blend);
+      // At the vertex itself, average both faces (rounded corner).
+      if (best.t < 0.02 || best.t > 0.98) {
+        nx = left[0] + right[0];
+        ny = left[1] + right[1];
+      }
+      const len = Math.hypot(nx, ny) || 1;
+      nx /= len;
+      ny /= len;
     } else {
-      nx /= length;
-      ny /= length;
-    }
-    const solid = inside(point, polygon.rings[0] ?? [])
-      && !polygon.rings.slice(1).some(ring => inside(point, ring));
-    // Push out of the building: if we're inside, flip so normal points outward.
-    if (solid) {
-      nx = -nx;
-      ny = -ny;
-    } else if (inside([closest[0] + nx * 0.35, closest[1] + ny * 0.35], polygon.rings[0] ?? [])) {
-      nx = -nx;
-      ny = -ny;
+      const closest: Point = [
+        best.ax + best.t * (best.bx - best.ax),
+        best.ay + best.t * (best.by - best.ay),
+      ];
+      nx = point[0] - closest[0];
+      ny = point[1] - closest[1];
+      const length = Math.hypot(nx, ny);
+      if (length < 0.001) {
+        [nx, ny] = edgeNormal(best.ax, best.ay, best.bx, best.by);
+      } else {
+        nx /= length;
+        ny /= length;
+      }
+      const solid = inside(point, polygon.rings[0] ?? [])
+        && !polygon.rings.slice(1).some(hole => inside(point, hole));
+      if (solid || inside([closest[0] + nx * 0.35, closest[1] + ny * 0.35], polygon.rings[0] ?? [])) {
+        nx = -nx;
+        ny = -ny;
+      }
     }
     return [nx, ny];
   }
@@ -282,20 +326,27 @@ export class BuildingCollisions {
   private slide(from: Point, to: Point, heading: number, scale: number, altitude: number) {
     const count = Math.max(1, Math.ceil(Math.hypot(to[0] - from[0], to[1] - from[1]) / 0.4));
     let normal: Point | null = null;
-    for (let step = 0; step <= count && !normal; step++) {
+    let sink = 0;
+    for (let step = 0; step <= count; step++) {
       const t = step / count;
       const center: Point = [from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t];
       const hit = this.contact(center, heading, scale, altitude);
       if (!hit) continue;
       normal = this.outward(hit.point, hit.polygon);
+      sink = hit.depth;
+      break;
     }
     if (!normal) return null;
     const dx = to[0] - from[0];
     const dy = to[1] - from[1];
     const into = dx * normal[0] + dy * normal[1];
     // Remove only the component pushing into the wall; keep the tangent.
-    const sx = into < 0 ? dx - normal[0] * into : dx;
-    const sy = into < 0 ? dy - normal[1] * into : dy;
+    let sx = into < 0 ? dx - normal[0] * into : dx;
+    let sy = into < 0 ? dy - normal[1] * into : dy;
+    // Ease off the face a hair so the next frame does not re-catch the same corner.
+    const lift = Math.min(0.18, sink + 0.04);
+    sx += normal[0] * lift;
+    sy += normal[1] * lift;
     if (Math.hypot(sx, sy) < 1e-8) return null;
     return [from[0] + sx, from[1] + sy] as Point;
   }
