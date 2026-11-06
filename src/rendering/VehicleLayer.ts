@@ -53,6 +53,8 @@ export type VehicleSceneLayer = MapLayer & {
   /** headlamp glow, 0 off … 1 full (night) */
   setHeadlights: (on: number) => void;
   setAim: (aim: AimPoint | null) => void;
+  /** what the cursor points at as the camera sees it: the first wall on its ray, else the ground */
+  aimTarget: () => { position: Position; altitude: number; wall: boolean } | null;
   setFiring: (firing: boolean) => void;
   flashPlayer: (duration: number) => void;
   /** a hunting target fires at our car: muzzle flash, a tracer, and sparks on us or beside us */
@@ -95,6 +97,10 @@ export type VehicleSceneLayer = MapLayer & {
     colors?: { pole: string; glow: string; orb: string };
   }[]) => void;
   setRaceFinish: (goal: Position | null) => void;
+  /** the hauler: a car of ours held at this pose (`up`: m above our car), drawn there and not on its own ground */
+  setCarried: (pose: { id: string; position: Position; heading: number; up: number } | null) => void;
+  /** the hauler's cable from our car's middle to a point (`up`: m above our car); `wave`: 0 taut … 1 whipping; null hides it */
+  setCable: (to: { position: Position; up: number; wave?: number } | null) => void;
   /** the J ramp: low edge at `position`, rising along `heading`; null takes it away */
   setRamp: (ramp: { position: Position; heading: number; ground: number; tilt: number; length: number; height: number; width: number } | null) => void;
 };
@@ -151,6 +157,8 @@ export async function loadCar(car: Car) {
   root.rotation.y = car.yaw;
   polish(root);
   addBeacons(root, car, size, scale);
+  // the body's width (its shorter side once scaled), for where its wheels leave their tracks
+  root.userData.width = Math.min(size.x, size.z) * scale;
   return root;
 }
 
@@ -411,6 +419,18 @@ export function vehicleLayer(
   tracer.frustumCulled = false;
   tracer.visible = false;
   scene.add(tracer);
+  // the hauler's cable: a thin line like a web thread, from our car's middle to its hook;
+  // it whips in a wave as it flies and goes straight once it bites
+  const CABLE_POINTS = 28;
+  const cablePositions = new Float32Array(CABLE_POINTS * 3);
+  const cableGeometry = new THREE.BufferGeometry();
+  cableGeometry.setAttribute('position', new THREE.BufferAttribute(cablePositions, 3).setUsage(THREE.DynamicDrawUsage));
+  const cable = new THREE.Line(cableGeometry, new THREE.LineBasicMaterial({ color: '#000000' }));
+  cable.frustumCulled = false;
+  cable.visible = false;
+  scene.add(cable);
+  let cableTo: { position: Position; up: number; wave: number } | null = null;
+  let carried: { id: string; position: Position; heading: number; up: number } | null = null;
   // muzzle flash, impact sparks and explosions
   const fx = new WorldParticles(scene);
   const explosionGeometry = new THREE.SphereGeometry(1, 10, 8);
@@ -1119,6 +1139,8 @@ export function vehicleLayer(
     puff.born = now;
     puff.mesh.visible = true;
   };
+  /** our body's width (m): the tyre tracks sit under its wheels */
+  let carWidth = 1.9;
   function installCarModel(model: THREE.Group) {
     for (const child of [...root.children]) {
       root.remove(child);
@@ -1126,6 +1148,7 @@ export function vehicleLayer(
     }
     root.clear();
     root.add(model);
+    if (typeof model.userData.width === 'number') carWidth = model.userData.width;
     map?.triggerRepaint();
   }
 
@@ -1148,6 +1171,14 @@ export function vehicleLayer(
     id: 'vehicle',
     type: 'custom',
     setAim(next) { aim = next; },
+    aimTarget() {
+      if (!aim || !map) return null;
+      const carAlt = height();
+      const groundAlt = map.groundAt(aim.ground) ?? carAlt;
+      const view = cameraPose(vehicle.position, carAlt);
+      const wall = resolveShot(view.position, view.altitude, aim.ground, groundAlt, false);
+      return wall ? { position: wall.point, altitude: wall.altitude, wall: true } : { position: [...aim.ground] as Position, altitude: groundAlt, wall: false };
+    },
     setFiring(value) { firing = value; },
     flashPlayer(duration) { playerFlashUntil = Math.max(playerFlashUntil, performance.now() + duration); },
     burnPlayer() {
@@ -1251,6 +1282,8 @@ export function vehicleLayer(
     setPickups,
     setMissionBeacons,
     setRaceFinish,
+    setCarried(pose) { carried = pose ? { ...pose, position: [...pose.position] as Position } : null; map?.triggerRepaint(); },
+    setCable(to) { cableTo = to ? { position: [...to.position] as Position, up: to.up, wave: to.wave ?? 0 } : null; map?.triggerRepaint(); },
     setRamp,
     scene,
     placement,
@@ -1317,8 +1350,29 @@ export function vehicleLayer(
         car.rotation.set(-spec.pitch, heading - spec.heading, spec.roll);
         beam.visible = night > 0.02;
       }
+      // the cable: from our car's middle (its centre of mass) to the hook, in a travelling wave
+      cable.visible = Boolean(cableTo);
+      if (cableTo) {
+        const from = scenePoint(here, here, heading, 0.9), to = scenePoint(here, cableTo.position, heading, cableTo.up);
+        const span = to.clone().sub(from);
+        const length = Math.max(0.01, span.length());
+        // sideways and a little up, across the line
+        const side = new THREE.Vector3(-span.z, 0, span.x).normalize();
+        if (!Number.isFinite(side.x)) side.set(1, 0, 0);
+        const amp = Math.min(0.45, length * 0.06) * cableTo.wave;
+        for (let i = 0; i < CABLE_POINTS; i++) {
+          const s = i / (CABLE_POINTS - 1);
+          const swing = amp * Math.sin(s * Math.PI * 2.5 - now * 0.045) * Math.sin(Math.PI * s);
+          cablePositions[i * 3] = from.x + span.x * s + side.x * swing;
+          cablePositions[i * 3 + 1] = from.y + span.y * s + swing * 0.35;
+          cablePositions[i * 3 + 2] = from.z + span.z * s + side.z * swing;
+        }
+        cableGeometry.attributes.position.needsUpdate = true;
+      }
       for (const target of targets.values()) {
-        const offset = scenePoint(here, target.position, heading, targetLift(target));
+        // held by the hauler: where it is put, not on its own ground
+        const held = carried && carried.id === target.id && !target.destroyed ? carried : null;
+        const offset = held ? scenePoint(here, held.position, heading, held.up) : scenePoint(here, target.position, heading, targetLift(target));
         if (target.destroyed) {
           const age = now - target.explodedAt;
           const tumbleMs = 1100;
@@ -1390,7 +1444,7 @@ export function vehicleLayer(
           continue;
         }
         target.root.position.copy(offset);
-        target.root.rotation.y = heading - target.heading;
+        target.root.rotation.y = heading - (held ? held.heading : target.heading);
         tintTarget(target, now < target.flashUntil);
       }
       for (const pickup of pickups.values()) {
@@ -1446,7 +1500,8 @@ export function vehicleLayer(
         raceFinish.rotation.set(0, heading - now * 0.0008, 0);
         finishFlag.rotation.y = Math.sin(now * 0.003) * 0.15;
       }
-      tireTracks.update(here, heading, 1, car.length, height(), p => map.groundAt(p));
+      // wheels sit a little in from the body's sides
+      tireTracks.update(here, heading, 1, currentCar.length, height(), p => map.groundAt(p), Math.max(0.55, carWidth / 2 - 0.2));
       for (const puff of puffs) {
         if (!puff.active) continue;
         const age = now - puff.born;

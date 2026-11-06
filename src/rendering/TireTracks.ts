@@ -22,7 +22,7 @@ export class TireTracks {
     const mesh=new THREE.Mesh(geo,this.material);mesh.frustumCulled=false;mesh.renderOrder=1;return mesh;
   });
   constructor(scene: THREE.Scene){for(const mesh of this.meshes)scene.add(mesh);}
-  update(here: Position, heading:number, scale:number, carLength:number, carAltitude:number, ground:(p:Position)=>number|null) {
+  update(here: Position, heading:number, scale:number, carLength:number, carAltitude:number, ground:(p:Position)=>number|null, halfTrack=0.85) {
     const step=this.last?local(this.last,here):null;
     const distance=step?Math.hypot(step.x,step.y):0;
     if(!this.last || distance>6*scale || scale!==this.lastScale) {this.stroke++;this.last=[...here];this.direction=null;this.lastScale=scale;}
@@ -31,7 +31,7 @@ export class TireTracks {
       if(this.direction&&direction.x*this.direction.x+direction.y*this.direction.y<0.25)this.stroke++;
       this.direction=direction;this.last=[...here];
       for(let wheel=0;wheel<2;wheel++){
-        const side=(wheel===0?-0.85:0.85)*scale,back=carLength*0.31*scale;
+        const side=(wheel===0?-halfTrack:halfTrack)*scale,back=carLength*0.31*scale;
         const position=offsetPosition(here,-Math.sin(heading)*back+Math.cos(heading)*side,-Math.cos(heading)*back-Math.sin(heading)*side);
         const elevation=ground(position);
         // off the ground (a jump) leaves no mark: the track breaks and starts again on landing

@@ -419,6 +419,10 @@ function deckProfile(line: Pt[], ends: [number, number], at: Surfaces, needs: Ne
       if (free[1]) h[i] = Math.min(h[i], h1 + RAMP_SLOPE * (length - s[i]) / at.toMerc);
     }
   }
+  // never under the ground: a straight line between the ends dips into any rise between
+  // them (a hump, a bank higher than the ends), and the road beside it tears; there it
+  // runs on the ground like a causeway
+  for (let i = 0; i < h.length; i++) h[i] = Math.max(h[i], at.driveAt(pts[i][0], pts[i][1]) + 0.05);
   return { pts, s, h, bed, length };
 }
 

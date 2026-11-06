@@ -86,6 +86,8 @@ export class SharedTraffic {
   private parkedOnce = false;
   /** others' parked cars we took: hidden until their owner stops sending them */
   private taken = new Set<string>();
+  /** the car of ours the hauler holds: nothing drives it, it stands where it is put */
+  private held: string | null = null;
 
   constructor(private host: TrafficHost) {}
 
@@ -143,6 +145,51 @@ export class SharedTraffic {
       this.taken.add(id);
       this.host.take(id);
     }
+  }
+
+  /** Our cars the hauler can pick up: the traffic we drive and the cars we parked, still in one piece. */
+  holdable(): { id: string; car: Car; position: Position; heading: number; speed: number }[] {
+    const layer = this.host.layer();
+    return [
+      ...this.bots().map((bot) => ({ id: bot.id, car: bot.car, position: bot.position, heading: bot.heading, speed: Math.abs(bot.controller.speed) })),
+      ...this.parked.filter((p) => layer?.isTargetAlive(p.id) !== false).map((p) => ({ id: p.id, car: p.car, position: p.controller.position, heading: p.controller.heading, speed: 0 })),
+    ];
+  }
+
+  /** The hauler holds car `id` (null: lets go). */
+  hold(id: string | null) { this.held = id; }
+
+  /** Put a car of ours here (the hauler carries it); a driven one finds its way again from there. */
+  place(id: string, position: Position, heading: number) {
+    const bot = this.driven.find((d) => d.bot.id === id)?.bot;
+    if (bot) {
+      bot.controller.position = [...position] as Position;
+      bot.controller.heading = heading;
+      bot.controller.speed = 0;
+      bot.position = [...position] as Position;
+      bot.heading = heading;
+      bot.route = [];
+      bot.routeIndex = 1;
+      bot.repathAt = 0;
+      bot.lastRouteRevision = -1;
+      return;
+    }
+    const parked = this.parked.find((p) => p.id === id);
+    if (parked) {
+      parked.controller.position = [...position] as Position;
+      parked.controller.heading = heading;
+    }
+  }
+
+  /** Car `id` is gone for good (the hauler drove off in another car with it). */
+  drop(id: string) {
+    this.driven = this.driven.filter((d) => d.bot.id !== id);
+    const parked = this.parked.find((p) => p.id === id);
+    if (parked) {
+      this.spent.set(parked.spot, [...parked.controller.position] as Position);
+      this.parked = this.parked.filter((p) => p !== parked);
+    }
+    if (this.held === id) this.held = null;
   }
 
   /** Somebody hijacked a car we parked. */
@@ -285,7 +332,7 @@ export class SharedTraffic {
       if (metersBetween(bot.position, here) >= SPAWN.min * 0.6) this.driven.push({ bot, deadAt: 0 });
     }
     for (const d of this.driven) {
-      if (d.deadAt) continue;
+      if (d.deadAt || d.bot.id === this.held) continue;
       const config = { ...vehicleConfig, acceleration: Math.min(d.bot.car.acceleration, 9), maxSpeed: Math.min(d.bot.car.maxSpeed, TOP_SPEED) };
       // give way to us and the other players: brake, then go round — no ramming
       advanceTrafficBot(d.bot, dt, this.host.network, config, [], [here, ...this.host.others().map((p) => p.position)]);

@@ -8,6 +8,8 @@ import { computeLighting, timeFor, TIME_MODES, type Lighting, type TimeMode } fr
 import { placeClock, placeMoment, placeZone } from '../placeTime';
 import { seasonAt, snowCoverAt, SEASON_MODES, SEASONS, type Season, type SeasonMode } from '../seasons';
 import { SkyBodies } from './sky';
+import { LensFlare } from './LensFlare';
+import { skyDirection } from '../astro';
 import { SKIN_DATA, type SkinId } from '../buildings/skins';
 
 /** bullet hole decals; the oldest one goes when a new one comes */
@@ -88,6 +90,9 @@ export class ThreeMarker {
   /** @internal */ position() { return this.lngLat; }
 }
 
+/** how long a change of time of day takes (ms) */
+const TIME_ROLL_MS = 4000;
+
 export class ThreeMap {
   readonly renderer: THREE.WebGLRenderer;
   readonly camera = new MapCamera();
@@ -98,6 +103,7 @@ export class ThreeMap {
   private container: HTMLElement;
   private canvas: HTMLCanvasElement;
   private markerLayer: HTMLDivElement;
+  private flare: LensFlare;
   private markers = new Set<ThreeMarker>();
   private scene = new THREE.Scene();
   private sceneCamera = new THREE.Camera();
@@ -122,6 +128,11 @@ export class ThreeMap {
   private seasonMode: SeasonMode = 'real';
   private seasonClock = 0;
   private modeDate: Date | null = null;
+  /**
+   * A change of time of day rolls the clock forward to it over a few seconds, so the
+   * sun travels and the sky, light, fog, windows and lamps follow it (ms timestamps).
+   */
+  private timeRoll: { from: number; to: number; start: number } | null = null;
   /** fixed wall-clock time from ?time=HH:MM (testing) */
   /** ?time=HH:MM: that time on the clocks of the place on screen */
   private fixedClock: [number, number] | null = null;
@@ -161,6 +172,7 @@ export class ThreeMap {
     this.markerLayer = document.createElement('div');
     this.markerLayer.style.cssText = 'position:absolute;inset:0;overflow:hidden;pointer-events:none;z-index:2';
     this.container.appendChild(this.markerLayer);
+    this.flare = new LensFlare(this.container, this.markerLayer);
 
     this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true, powerPreference: 'high-performance', stencil: false });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -358,9 +370,14 @@ export class ThreeMap {
 
   /** Lock the sky to a mode (`real` follows the clock). */
   setTimeMode(mode: TimeMode) {
-    this.timeMode = mode;
     const [lng, lat] = this.camera.state.center;
+    const from = this.shownTime(lat, lng).getTime();
+    this.timeMode = mode;
     this.modeDate = mode === 'real' ? null : timeFor(mode, new Date(), lat, lng);
+    // always forward, never back through the day: evening → night → morning, as a clock goes
+    let to = (this.modeDate ?? new Date()).getTime();
+    while (to < from - 60000) to += 86400000;
+    this.timeRoll = Math.abs(to - from) > 60000 ? { from, to, start: performance.now() } : null;
     this.lightClock = 0;
     this.emit('timemode', { mode: this.timeMode, clock: placeClock(this.shownTime(lat, lng), lat, lng) });
     this.triggerRepaint();
@@ -602,6 +619,7 @@ export class ThreeMap {
     this.world.updateFloraDetail(this.uniforms.uCameraPos.value, above);
     this.placeLamps();
     this.updateLighting(eye, perMeter);
+    this.updateFlare(eye, perMeter);
     this.placeHoles(perMeter);
     this.placePanes(perMeter);
     this.uniforms.uXray.value = this.focusCar ? 1 : 0;
@@ -693,14 +711,50 @@ export class ThreeMap {
 
   /** The moment the world is lit for: the place's real time unless T or ?time= says otherwise. */
   private shownTime(lat: number, lng: number) {
+    if (this.timeRoll) {
+      const k = (performance.now() - this.timeRoll.start) / TIME_ROLL_MS;
+      if (k < 1) {
+        const e = k * k * (3 - 2 * k);
+        return new Date(this.timeRoll.from + (this.timeRoll.to - this.timeRoll.from) * e);
+      }
+      this.timeRoll = null;
+    }
     if (this.modeDate) return this.modeDate;
     if (this.fixedClock) return placeMoment(new Date(), lat, lng, ...this.fixedClock);
     return new Date();
   }
+  /** The sun's lens flare: where the sun is on screen, how strong, and whether a house hides it. */
+  private updateFlare(eye: THREE.Vector3, perMeter: number) {
+    const l = this.lighting;
+    const h = l ? l.sunPos.altitude * 180 / Math.PI : -90;
+    // from just over the horizon; strongest low (sunrise, sunset), gentler at midday
+    const strength = h < -1 ? 0 : Math.min(1, (h + 1) / 2) * (0.5 + 0.5 * Math.max(0, 1 - h / 25));
+    const s = this.camera.state;
+    if (!l || strength <= 0.01) { this.flare.update(null, s.width, s.height, 0, l?.sun ?? new THREE.Color(), () => true); return; }
+    const lng = eye.x * 360 - 180;
+    const lat = Math.atan(Math.sinh(Math.PI * (1 - 2 * eye.y))) * 180 / Math.PI;
+    const alt = eye.z / perMeter;
+    const [east, up, south] = skyDirection(l.sunPos);
+    const toward = (meters: number): [number, number, number] => [
+      lng + east * meters / (111319.49 * Math.cos(lat * Math.PI / 180)),
+      lat - south * meters / 111319.49,
+      alt + up * meters,
+    ];
+    const far = toward(5000);
+    const point = this.camera.project(far[0], far[1], far[2]);
+    const sun = Number.isFinite(point.x) && Number.isFinite(point.y) ? point : null;
+    this.flare.update(sun, s.width, s.height, strength, l.sun, () => {
+      const near = toward(600);
+      return this.raycastBuildings([lng, lat], alt, [near[0], near[1]], near[2]) != null;
+    });
+  }
+
   /** Sun or moon light for this place and moment; recomputed twice a second. */
   private updateLighting(eye: THREE.Vector3, perMeter: number) {
     const now = performance.now();
-    if (!this.lighting || now - this.lightClock > 500) {
+    // while the clock rolls to a new time of day: every frame, and keep drawing
+    if (this.timeRoll) this.triggerRepaint();
+    if (!this.lighting || this.timeRoll || now - this.lightClock > 500) {
       this.lightClock = now;
       const [lng, lat] = this.camera.state.center;
       const date = this.shownTime(lat, lng);
@@ -813,6 +867,7 @@ export class ThreeMap {
 
   remove() {
     this.removed = true;
+    this.flare.dispose();
     cancelAnimationFrame(this.frame);
     for (const fn of this.cleanups) fn();
     this.resizeObserver.disconnect();

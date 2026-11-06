@@ -570,7 +570,9 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
             const length = lengthMerc * metersScale;
             if (recipe) {
               faces.push({
-                owner: key, ax, az, bx, bz, y0: crest + base, y1: crest + top, order: faces.length,
+                // a wall standing on the ground reaches down to it whatever its crest (neighbours
+                // on a slope have different crests): only a raised part (min_height) starts higher
+                owner: key, ax, az, bx, bz, y0: base > 0.3 ? crest + base : -1e6, y1: crest + top, order: faces.length,
                 chunk, cx: chunk.cx, cz: chunk.cz, nx, nz, length, ground: [g[0], g[1]],
                 crest, base, top, wall, roof, glass: glassIndex, recipe,
               });
@@ -737,7 +739,7 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
     const lip = 0.08 * toMerc;
     // walls up to 40 cm apart are one wall: OSM neighbours rarely share their vertices
     // exactly, and two faces that close flicker through each other from any distance
-    for (const { wall: face, t0, t1 } of cutCoveredWalls(faces, 0.4 * toMerc)) {
+    for (const { wall: face, t0, t1, top: cap } of cutCoveredWalls(faces, 0.4 * toMerc)) {
       const chunk = face.chunk;
       chunk.cx = face.cx;
       chunk.cz = face.cz;
@@ -745,15 +747,21 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
       const bx = face.ax + (face.bx - face.ax) * t1, bz = face.az + (face.bz - face.az) * t1;
       const ga = face.ground[0] + (face.ground[1] - face.ground[0]) * t0;
       const gb = face.ground[0] + (face.ground[1] - face.ground[0]) * t1;
-      const y0 = face.base - 1;
+      // a wall on the ground hangs a metre into it (no gap on a slope); a raised part starts at its
+      // base, else that metre lies over the wall of the part below it and the two flicker
+      const y0 = face.base > 0.3 ? face.base : face.base - 1;
+      // under a raised part the wall stops where that part begins (no roof lip up there)
+      const capped = cap != null && cap - face.crest < face.top - 0.05;
+      const wallTop = capped ? Math.max(y0 + 0.1, cap - face.crest) : face.top;
       const grid = windowGrid(face.length, face.base, face.top, face.recipe);
       chunk.grid = grid ? [grid.n, grid.m, grid.step, grid.rowStep, grid.w, grid.h] : [0, 0, 0, 0, 0, 0];
       const u0 = grid ? (face.length * t0 - grid.u0) / grid.step : 0;
       const u1 = grid ? (face.length * t1 - grid.u0) / grid.step : 0;
       const v0 = grid ? (y0 - grid.v0) / grid.rowStep : 0;
-      const v1 = grid ? (face.top - grid.v0) / grid.rowStep : 0;
-      chunk.quad(ax, az, bx, bz, y0, face.top, face.nx, face.nz, face.wall, u1, v0, v1, face.glass, true, [ga, gb, face.crest, face.crest], u0);
+      const v1 = grid ? (wallTop - grid.v0) / grid.rowStep : 0;
+      chunk.quad(ax, az, bx, bz, y0, wallTop, face.nx, face.nz, face.wall, u1, v0, v1, face.glass, true, [ga, gb, face.crest, face.crest], u0);
       chunk.grid = [0, 0, 0, 0, 0, 0];
+      if (capped) continue;
       const parapetTop = parapetOwners.get(face.owner);
       if (parapetTop != null) {
         chunk.quad(ax, az, bx, bz, face.top, parapetTop, face.nx, face.nz, face.wall, 0, 0, 0, face.glass, false, [face.crest, face.crest, face.crest, face.crest]);
