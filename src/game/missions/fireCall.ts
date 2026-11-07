@@ -1,7 +1,7 @@
 import { facadeMarker, pickBurningCount, pickBurningPanes, type FirePaneSpec } from '@/rendering/BurningHouse';
 import { formatNumber, t } from '@/i18n';
-import type { Position } from '../VehicleController';
-import { FIRE_WINDOW_COIN } from '../tuning';
+import type { Position } from '../VehicleController.ts';
+import { FIRE_WINDOW_COIN } from '../tuning.ts';
 
 export type FireCallState = {
   pickup: [number, number] | null;
@@ -32,7 +32,7 @@ export type FireCallWorld = {
   avoid: [number, number][];
   fireFacadesNear: (at: [number, number], radius: number) => { panes: { at: Position; altitude: number; oe: number; on: number }[] } | null;
   pickBeaconSpot: (here: [number, number], heading: number, seed: number, avoid: [number, number][]) => [number, number];
-  setFireHouse: (site: { panes: FirePaneSpec[] } | null) => void;
+  setFireHouse: (site: { panes: FirePaneSpec[]; available?: number } | null) => void;
   syncMissionVisuals: (show?: boolean) => void;
   say: (text: string, toast?: boolean) => void;
   addMoney: (amount: number) => void;
@@ -64,7 +64,7 @@ export function updateFireCall(state: FireCallState, world: FireCallWorld) {
     state.pickup = null;
     state.spot = facadeMarker(burning, spot) as [number, number];
     state.windowTotal = burning.length;
-    world.setFireHouse({ panes: burning });
+    world.setFireHouse({ panes: burning, available: specs.length });
     world.syncMissionVisuals(true);
     world.say(t('fire.start', { n: state.windowTotal, coin: formatNumber(FIRE_WINDOW_COIN) }), true);
     return;
@@ -98,7 +98,7 @@ export function startFireCall(state: FireCallState, world: FireCallWorld) {
     state.spot = facadeMarker(burning, site) as [number, number];
     state.pickup = null;
     state.windowTotal = burning.length;
-    world.setFireHouse({ panes: burning });
+    world.setFireHouse({ panes: burning, available: specs.length });
     world.syncMissionVisuals(true);
     world.say(t('fire.start', { n: state.windowTotal, coin: formatNumber(FIRE_WINDOW_COIN) }), true);
   }

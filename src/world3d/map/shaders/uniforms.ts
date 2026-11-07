@@ -1,7 +1,7 @@
 import * as THREE from 'three';
-import { tileSpan } from '../../mercator';
+import { tileSpan } from '../../mercator.ts';
 
-import { MAX_FIRES, MAX_SHOTS } from './common';
+import { MAX_FIRES, MAX_SHOTS } from './common.ts';
 
 export type BaseUniforms = {
   uExag: { value: number };
@@ -33,6 +33,8 @@ export type BaseUniforms = {
   /** 0 … 1: how much the clouds' shadows show (by day only) */
   uClouds: { value: number };
   uFogFar: { value: number };
+  /** per-tile ease-in (set just before each mesh draws); 1 = fully present */
+  uTileFade: { value: number };
   /** player car in scene space; buildings between it and the camera turn see-through */
   uCar: { value: THREE.Vector3 };
   uXray: { value: number };
@@ -78,6 +80,7 @@ export function baseUniforms(fogColor: string): BaseUniforms {
     uClock: { value: 0 },
     uClouds: { value: 0 },
     uFogFar: { value: 2000 },
+    uTileFade: { value: 1 },
     uCar: { value: new THREE.Vector3() },
     uXray: { value: 0 },
     uShots: { value: Array.from({ length: MAX_SHOTS }, () => new THREE.Vector4()) },

@@ -118,7 +118,7 @@ const CALLOUTS: Callout[] = [
   { keys: ['ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight'], rows: [['keys.look', 'keys.look.what']] },
   { keys: ['MouseBody'], rows: [['keys.zoom', 'keys.zoom.what']] },
   { keys: ['MouseL'], rows: [['keys.fire', 'keys.fire.what']] },
-  { keys: ['MouseR'], rows: [['keys.orbit', 'keys.orbit.what']] },
+  { keys: ['MouseR'], rows: [['keys.orbit', 'keys.orbit.what'], ['keys.cable', 'keys.cable.what']] },
 ]
 
 interface KeyBox {

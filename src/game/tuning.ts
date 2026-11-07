@@ -1,6 +1,6 @@
-import type { CivicKind } from './poi';
+import type { CivicKind } from './poi.ts';
 
-export { METERS_PER_DEGREE } from './meters';
+export { METERS_PER_DEGREE } from './meters.ts';
 
 /** race and arena: what you chip in to start, and what the winner takes */
 export const RACE_FEE = 1000;
@@ -45,15 +45,23 @@ export const MISSION_COUNT = 4;
 export const HAULER_ID = '03';
 /** Fire Truck №5 — hose + fire calls */
 export const FIRE_TRUCK_ID = '18';
+/** Cadillac ambulance — crash / burned-house victims to hospital */
+export const AMBULANCE_ID = '20';
 /** Chevy Taxi — passenger fares */
 export const TAXI_ID = '10';
 /** Double Decker — stop board / alight coins */
 export const BUS_ID = '19';
-/** Fleetline Police + ГАЗ-24 Милиция — wanted hunts */
+/** Fleetline Police + ГАЗ-24 Милиция */
 export const POLICE_IDS = new Set(['09', '16']);
+/** Batmobile — night crusader, same wanted hunts as police */
+export const BATMOBILE_ID = '06';
+/** Family Sedan (Simpsons pink) — machine-gun vacuum for road coins */
+export const FAMILY_SEDAN_ID = '17';
+/** Cars that get bounty / wanted missions */
+export const BOUNTY_CAR_IDS = new Set([...POLICE_IDS, BATMOBILE_ID]);
 
-/** Cars with no gun damage (cable / hose) — arena fights are unavailable. */
-export const UNARMED_IDS = new Set([HAULER_ID, FIRE_TRUCK_ID]);
+/** Cars with no gun damage (cable / hose / ambulance) — arena fights are unavailable. */
+export const UNARMED_IDS = new Set([HAULER_ID, FIRE_TRUCK_ID, AMBULANCE_ID]);
 /** True when the car can shoot guns (arena / bounty combat). */
 export const carShootsGuns = (id: string) => !UNARMED_IDS.has(id);
 
@@ -62,6 +70,19 @@ export const carShootsGuns = (id: string) => !UNARMED_IDS.has(id);
 export const FIRE_WINDOW_COIN = 100;
 /** how close to the fire marker the house lights up (m) */
 export const FIRE_ARRIVE_M = 28;
+
+/** Ambulance: coins per injured person delivered to a hospital */
+export const AMBULANCE_VICTIM_COIN = 1000;
+export const AMBULANCE_VICTIM_MIN = 1;
+export const AMBULANCE_VICTIM_MAX = 3;
+/** how close to the crash / burned house the pickup modal opens (m) */
+export const AMBULANCE_ARRIVE_M = 22;
+/** hospital drop-off reach (m) */
+export const AMBULANCE_HOSPITAL_M = 28;
+/** parked wreck props at an ambulance call (one or two cars) */
+export const AMBULANCE_WRECK_ID = 'ambulance-wreck';
+export const ambulanceWreckId = (index: number) => `${AMBULANCE_WRECK_ID}-${index}`;
+export const isAmbulanceWreckId = (id: string) => id === AMBULANCE_WRECK_ID || id.startsWith(`${AMBULANCE_WRECK_ID}-`);
 
 /** how close to the taxi pickup the fare starts (m) */
 export const TAXI_ARRIVE_M = 14;
@@ -144,6 +165,7 @@ export const ERRAND_BEACONS = {
   collect: { pole: '#b8742a', glow: '#6e4212', orb: '#f0b878' },
   taxi: { pole: '#f2c230', glow: '#b8860b', orb: '#ffe56a' },
   bus: { pole: '#e85d2a', glow: '#9a3a12', orb: '#ffb08a' },
+  ambulance: { pole: '#e11d48', glow: '#9f1239', orb: '#fb7185' },
 } as const;
 
 export const DRIVER_NAMES = [
@@ -161,6 +183,7 @@ export const MISSION_COLORS = {
   impound: { main: '#9b5cff', soft: '#c9a6ff' },
   taxi: { main: '#ffe014', soft: '#fff18a' },
   bus: { main: '#00c2d8', soft: '#7ae8f2' },
+  ambulance: { main: '#e11d48', soft: '#fb7185' },
   finish: { main: '#e0b12a', soft: '#ffe56a' },
   delivery: { main: '#2fe36a', soft: '#8af0ad' },
   collect: { main: '#c44dff', soft: '#e0a0ff' },

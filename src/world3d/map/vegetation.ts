@@ -1,10 +1,10 @@
 import * as THREE from 'three';
-import type { InstanceSet, VegetationData } from '../tiles/vegetationTile';
-import type { BaseUniforms } from './materials';
-import { floraLit, simpleLit } from './simpleLit';
+import type { InstanceSet, VegetationData } from '../tiles/vegetationTile.ts';
+import type { BaseUniforms } from './materials.ts';
+import { floraLit, simpleLit } from './simpleLit.ts';
 import { createPieceGeometries } from '@/game/buildings/BuildingGeometry';
-import { createFarFloraModels, createFloraModels } from './floraModels';
-import { FLORA_MODELS } from '../tiles/flora';
+import { createFarFloraModels, createFloraModels } from './floraModels.ts';
+import { FLORA_MODELS } from '../tiles/flora.ts';
 
 /** beyond this (m from the camera to the tile) trees switch to their far stand-ins */
 export const FLORA_FAR = 450;

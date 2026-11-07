@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 /** bullet-hit windows the facade shader knows about at once */
-export const MAX_SHOTS = 48;
+export const MAX_SHOTS = 128;
 /** burning windows the facade shader knows about at once (one fire call is enough) */
 export const MAX_FIRES = 24;
 
@@ -17,14 +17,14 @@ uniform float uHeadOn;
 vec3 headBeam(vec3 world, vec3 n, vec3 lamp) {
   vec3 d = world - lamp;
   float dist = length(d);
-  if (dist > 55.0) return vec3(0.0);
+  if (dist > 42.0) return vec3(0.0);
   vec3 l = d / max(dist, 0.001);
   // a soft-edged cone, a bit wider across than up and down
   vec3 side = normalize(cross(uHeadDir, vec3(0.0, 1.0, 0.0)));
   float across = dot(l, side);
   float along = dot(l, uHeadDir);
   float cone = smoothstep(0.86, 0.97, along - across * across * 0.35);
-  float fall = 1.0 / (1.0 + dist * dist * 0.008) * smoothstep(55.0, 18.0, dist);
+  float fall = 1.0 / (1.0 + dist * dist * 0.01) * smoothstep(42.0, 16.0, dist);
   float facing = clamp(dot(n, -l) * 0.85 + 0.3, 0.0, 1.0);
   return vec3(1.0, 0.92, 0.78) * cone * fall * facing;
 }
@@ -47,17 +47,21 @@ float vnoise(vec2 p) {
 float cloudSun(vec3 w) {
   if (uClouds < 0.01) return 1.0;
   vec2 p = w.xz / 260.0 + vec2(uClock * 0.012, uClock * 0.006);
-  float c = vnoise(p) * 0.65 + vnoise(p * 2.3 + 7.1) * 0.35;
+  // light haze: one octave; heavier cover: a second for softer edges
+  float c = uClouds < 0.35 ? vnoise(p) : vnoise(p) * 0.65 + vnoise(p * 2.3 + 7.1) * 0.35;
   return 1.0 - uClouds * 0.55 * smoothstep(0.5, 0.72, c);
 }
 
 uniform vec3 uFogColor;
 uniform float uFogNear;
 uniform float uFogFar;
+/** 0..1: new tiles ease in from fog colour so they don't pop onto empty ground */
+uniform float uTileFade;
 uniform vec3 uCameraPos;
 vec3 toLinear(vec3 c) { return pow(c, vec3(2.2)); }
 vec3 fogged(vec3 color, vec3 world) {
   float f = smoothstep(uFogNear, uFogFar, distance(world, uCameraPos));
+  f = 1.0 - (1.0 - f) * uTileFade;
   return mix(color, toLinear(uFogColor), f);
 }
 `;

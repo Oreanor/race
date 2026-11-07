@@ -1,6 +1,6 @@
-import type { ArchitectureSetting, BuildingDetail } from './buildings/BuildingStyles';
-import type { DeliveryItem } from './Errands';
-import type { HubKind } from './Travel';
+import type { ArchitectureSetting, BuildingDetail } from './buildings/BuildingStyles.ts';
+import type { DeliveryItem } from './Errands.ts';
+import type { HubKind } from './Travel.ts';
 import type { SkinId } from '@/world3d/buildings/skins';
 
 /** Fuel gauge + purse + nearest travel hub, pushed to the HUD. */
@@ -48,12 +48,12 @@ export type BountyOffer = {
   reward: number;
 };
 
-/** Taxi passenger or bus group at the door — confirm before the fare starts. */
+/** Taxi passenger, bus group, or ambulance victims — confirm before the run starts. */
 export type RideOffer = {
-  kind: 'taxi' | 'bus';
-  /** bus: group size; taxi: 1 */
+  kind: 'taxi' | 'bus' | 'ambulance';
+  /** bus: group size; ambulance: victims; taxi: 1 */
   n: number;
-  /** bus: hotel/museum type label; taxi: unused */
+  /** bus: hotel/museum label; ambulance: 'crash' | 'burn'; taxi: unused */
   place: string;
   km: number;
   reward: number;
@@ -63,7 +63,7 @@ export type RideOffer = {
 export type MissionKind = 'arena' | 'race' | 'delivery' | 'collect';
 
 export type EventResult = {
-  kind: MissionKind | 'heist' | 'hijack' | 'fire' | 'impound' | 'taxi' | 'bus' | 'bounty';
+  kind: MissionKind | 'heist' | 'hijack' | 'fire' | 'impound' | 'taxi' | 'bus' | 'ambulance' | 'bounty';
   won: boolean;
   name?: string;
   cash?: number;

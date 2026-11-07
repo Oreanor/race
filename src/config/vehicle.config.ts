@@ -11,6 +11,7 @@ export const cars = [
   { id: '07', name: 'ВАЗ-2108 Time Machine', label: 'Назад в будущее по-нашему', path: '/models/vaz2108.glb', length: 4.0, yaw: Math.PI/2, color: '#b9bcc0', acceleration: 8.5, maxSpeed: 160 / 3.6, mass: 900, engine: 1.3, fuel: { tank: 43, perKm: 1.0 } },
   { id: '03', name: 'Howler', label: 'Громкий характер', path: '/models/car-3.glb', length: 7.5, yaw: Math.PI/2, color: '#c4b7a2', acceleration: 9.5, maxSpeed: 120 / 3.6, mass: 2400, engine: 6.2, fuel: { tank: 70, perKm: 3.0 } },
   { id: '18', name: 'Fire Truck №5', label: 'Вода под давлением', path: '/models/fire-truck-no5.glb', length: 5.5, yaw: Math.PI/2, color: '#c62828', acceleration: 5.8, maxSpeed: 100 / 3.6, mass: 12500, engine: 8.8, fuel: { tank: 220, perKm: 4.8 } },
+  { id: '20', name: 'Cadillac Ambulance', label: 'Пострадавших — в больницу', path: '/models/cadillac-ambulance.glb', length: 5.6, yaw: Math.PI/2, color: '#f5f5f0', acceleration: 7.2, maxSpeed: 130 / 3.6, mass: 2800, engine: 5.7, fuel: { tank: 90, perKm: 2.4 } },
   { id: '19', name: 'Double Decker', label: 'Остановка за остановкой', path: '/models/double-decker.glb', length: 11.0, yaw: Math.PI/2, color: '#e8a317', acceleration: 4.5, maxSpeed: 90 / 3.6, mass: 12000, engine: 6.7, fuel: { tank: 200, perKm: 4.0 } },
   { id: '09', name: 'Fleetline Police', label: 'Закон и порядок', path: '/models/fleetline-police.glb', length: 4.9, yaw: Math.PI/2, color: '#2c3a52', acceleration: 10, maxSpeed: 150 / 3.6, mass: 1550, engine: 3.5, fuel: { tank: 60, perKm: 1.8 } },
   { id: '12', name: 'Mustang 65', label: 'Дикая лошадь шестидесятых', path: '/models/mustang-65.glb', length: 4.6, yaw: Math.PI/2, color: '#c45c2a', acceleration: 10.5, maxSpeed: 190 / 3.6, mass: 1280, engine: 4.7, fuel: { tank: 60, perKm: 1.7 } },
@@ -43,13 +44,15 @@ const STARTER_PRICE: Partial<Record<string, number>> = {
   '17': 4800, // Family Sedan
 };
 
-/** Always join the player's garage (gifts / unlocks), even on an old save. */
-export const GIFT_CARS = ['18', '19'] as const;
+/** Always join the player's garage (gifts / unlocks), even on an old save. Full fleet only in local `next dev`. */
+export const GIFT_CARS =
+  process.env.NODE_ENV === 'development' ? cars.map((car) => car.id) : [];
 
 /** Dealership sticker for gifted / special cars outside the speed curve. */
 const PINNED_PRICE: Partial<Record<string, number>> = {
   '18': 7200, // Fire Truck №5
   '19': 6500, // Double Decker
+  '20': 6800, // Cadillac Ambulance
 };
 
 /**
@@ -65,11 +68,6 @@ export function carPrice(car: Car): number {
     (car.acceleration / 8) ** 2.9 * 1600 +
     (car.engine / 2.5) ** 1.7 * 500;
   return Math.max(1500, Math.round(raw / 100) * 100);
-}
-
-/** What the dealership pays for the car you drive in (half the shelf price). */
-export function tradeInPrice(car: Car): number {
-  return Math.floor(carPrice(car) / 2);
 }
 
 export const mapConfig = {

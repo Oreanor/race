@@ -39,18 +39,41 @@ export class BurningHouse {
   private panes: Pane[] = [];
   /** total panes when this call started (for payout) */
   total = 0;
+  /** how many façade windows were candidates when we last picked — for coverage on remesh */
+  private available = 0;
 
   /** Start a fire on these façade windows (existing building). */
-  ignite(panes: FirePaneSpec[]) {
+  ignite(panes: FirePaneSpec[], available = panes.length) {
     this.panes = panes.map((p) => ({ ...p, at: [...p.at] as Position, out: false, steamUntil: 0 }));
     this.total = this.panes.length;
+    this.available = Math.max(this.total, available);
     this.placed = this.panes.length > 0;
+  }
+
+  /**
+   * Skin changed: rebuild on a new window grid, keep roughly the same share of the
+   * façade burning and the same share already put out.
+   */
+  remesh(candidates: FirePaneSpec[], seed: number) {
+    if (!this.placed || !candidates.length) return;
+    const left = this.burningLeft();
+    const outFrac = this.total > 0 ? (this.total - left) / this.total : 0;
+    const cover = this.available > 0 ? this.total / this.available : 1;
+    const newTotal = Math.max(1, Math.min(candidates.length, Math.round(cover * candidates.length)));
+    const picked = pickBurningPanes(candidates, newTotal, seed);
+    const markOut = Math.min(picked.length, Math.round(outFrac * picked.length));
+    this.ignite(picked, candidates.length);
+    for (let i = 0; i < markOut; i++) {
+      this.panes[i].out = true;
+      this.panes[i].steamUntil = 0;
+    }
   }
 
   clear() {
     this.placed = false;
     this.panes = [];
     this.total = 0;
+    this.available = 0;
   }
 
   burningLeft() {
@@ -63,10 +86,13 @@ export class BurningHouse {
     return this.total - this.burningLeft();
   }
 
-  /** Burning pane markers for the façade shader (lng/lat + altitude). */
-  fireMarkers(): { at: Position; altitude: number }[] {
+  /**
+   * Pane markers for the façade shader (lng/lat + altitude).
+   * `lit` false = put out (soot stain only, no flame).
+   */
+  fireMarkers(): { at: Position; altitude: number; lit: boolean }[] {
     if (!this.placed) return [];
-    return this.panes.filter((p) => !p.out).map((p) => ({ at: p.at, altitude: p.altitude }));
+    return this.panes.map((p) => ({ at: p.at, altitude: p.altitude, lit: !p.out }));
   }
 
   /**

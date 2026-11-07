@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { portuguesePastel } from '@/game/buildings/BuildingStyles';
-import type { BaseUniforms } from './shaders/uniforms';
-import { COMMON, LAMP_FRAGMENT, LAMP_VERTEX, MAX_FIRES, MAX_SHOTS, hex, lampMapUniform } from './shaders/common';
+import type { BaseUniforms } from './shaders/uniforms.ts';
+import { COMMON, LAMP_FRAGMENT, LAMP_VERTEX, MAX_FIRES, MAX_SHOTS, hex, lampMapUniform } from './shaders/common.ts';
 
 
 /** Window mask, same layout as the detailed facade texture. */
@@ -25,7 +25,7 @@ export function facadeMask(): THREE.Texture {
   texture.colorSpace = THREE.NoColorSpace;
   texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
   texture.minFilter = THREE.LinearMipmapLinearFilter;
-  texture.anisotropy = 8;
+  texture.anisotropy = 4;
   return texture;
 }
 
@@ -267,14 +267,15 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
         return (m[i] + 0.5) / 16.0;
       }
       // Broken glass where a bullet hit this very pane: x = crack lines, y = the hole, z = 1 if hit.
-      vec3 cracked(vec2 uv, vec2 cellM, vec2 pane, vec3 n) {
+      // paneOff / pane match the style's glass box (city/modern offset + size, victorian sash, …).
+      vec3 cracked(vec2 uv, vec2 cellM, vec2 paneOff, vec2 pane, vec3 n) {
         if (uShotCount == 0) return vec3(0.0);
         vec3 t = normalize(cross(vec3(0.0, 1.0, 0.0), n));
         // which way uv.x runs along the wall, from the screen derivatives
         float s = dot(dFdx(vWorld), t) * dFdx(uv.x) + dot(dFdy(vWorld), t) * dFdy(uv.x);
         s = s < 0.0 ? -1.0 : 1.0;
         vec2 cell = floor(uv);
-        vec2 p = (fract(uv) - 0.5) * cellM;
+        vec2 p = (fract(uv) - 0.5) * cellM - paneOff;
         float w = max(0.005, max(fwidth(p.x), fwidth(p.y)) * 0.8);
         vec3 result = vec3(0.0);
         for (int i = 0; i < ${MAX_SHOTS}; i++) {
@@ -283,8 +284,9 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
           if (dot(d, d) > 9.0 || abs(dot(d, n)) > 0.35) continue;
           vec2 suv = uv + vec2(s * dot(d, t) / cellM.x, d.y / cellM.y);
           if (floor(suv) != cell) continue;
-          vec2 sp = (fract(suv) - 0.5) * cellM;
-          if (abs(sp.x) > pane.x || abs(sp.y) > pane.y) continue; // hit the wall, not the glass
+          vec2 sp = (fract(suv) - 0.5) * cellM - paneOff;
+          // a little past the glass box: hits on the frame still kill the light
+          if (abs(sp.x) > pane.x * 1.3 || abs(sp.y) > pane.y * 1.3) continue;
           float seed = uShots[i].w;
           vec2 q = p - sp;
           float r = length(q);
@@ -302,8 +304,8 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
         }
         return result;
       }
-      // Fire in this pane: returns heat 0..1 when a burning marker sits on the glass.
-      float flaming(vec2 uv, vec2 cellM, vec2 pane, vec3 n) {
+      // Fire in this pane: returns heat 0..1 when a burning marker sits on the glass (w>0.5 = lit).
+      float flaming(vec2 uv, vec2 cellM, vec2 paneOff, vec2 pane, vec3 n) {
         if (uFireCount == 0) return 0.0;
         vec3 t = normalize(cross(vec3(0.0, 1.0, 0.0), n));
         float s = dot(dFdx(vWorld), t) * dFdx(uv.x) + dot(dFdy(vWorld), t) * dFdy(uv.x);
@@ -312,21 +314,80 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
         float heat = 0.0;
         for (int i = 0; i < ${MAX_FIRES}; i++) {
           if (i >= uFireCount) break;
+          if (uFires[i].w < 0.5) continue;
           vec3 d = uFires[i].xyz - vWorld;
           if (dot(d, d) > 12.0 || abs(dot(d, n)) > 0.55) continue;
           vec2 suv = uv + vec2(s * dot(d, t) / cellM.x, d.y / cellM.y);
           if (floor(suv) != cell) continue;
-          vec2 sp = (fract(suv) - 0.5) * cellM;
+          vec2 sp = (fract(suv) - 0.5) * cellM - paneOff;
           if (abs(sp.x) > pane.x * 1.15 || abs(sp.y) > pane.y * 1.15) continue;
           float flick = 0.55 + 0.45 * fract(sin(dot(cell, vec2(12.9898, 78.233)) + uClock * 3.1) * 43758.5453);
           heat = max(heat, flick);
         }
         return heat;
       }
+      // Radial cracks in wall metres (futuristic ribbons have no UV window cell).
+      // z = soft "near a hit" for mirror/night kill — not a hard rect fill (that read as a chalk patch).
+      vec3 crackedMeters(vec3 n, float halfAlong, float halfUp) {
+        if (uShotCount == 0) return vec3(0.0);
+        vec3 t = normalize(cross(vec3(0.0, 1.0, 0.0), n));
+        if (dot(t, t) < 1e-4) return vec3(0.0);
+        vec3 result = vec3(0.0);
+        for (int i = 0; i < ${MAX_SHOTS}; i++) {
+          if (i >= uShotCount) break;
+          vec3 d = uShots[i].xyz - vWorld;
+          if (dot(d, d) > 9.0 || abs(dot(d, n)) > 0.45) continue;
+          float along = -dot(d, t), up = -d.y;
+          if (abs(along) > halfAlong || abs(up) > halfUp) continue;
+          float seed = uShots[i].w;
+          vec2 q = vec2(along, up);
+          float r = length(q);
+          float a = atan(q.y, q.x) / 6.2832 + 0.5;
+          float w = 0.008;
+          float spokes = 7.0 + floor(seed * 4.0);
+          float f = fract(a * spokes + seed * 3.7 + 0.08 * sin(r * 40.0 + seed * 9.0));
+          float spoke = (1.0 - smoothstep(w, w * 2.0, min(f, 1.0 - f) * 6.2832 / spokes * r)) * (1.0 - smoothstep(0.4, 1.0, r));
+          float rr = r / (0.08 + seed * 0.05) + 0.35 * sin(a * 6.2832 * 3.0 + seed * 11.0);
+          float ring = (1.0 - smoothstep(w, w * 2.0, abs(fract(rr) - 0.5) * (0.08 + seed * 0.05)))
+            * step(0.45, fract(a * spokes * 0.5 + seed * 5.0)) * step(0.04, r) * (1.0 - smoothstep(0.3, 0.6, r));
+          float hole = 1.0 - smoothstep(0.025, 0.04, r);
+          float near = (1.0 - smoothstep(0.12, 0.7, r))
+            * (1.0 - smoothstep(halfAlong * 0.85, halfAlong, abs(along)))
+            * (1.0 - smoothstep(halfUp * 0.85, halfUp, abs(up)));
+          result = max(result, vec3(max(spoke, ring), hole, max(max(spoke, ring), max(hole, near * 0.4))));
+        }
+        return result;
+      }
+      // Soot fan on the wall just above a fire pane (lit or put out). World-space so it
+      // lands on the masonry above the glass, not only inside the window UV cell.
+      float sooting(vec3 n) {
+        if (uFireCount == 0 || n.y > 0.35) return 0.0;
+        vec3 t = normalize(cross(vec3(0.0, 1.0, 0.0), n));
+        if (dot(t, t) < 1e-4) return 0.0;
+        float soot = 0.0;
+        for (int i = 0; i < ${MAX_FIRES}; i++) {
+          if (i >= uFireCount) break;
+          vec3 d = vWorld - uFires[i].xyz;
+          if (abs(dot(d, n)) > 0.5) continue;
+          float up = d.y;
+          if (up < 0.08 || up > 1.75) continue;
+          float along = abs(dot(d, t));
+          // stain fans out a little, then tapers as it climbs
+          float halfW = mix(0.62, 0.12, smoothstep(0.12, 1.55, up));
+          float edge = 1.0 - smoothstep(halfW * 0.4, halfW, along);
+          float heightFade = (1.0 - smoothstep(0.15, 1.6, up)) * smoothstep(0.06, 0.22, up);
+          float dens = edge * heightFade;
+          dens *= 0.5 + 0.5 * fract(sin(dot(vWorld.xz + float(i), vec2(12.9898, 78.233))) * 43758.5453);
+          // denser blotches near the lintel
+          dens *= 0.65 + 0.35 * (1.0 - smoothstep(0.15, 0.55, up));
+          soot = max(soot, dens);
+        }
+        return clamp(soot, 0.0, 1.0);
+      }
       void main() {
         // fully / nearly fogged: skip window/skin/mirror work (Manhattan towers eat fill-rate)
         float fogDist = distance(vWorld, uCameraPos);
-        float fogAmt = smoothstep(uFogNear, uFogFar, fogDist);
+        float fogAmt = 1.0 - (1.0 - smoothstep(uFogNear, uFogFar, fogDist)) * uTileFade;
         if (fogAmt > 0.92) {
           gl_FragColor = linearToOutputTexel(vec4(toLinear(uFogColor), 1.0));
           return;
@@ -574,15 +635,23 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
                   glass = mix(glass, toLinear(vec3(0.16, 0.17, 0.18)), min(1.0, rail));
                 }
               }
+              // glass hit box must match what this skin actually drew (offset + size)
+              vec2 paneOff = vec2(0.0);
+              vec2 paneHalf = vWinSize * 0.46;
+              if (useCity) { paneOff = cwAvg.off; paneHalf = cwAvg.size; }
+              else if (useMod) { paneOff = mwAvg.off; paneHalf = mwAvg.size; }
+              else if (skin > 2.5) paneHalf = vWinSize * vec2(0.8, 1.06) * 0.46;
               vec3 crack = vec3(0.0);
-              if (uShotCount > 0) crack = cracked(uv, cellM, vWinSize * 0.46, normalize(vNormal));
+              if (uShotCount > 0) crack = cracked(uv, cellM, paneOff, paneHalf, normalize(vNormal));
               broken = crack.z * g;
               if (uFireCount > 0) {
-                fireHeat = flaming(uv, cellM, vWinSize * 0.46, normalize(vNormal));
+                fireHeat = flaming(uv, cellM, paneOff, paneHalf, normalize(vNormal));
                 fireGlass = g;
               }
-              vec3 pane = mix(glass, glass * 0.55, crack.z);
-              pane = mix(pane, toLinear(vec3(0.86, 0.9, 0.92)), crack.x * 0.85);
+              // cracks tint with the glass — chalk-white webs read as a pasted sticker
+              vec3 pane = mix(glass, glass * 0.62, crack.z * 0.55);
+              vec3 crackCol = mix(glass * 1.08, vec3(0.38, 0.4, 0.42), 0.42);
+              pane = mix(pane, crackCol, crack.x * 0.88);
               pane = mix(pane, vec3(0.01), crack.y);
               if (fireHeat > 0.01 && broken < 0.5) {
                 float local = fract(uv.y) + 0.15 * sin(uClock * 7.0 + uv.x * 9.0);
@@ -602,7 +671,6 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
         vec3 futureLit = vec3(0.0);
         vec3 env_tint = vec3(1.0);
         if (skin > 1.5 && skin < 2.5) {
-          vec3 kept = albedo;
           float kind = seeded(vColor, 11.3);
           float floorH = vWin.x > 0.5 ? vWin.w : 3.4;
           float fy = fract(wallM.y / floorH);
@@ -650,10 +718,51 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
             mirror = win * 0.28;
             futureLit = cool * step(0.55, hb) * win * 0.4;
           }
-          albedo = mix(albedo, kept, broken);
+          // city-grid cracks / fires do not match ribbons — re-test on glass bands only
+          broken = 0.0;
+          fireHeat = 0.0;
+          fireGlass = 0.0;
+          if (!roofFace && mirror > 0.04) {
+            vec3 nrm = normalize(vNormal);
+            if (uShotCount > 0) {
+              vec3 crack = crackedMeters(nrm, 0.55, 0.45);
+              float mark = max(crack.x, crack.y);
+              // only the web + hole — no flat chalk square under them
+              if (mark > 0.008 || crack.z > 0.15) {
+                broken = max(mark, crack.z);
+                vec3 crackCol = mix(albedo * 1.12, vec3(0.34, 0.37, 0.4), 0.4);
+                albedo = mix(albedo, crackCol, crack.x * 0.9);
+                albedo = mix(albedo, vec3(0.015), crack.y);
+              }
+            }
+            if (uFireCount > 0) {
+              float heat = 0.0;
+              for (int i = 0; i < ${MAX_FIRES}; i++) {
+                if (i >= uFireCount) break;
+                if (uFires[i].w < 0.5) continue;
+                vec3 d = uFires[i].xyz - vWorld;
+                if (dot(d, d) > 10.0 || abs(dot(d, nrm)) > 0.7) continue;
+                float flick = 0.55 + 0.45 * fract(sin(dot(vWorld.xz, vec2(12.9898, 78.233)) + uClock * 3.1 + float(i)) * 43758.5453);
+                heat = max(heat, flick);
+              }
+              if (heat > 0.01 && broken < 0.5) {
+                fireHeat = heat;
+                fireGlass = mirror;
+                float local = fy + 0.15 * sin(uClock * 7.0 + wallM.x * 2.0);
+                vec3 flame = mix(vec3(0.55, 0.08, 0.02), vec3(1.7, 0.55, 0.08), smoothstep(0.15, 0.75, local));
+                flame = mix(flame, vec3(2.1, 1.4, 0.35), smoothstep(0.55, 1.0, heat));
+                albedo = mix(albedo, flame, heat * mirror);
+              }
+            }
+          }
           mirror *= (1.0 - broken) * (1.0 - fogAmt * 0.85);
         }
         vec3 n = normalize(vNormal);
+        // soot streaks above burning / burned windows (ambulance + fire-truck calls)
+        if (uFireCount > 0 && !roofFace) {
+          float soot = sooting(n);
+          if (soot > 0.02) albedo = mix(albedo, albedo * vec3(0.07, 0.065, 0.06), soot * 0.95);
+        }
         // comic-like light, but sunlit walls stand clearly apart from the shaded ones
         float d = max(dot(n, uSun), 0.0) * cloudSun(vWorld);
         vec3 light = n.y > 0.5

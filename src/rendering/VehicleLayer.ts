@@ -1,12 +1,13 @@
-import { BurningHouse } from './BurningHouse';
-import { TireTracks } from './TireTracks';
-import { WorldParticles, type Enu, type Surface } from './effects/WorldParticles';
-import { fireEye, WreckFire } from './effects/WreckFire';
+import { BurningHouse } from './BurningHouse.ts';
+import { TireTracks } from './TireTracks.ts';
+import { WorldParticles, type Enu, type Surface } from './effects/WorldParticles.ts';
+import { fireEye, WreckFire } from './effects/WreckFire.ts';
 import * as THREE from 'three';
 import type { ThreeMap } from '@/world3d/map/ThreeMap';
 import { mercatorPerMeter, mercatorX01, mercatorY01 } from '@/world3d/map/camera';
 import type { Car } from '@/config/vehicle.config';
 import { METERS_PER_DEGREE, offsetPosition, type Position } from '@/game/VehicleController';
+import { BATMOBILE_ID, FAMILY_SEDAN_ID } from '@/game/tuning';
 
 import type { Pose } from '@/game/VehiclePose';
 import { t } from '@/i18n';
@@ -18,7 +19,7 @@ import {
   type TargetHealth,
   type TargetVehicle,
   type VehicleSceneLayer,
-} from './vehicleLayer/types';
+} from './vehicleLayer/types.ts';
 import {
   WATER_TRUCK_ID,
   applyBeaconPower,
@@ -26,13 +27,13 @@ import {
   faceHalos,
   fallbackCar,
   loadCar,
-} from './vehicleLayer/carModel';
-import { eastNorth, puffMesh, smokeTexture } from './vehicleLayer/geo';
-import { colorsForBeacon, makeBeacon, makeBox, makeCash, makeCoin } from './vehicleLayer/missionVisuals';
+} from './vehicleLayer/carModel.ts';
+import { eastNorth, puffMesh, smokeTexture } from './vehicleLayer/geo.ts';
+import { colorsForBeacon, makeBeacon, makeBox, makeCash, makeCoin } from './vehicleLayer/missionVisuals.ts';
 
-export type { AimPoint, PickupVisual, RemoteCar, TargetHealth, TargetVehicle, VehicleSceneLayer } from './vehicleLayer/types';
-export { DROP_MS } from './vehicleLayer/types';
-export { disposeObject, loadCar, polish } from './vehicleLayer/carModel';
+export type { PickupVisual, TargetVehicle, VehicleSceneLayer } from './vehicleLayer/types.ts';
+export { DROP_MS } from './vehicleLayer/types.ts';
+export { disposeObject, loadCar } from './vehicleLayer/carModel.ts';
 
 type DeathPhase = 'tumble' | 'burn' | 'wreck';
 type CharMat = { material: THREE.MeshPhongMaterial; r: number; g: number; b: number };
@@ -69,7 +70,7 @@ export function vehicleLayer(
   pitch: () => number,
   roll: () => number,
   status: (text: string) => void,
-  resolveShot: (cam: Position, camAlt: number, ground: Position, groundAlt: number, mark?: boolean) => { point: Position; altitude: number } | null = () => null,
+  resolveShot: (cam: Position, camAlt: number, ground: Position, groundAlt: number, mark?: boolean) => { point: Position; altitude: number; glass?: boolean } | null = () => null,
   markGround: (point: Position, altitude: number) => void = () => {},
   /** a train car along a shot (from → to): where, and whether it is a vintage one that pays out */
   resolveTrain: (from: Position, fromAlt: number, to: Position, toAlt: number) => { point: Position; altitude: number; vintage: boolean } | null = () => null,
@@ -159,7 +160,7 @@ export function vehicleLayer(
   const pickupGeometry = new THREE.SphereGeometry(0.38, 16, 12);
   const pickupMaterials = new Map<string, THREE.MeshStandardMaterial>();
   const missionBeacons = new Map<string, {
-    kind?: 'arena' | 'race' | 'bounty' | 'fire' | 'impound' | 'taxi' | 'bus';
+    kind?: 'arena' | 'race' | 'bounty' | 'fire' | 'impound' | 'taxi' | 'bus' | 'ambulance';
     position: Position;
     visual: ReturnType<typeof makeBeacon>;
   }>();
@@ -261,7 +262,7 @@ export function vehicleLayer(
   function setMissionBeacons(beacons: {
     id: string;
     position: Position;
-    kind?: 'arena' | 'race' | 'bounty' | 'fire' | 'impound' | 'taxi' | 'bus';
+    kind?: 'arena' | 'race' | 'bounty' | 'fire' | 'impound' | 'taxi' | 'bus' | 'ambulance';
     colors?: { pole: string; glow: string; orb: string };
   }[]) {
     const active = new Set(beacons.map(beacon => beacon.id));
@@ -437,6 +438,7 @@ export function vehicleLayer(
   let targetDestroyedHandler: (id: string, position: Position) => void = () => {};
   let hoodSmokeAt = 0;
   let trainCoinHandler: (point: Position, altitude: number) => void = () => {};
+  let shotCoinHandler: (from: Position, fromAlt: number, to: Position, toAlt: number) => void = () => {};
   /** 0 by day … 1 at night: other players' headlight beams */
   let night = 0;
   // one soft light cone for every other player's car: bright at the lamps, gone 18 m ahead
@@ -518,8 +520,23 @@ export function vehicleLayer(
 
   /** The missions' targets, all replaced at once (the extra ones stay). */
   function setTargets(next: TargetVehicle[]) {
-    for (const id of [...targets.keys()]) if (!extraIds.has(id)) removeTarget(id);
-    for (const spec of next) addTarget(spec);
+    // Keep existing ids (and wreck poses) — full wipe/rebuild stood upright ambulance props back up.
+    const keep = new Set(next.map((spec) => spec.id));
+    for (const id of [...targets.keys()]) {
+      if (extraIds.has(id) || keep.has(id)) continue;
+      removeTarget(id);
+    }
+    for (const spec of next) {
+      const target = targets.get(spec.id);
+      if (target) {
+        if (!target.destroyed) {
+          target.position = [...spec.position];
+          target.heading = spec.heading;
+        }
+        continue;
+      }
+      addTarget(spec);
+    }
     map?.triggerRepaint();
   }
 
@@ -530,7 +547,12 @@ export function vehicleLayer(
     for (const spec of next) {
       const target = targets.get(spec.id);
       if (target) {
-        if (!target.destroyed) { target.position = [...spec.position]; target.heading = spec.heading; }
+        if (!target.destroyed) {
+          const p = target.position;
+          p[0] = spec.position[0];
+          p[1] = spec.position[1];
+          target.heading = spec.heading;
+        }
         continue;
       }
       extraIds.add(spec.id);
@@ -577,13 +599,15 @@ export function vehicleLayer(
   }
 
   function updateTargets(next: TargetVehicle[]) {
+    // no triggerRepaint — the game tick already asks for a frame
     for (const spec of next) {
       const target = targets.get(spec.id);
       if (!target || target.destroyed) continue;
-      target.position = [...spec.position];
+      const p = target.position;
+      p[0] = spec.position[0];
+      p[1] = spec.position[1];
       target.heading = spec.heading;
     }
-    map?.triggerRepaint();
   }
 
   /** Height of the ground at a point relative to the car's frame (0 where not known yet). */
@@ -623,7 +647,9 @@ export function vehicleLayer(
 
   function fire(now: number, heading: number, here: Position) {
     const water = currentCar.id === WATER_TRUCK_ID;
-    if (!aim || !map || now - lastShot < (water ? 14 : 50)) return;
+    const family = currentCar.id === FAMILY_SEDAN_ID;
+    // hose drip / Simpsons pink MG / regular guns
+    if (!aim || !map || now - lastShot < (water ? 14 : family ? 28 : 50)) return;
     lastShot = now;
     const carAlt = height();
 
@@ -692,7 +718,7 @@ export function vehicleLayer(
       return;
     }
 
-    const groundAlt = map.groundAt(aim.ground) ?? carAlt;
+    const groundAlt = aim.altitude ?? map.groundAt(aim.ground) ?? carAlt;
     const ground = eastNorth(here, aim.ground);
     const radius = 2.15;
     /** first car (target or another player) an upright-cylinder test finds along a ray, before maxT */
@@ -707,7 +733,8 @@ export function vehicleLayer(
         const disc = b * b - 4 * a * c;
         if (disc < 0) return;
         const t = (-b - Math.sqrt(disc)) / (2 * a);
-        if (t < 1.2 || t > (best?.t ?? maxT)) return;
+        // allow close-in hits (kerb / beside the hood) — was 1.2 and blocked “at my feet”
+        if (t < 0.35 || t > (best?.t ?? maxT)) return;
         const up = ou + uu * t;
         if (up < rel - 0.4 || up > rel + 2.6) return;
         best = { t, up: Math.max(rel + 0.35, Math.min(rel + 1.6, up)) };
@@ -717,220 +744,221 @@ export function vehicleLayer(
       return best as { t: number; up: number } | null;
     };
 
-    // 1. What the cursor points at, as the camera sees it: the first wall or car on its
-    //    ray, else the ground. Moving the mouse up a wall moves the aim up the wall.
-    let aimE = ground.east, aimN = ground.north, aimU = groundAlt - carAlt, aimGround = true;
+    // 1. Cursor pick is already 3D (façade height from map.pickScreen). Only steal
+    //    the aim if a car sits closer on that same ray.
+    let aimE = ground.east, aimN = ground.north, aimU = groundAlt - carAlt, aimGround = !aim.wall;
     {
       const view = cameraPose(here, carAlt);
-      const vx = ground.east - view.east, vy = aimU - view.up, vz = ground.north - view.north;
+      const vx = aimE - view.east, vy = aimU - view.up, vz = aimN - view.north;
       const vl = Math.hypot(vx, vy, vz);
       if (vl > 1) {
-        let near = vl;
         const car = firstCar(view.east, view.up, view.north, vx / vl, vy / vl, vz / vl, vl);
         if (car) {
-          near = car.t;
           aimE = view.east + vx / vl * car.t; aimN = view.north + vz / vl * car.t; aimU = car.up;
           aimGround = false;
         }
-        const w = resolveShot(view.position, view.altitude, aim.ground, groundAlt, false);
-        if (w) {
-          const d = eastNorth(here, w.point);
-          const wt = ((d.east - view.east) * vx + (w.altitude - carAlt - view.up) * vy + (d.north - view.north) * vz) / vl;
-          if (wt > 1 && wt < near) { aimE = d.east; aimN = d.north; aimU = w.altitude - carAlt; aimGround = false; }
+      }
+    }
+
+    // 2. Bullets leave the nose — Batmobile: twin guns just aft of the headlights (~2× DPS).
+    const bat = currentCar.id === BATMOBILE_ID;
+    const ports = bat
+      ? [
+          { side: -0.58, fwd: currentCar.length * 0.38 },
+          { side: 0.58, fwd: currentCar.length * 0.38 },
+        ]
+      : [{ side: 0, fwd: 1.7 }];
+    const baseAimE = aimE, baseAimN = aimN, baseAimU = aimU;
+    const baseAimGround = aimGround;
+    const gunUp = 0.85;
+
+    for (const port of ports) {
+      let shotE = baseAimE, shotN = baseAimN, shotU = baseAimU;
+      const shotGround = baseAimGround;
+      const gunFwd = port.fwd;
+      const gunSide = port.side;
+      const gunEast = Math.sin(heading) * gunFwd + Math.cos(heading) * gunSide;
+      const gunNorth = Math.cos(heading) * gunFwd - Math.sin(heading) * gunSide;
+      const gunAlt = gunUp;
+
+      // Spread: farther aim → wider scatter. Averaged randoms keep most shots near centre.
+      {
+        const d = Math.hypot(shotE - gunEast, shotN - gunNorth);
+        const scatter = 0.1 + d * 0.008 + d * d * 0.00005;
+        const r = scatter * (Math.random() + Math.random());
+        const angle = Math.random() * Math.PI * 2;
+        const side = d > 1e-3 ? { e: -(shotN - gunNorth) / d, n: (shotE - gunEast) / d } : { e: 1, n: 0 };
+        const across = Math.cos(angle) * r, other = Math.sin(angle) * r * 0.5;
+        shotE += side.e * across;
+        shotN += side.n * across;
+        if (shotGround) { shotE += side.n * other; shotN -= side.e * other; } else shotU += other;
+      }
+      const groundMark = shotGround ? offsetPosition(here, shotE, shotN) as Position : aim.ground;
+      const cam = { position: offsetPosition(here, gunEast, gunNorth) as Position, altitude: carAlt + gunAlt, east: gunEast, north: gunNorth, up: gunAlt };
+      const dx = shotE - cam.east;
+      // shotU may sit below the muzzle (negative uy) so we can hit the kerb beside us
+      const dy = shotU - cam.up;
+      const dz = shotN - cam.north;
+      const rayLen = Math.hypot(dx, dy, dz);
+      // was 1 m — skipped every steep shot into the road next to the nose
+      if (rayLen < 0.12) continue;
+      const ux = dx / rayLen;
+      const uy = dy / rayLen;
+      const uz = dz / rayLen;
+      const reach = shotGround ? Math.min(Math.max(rayLen * 1.02, 4), 160) : 160;
+      const far = offsetPosition(here, cam.east + ux * reach, cam.north + uz * reach) as Position;
+      const farAlt = carAlt + cam.up + uy * reach;
+
+      let bestT = reach;
+      let hit: TargetState | null = null;
+      let hitUp = cam.up + uy * bestT;
+      const minHit = 0.35;
+      for (const target of targets.values()) {
+        if (target.destroyed) continue;
+        const delta = eastNorth(here, target.position);
+        const ox = cam.east - delta.east;
+        const oz = cam.north - delta.north;
+        const a = ux * ux + uz * uz;
+        if (a < 1e-8) continue;
+        const b = 2 * (ox * ux + oz * uz);
+        const c = ox * ox + oz * oz - radius * radius;
+        const disc = b * b - 4 * a * c;
+        if (disc < 0) continue;
+        const tHit = (-b - Math.sqrt(disc)) / (2 * a);
+        if (tHit < minHit || tHit > bestT) continue;
+        const up = cam.up + uy * tHit;
+        const rel = targetLift(target);
+        if (up < rel - 0.4 || up > rel + 2.6) continue;
+        bestT = tHit;
+        hit = target;
+        hitUp = Math.max(rel + 0.35, Math.min(rel + 1.6, up));
+      }
+
+      let remoteHit: string | null = null;
+      for (const remote of remotes.values()) {
+        const delta = eastNorth(here, remote.spec.position);
+        const ox = cam.east - delta.east;
+        const oz = cam.north - delta.north;
+        const a = ux * ux + uz * uz;
+        if (a < 1e-8) continue;
+        const b = 2 * (ox * ux + oz * uz);
+        const c = ox * ox + oz * oz - radius * radius;
+        const disc = b * b - 4 * a * c;
+        if (disc < 0) continue;
+        const tHit = (-b - Math.sqrt(disc)) / (2 * a);
+        if (tHit < minHit || tHit > bestT) continue;
+        const rel = remote.spec.altitude - carAlt;
+        const up = cam.up + uy * tHit;
+        if (up < rel - 0.4 || up > rel + 2.6) continue;
+        bestT = tHit;
+        hit = null;
+        remoteHit = remote.spec.id;
+        hitUp = Math.max(rel + 0.35, Math.min(rel + 1.6, up));
+      }
+
+      const wall = resolveShot(cam.position, cam.altitude, far, farAlt, false);
+      let wallHit = false;
+      let glassHit = false;
+      let groundHit = false;
+      if (wall) {
+        const wallDelta = eastNorth(here, wall.point);
+        const wallT = (wallDelta.east - cam.east) * ux + (wall.altitude - carAlt - cam.up) * uy + (wallDelta.north - cam.north) * uz;
+        if (wallT > minHit && wallT < bestT) {
+          hit = null;
+          remoteHit = null;
+          bestT = wallT;
+          hitUp = wall.altitude - carAlt;
+          wallHit = true;
+          glassHit = Boolean(wall.glass);
+          resolveShot(cam.position, cam.altitude, far, farAlt, true);
         }
       }
-    }
-
-    // 2. The bullet leaves the nose; the hose sits on the middle of the hood (body frame + lean).
-    const gunFwd = water ? currentCar.length * 0.28 : 1.7;
-    const gunUp = water ? 1.15 : 0.85;
-    let gunEast: number, gunNorth: number, gunAlt = gunUp;
-    if (water) {
-      // stick to the hood when the truck pitches / rolls, so turns don't drift the spout
-      const p = pitch(), r = roll();
-      const cp = Math.cos(p), sp = Math.sin(p), cr = Math.cos(r), sr = Math.sin(r);
-      const f1 = gunFwd * cp - gunUp * sp, u1 = gunFwd * sp + gunUp * cp;
-      const f2 = f1, u2 = u1 * cr, r2 = u1 * sr;
-      gunEast = Math.sin(heading) * f2 + Math.cos(heading) * r2;
-      gunNorth = Math.cos(heading) * f2 - Math.sin(heading) * r2;
-      gunAlt = u2;
-    } else {
-      gunEast = Math.sin(heading) * gunFwd;
-      gunNorth = Math.cos(heading) * gunFwd;
-    }
-
-    // Spread: the farther the aim, the wider the bullets scatter round it. A car is ~2 m
-    // across: up close every shot lands, at 80 m nearly all do, at 150 m about two in three.
-    if (!water) {
-      const d = Math.hypot(aimE - gunEast, aimN - gunNorth);
-      const scatter = 0.1 + d * 0.008 + d * d * 0.00005;
-      // two randoms averaged: most shots near the middle, a few wide
-      const r = scatter * (Math.random() + Math.random());
-      const angle = Math.random() * Math.PI * 2;
-      const side = d > 1e-3 ? { e: -(aimN - gunNorth) / d, n: (aimE - gunEast) / d } : { e: 1, n: 0 };
-      // on the ground the scatter lies flat on it (short and long), on a car or wall it goes up and down
-      const across = Math.cos(angle) * r, other = Math.sin(angle) * r * 0.5;
-      aimE += side.e * across;
-      aimN += side.n * across;
-      if (aimGround) { aimE += side.n * other; aimN -= side.e * other; } else aimU += other;
-    }
-    const groundMark = aimGround ? offsetPosition(here, aimE, aimN) as Position : aim.ground;
-    const cam = { position: offsetPosition(here, gunEast, gunNorth) as Position, altitude: carAlt + gunAlt, east: gunEast, north: gunNorth, up: gunAlt };
-    const dx = aimE - cam.east;
-    const dy = aimU - cam.up;
-    const dz = aimN - cam.north;
-    const rayLen = Math.hypot(dx, dy, dz);
-    if (rayLen < 1) return;
-    const ux = dx / rayLen;
-    const uy = dy / rayLen;
-    const uz = dz / rayLen;
-    // water hose: ~40 m; guns keep the long rifle reach
-    const reach = water ? Math.min(rayLen * 1.02, 40) : aimGround ? Math.min(rayLen * 1.02, 160) : 160;
-    const far = offsetPosition(here, cam.east + ux * reach, cam.north + uz * reach) as Position;
-    const farAlt = carAlt + cam.up + uy * reach;
-
-    let bestT = reach;
-    let hit: TargetState | null = null;
-    let hitUp = cam.up + uy * bestT;
-    for (const target of targets.values()) {
-      if (target.destroyed) continue;
-      const delta = eastNorth(here, target.position);
-      const ox = cam.east - delta.east;
-      const oz = cam.north - delta.north;
-      const a = ux * ux + uz * uz;
-      if (a < 1e-8) continue;
-      const b = 2 * (ox * ux + oz * uz);
-      const c = ox * ox + oz * oz - radius * radius;
-      const disc = b * b - 4 * a * c;
-      if (disc < 0) continue;
-      const t = (-b - Math.sqrt(disc)) / (2 * a);
-      if (t < 1.2 || t > bestT) continue;
-      const up = cam.up + uy * t;
-      const rel = targetLift(target);
-      if (up < rel - 0.4 || up > rel + 2.6) continue;
-      bestT = t;
-      hit = target;
-      hitUp = Math.max(rel + 0.35, Math.min(rel + 1.6, up));
-    }
-
-    // other players' cars: the same upright cylinder, at their own height
-    let remoteHit: string | null = null;
-    for (const remote of remotes.values()) {
-      const delta = eastNorth(here, remote.spec.position);
-      const ox = cam.east - delta.east;
-      const oz = cam.north - delta.north;
-      const a = ux * ux + uz * uz;
-      if (a < 1e-8) continue;
-      const b = 2 * (ox * ux + oz * uz);
-      const c = ox * ox + oz * oz - radius * radius;
-      const disc = b * b - 4 * a * c;
-      if (disc < 0) continue;
-      const t = (-b - Math.sqrt(disc)) / (2 * a);
-      if (t < 1.2 || t > bestT) continue;
-      const rel = remote.spec.altitude - carAlt;
-      const up = cam.up + uy * t;
-      if (up < rel - 0.4 || up > rel + 2.6) continue;
-      bestT = t;
-      hit = null;
-      remoteHit = remote.spec.id;
-      hitUp = Math.max(rel + 0.35, Math.min(rel + 1.6, up));
-    }
-
-    const wall = resolveShot(cam.position, cam.altitude, far, farAlt, false);
-    let wallHit = false;
-    let groundHit = false;
-    if (wall) {
-      const wallDelta = eastNorth(here, wall.point);
-      const wallT = (wallDelta.east - cam.east) * ux + (wall.altitude - carAlt - cam.up) * uy + (wallDelta.north - cam.north) * uz;
-      if (wallT > 1 && wallT < bestT) {
-        hit = null;
-        remoteHit = null;
-        bestT = wallT;
-        hitUp = wall.altitude - carAlt;
-        wallHit = true;
-        // water leaves no bullet holes / doesn't topple props
-        if (!water) resolveShot(cam.position, cam.altitude, far, farAlt, true);
+      let trainHit: { vintage: boolean } | null = null;
+      const train = resolveTrain(cam.position, cam.altitude, far, farAlt);
+      if (train) {
+        const td = eastNorth(here, train.point);
+        const tt = (td.east - cam.east) * ux + (train.altitude - carAlt - cam.up) * uy + (td.north - cam.north) * uz;
+        if (tt > minHit && tt < bestT) {
+          hit = null; remoteHit = null; wallHit = false; glassHit = false;
+          bestT = tt;
+          hitUp = train.altitude - carAlt;
+          trainHit = { vintage: train.vintage };
+          if (train.vintage) trainCoinHandler(train.point, train.altitude);
+        }
       }
-    }
-    // trains: hard to the bullet, nothing to break; a vintage one coughs up a coin
-    let trainHit: { vintage: boolean } | null = null;
-    const train = resolveTrain(cam.position, cam.altitude, far, farAlt);
-    if (train) {
-      const td = eastNorth(here, train.point);
-      const tt = (td.east - cam.east) * ux + (train.altitude - carAlt - cam.up) * uy + (td.north - cam.north) * uz;
-      if (tt > 1 && tt < bestT) {
-        hit = null; remoteHit = null; wallHit = false;
-        bestT = tt;
-        hitUp = train.altitude - carAlt;
-        trainHit = { vintage: train.vintage };
-        if (!water && train.vintage) trainCoinHandler(train.point, train.altitude);
+      if (!hit && !wallHit && !remoteHit && !trainHit && shotGround) {
+        bestT = Math.min(bestT, rayLen);
+        hitUp = groundAlt - carAlt;
+        groundHit = true;
+        markGround(groundMark, groundAlt);
       }
-    }
-    if (!hit && !wallHit && !remoteHit && !trainHit && aimGround) {
-      bestT = Math.min(bestT, rayLen);
-      hitUp = groundAlt - carAlt;
-      groundHit = true;
-      if (!water) markGround(groundMark, groundAlt);
-    }
 
-    const end = offsetPosition(here, cam.east + ux * bestT, cam.north + uz * bestT);
-    // world-space (east, north, up) shot geometry for the effects
-    const muzzleAt: Enu = water
-      ? { e: gunEast, n: gunNorth, u: gunAlt }
-      : { e: gunEast + Math.sin(heading) * 0.2, n: gunNorth + Math.cos(heading) * 0.2, u: gunUp };
-    const endEn = eastNorth(here, end);
-    const hitAt: Enu = { e: endEn.east, n: endEn.north, u: hitUp };
-    const shotLen = Math.hypot(hitAt.e - muzzleAt.e, hitAt.n - muzzleAt.n, hitAt.u - muzzleAt.u) || 1;
-    const shotDir: Enu = { e: (hitAt.e - muzzleAt.e) / shotLen, n: (hitAt.n - muzzleAt.n) / shotLen, u: (hitAt.u - muzzleAt.u) / shotLen };
-    const bounce: Enu = { e: -shotDir.e, n: -shotDir.n, u: Math.max(0.35, -shotDir.u) };
-    fx.altitude = carAlt;
+      const end = offsetPosition(here, cam.east + ux * bestT, cam.north + uz * bestT);
+      const muzzleAt: Enu = { e: gunEast + Math.sin(heading) * 0.2, n: gunNorth + Math.cos(heading) * 0.2, u: gunUp };
+      const endEn = eastNorth(here, end);
+      const hitAt: Enu = { e: endEn.east, n: endEn.north, u: hitUp };
+      const shotLen = Math.hypot(hitAt.e - muzzleAt.e, hitAt.n - muzzleAt.n, hitAt.u - muzzleAt.u) || 1;
+      const shotDir: Enu = { e: (hitAt.e - muzzleAt.e) / shotLen, n: (hitAt.n - muzzleAt.n) / shotLen, u: (hitAt.u - muzzleAt.u) / shotLen };
+      const bounce: Enu = { e: -shotDir.e, n: -shotDir.n, u: Math.max(0.35, -shotDir.u) };
+      fx.altitude = carAlt;
 
-    const muzzle = offsetPosition(here, Math.sin(heading) * 1.7, Math.cos(heading) * 1.7);
-    const startPoint = scenePoint(here, muzzle, heading, 0.85);
-    const endPoint = scenePoint(here, end, heading, hitUp);
-    const bulletLength = Math.min(2.2, Math.max(0.65, bestT * 0.12));
-    const dashCount = Math.random() < 0.55 ? 1 : 2;
-    for (let dash = 0; dash < dashCount; dash++) {
-      const along = Math.min(bestT * 0.72, 5 + dash * 6 + Math.random() * 2);
-      const from = new THREE.Vector3(
-        startPoint.x + (endPoint.x - startPoint.x) * (along / Math.max(bestT, 1)),
-        startPoint.y + (endPoint.y - startPoint.y) * (along / Math.max(bestT, 1)),
-        startPoint.z + (endPoint.z - startPoint.z) * (along / Math.max(bestT, 1)),
-      );
-      const to = new THREE.Vector3(
-        startPoint.x + (endPoint.x - startPoint.x) * ((along + bulletLength) / Math.max(bestT, 1)),
-        startPoint.y + (endPoint.y - startPoint.y) * ((along + bulletLength) / Math.max(bestT, 1)),
-        startPoint.z + (endPoint.z - startPoint.z) * ((along + bulletLength) / Math.max(bestT, 1)),
-      );
-      tracerPositions.set([from.x, from.y, from.z, to.x, to.y, to.z], dash * 6);
-    }
-    (tracerGeometry.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true;
-    tracerGeometry.computeBoundingSphere();
-    tracerGeometry.setDrawRange(0, dashCount * 2);
-    tracer.visible = true;
-    tracerUntil = now + 90;
-    fx.muzzle(here, muzzleAt, shotDir, now);
-    fx.tracer(here, muzzleAt, hitAt, now);
-    tracer.visible = false; // the particle streak replaces the 1px line
-    if (remoteHit) {
-      fx.impact(here, hitAt, bounce, now, { scale: 1 });
-      const struck = remotes.get(remoteHit);
-      if (remoteHitHandler(remoteHit) && struck) struck.flashUntil = now + 130;
-    } else if (hit) {
-      targetHitHandler(hit.id);
-      hit.hp = Math.max(0, hit.hp - targetDamagePerShot);
-      if (hit.hp === 0) {
-        destroyTarget(hit, now, here, heading);
-      } else {
-        hit.flashUntil = now + 130;
+      const muzzle = offsetPosition(here, gunEast, gunNorth);
+      const startPoint = scenePoint(here, muzzle, heading, gunUp);
+      const endPoint = scenePoint(here, end, heading, hitUp);
+      const bulletLength = Math.min(2.2, Math.max(0.65, bestT * 0.12));
+      const dashCount = Math.random() < 0.55 ? 1 : 2;
+      for (let dash = 0; dash < dashCount; dash++) {
+        const along = Math.min(bestT * 0.72, 5 + dash * 6 + Math.random() * 2);
+        const from = new THREE.Vector3(
+          startPoint.x + (endPoint.x - startPoint.x) * (along / Math.max(bestT, 1)),
+          startPoint.y + (endPoint.y - startPoint.y) * (along / Math.max(bestT, 1)),
+          startPoint.z + (endPoint.z - startPoint.z) * (along / Math.max(bestT, 1)),
+        );
+        const to = new THREE.Vector3(
+          startPoint.x + (endPoint.x - startPoint.x) * ((along + bulletLength) / Math.max(bestT, 1)),
+          startPoint.y + (endPoint.y - startPoint.y) * ((along + bulletLength) / Math.max(bestT, 1)),
+          startPoint.z + (endPoint.z - startPoint.z) * ((along + bulletLength) / Math.max(bestT, 1)),
+        );
+        tracerPositions.set([from.x, from.y, from.z, to.x, to.y, to.z], dash * 6);
+      }
+      (tracerGeometry.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true;
+      tracerGeometry.computeBoundingSphere();
+      tracerGeometry.setDrawRange(0, dashCount * 2);
+      tracer.visible = true;
+      tracerUntil = now + 90;
+      fx.muzzle(here, muzzleAt, shotDir, now);
+      fx.tracer(here, muzzleAt, hitAt, now);
+      tracer.visible = false;
+      // Family Sedan: vacuum road coins along the tracer (before impact FX)
+      if (family) {
+        shotCoinHandler(
+          offsetPosition(here, gunEast, gunNorth) as Position,
+          carAlt + gunUp,
+          end,
+          carAlt + hitUp,
+        );
+      }
+      if (remoteHit) {
         fx.impact(here, hitAt, bounce, now, { scale: 1 });
+        const struck = remotes.get(remoteHit);
+        if (remoteHitHandler(remoteHit) && struck) struck.flashUntil = now + 130;
+      } else if (hit) {
+        targetHitHandler(hit.id);
+        hit.hp = Math.max(0, hit.hp - targetDamagePerShot);
+        if (hit.hp === 0) {
+          destroyTarget(hit, now, here, heading);
+        } else {
+          hit.flashUntil = now + 130;
+          fx.impact(here, hitAt, bounce, now, { scale: 1 });
+        }
+      } else if (trainHit) {
+        if (!trainHit.vintage) fx.impact(here, hitAt, bounce, now, { scale: 0.8 });
+      } else if (glassHit) {
+        fx.glassShatter(here, hitAt, bounce, now);
+      } else if (wallHit || groundHit) {
+        const normal: Enu = groundHit ? { e: bounce.e * 0.4, n: bounce.n * 0.4, u: 1 } : bounce;
+        fx.impact(here, hitAt, normal, now, { scale: groundHit ? 0.7 : 0.9, dust: true });
       }
-    } else if (trainHit) {
-      // a vintage train gives a coin instead of a scar; a modern one just sparks
-      if (!trainHit.vintage) fx.impact(here, hitAt, bounce, now, { scale: 0.8 });
-    } else if (wallHit || groundHit) {
-      const normal: Enu = groundHit ? { e: bounce.e * 0.4, n: bounce.n * 0.4, u: 1 } : bounce;
-      fx.impact(here, hitAt, normal, now, { scale: groundHit ? 0.7 : 0.9, dust: true });
     }
   }
 
@@ -1029,11 +1057,8 @@ export function vehicleLayer(
     setAim(next) { aim = next; },
     aimTarget() {
       if (!aim || !map) return null;
-      const carAlt = height();
-      const groundAlt = map.groundAt(aim.ground) ?? carAlt;
-      const view = cameraPose(vehicle.position, carAlt);
-      const wall = resolveShot(view.position, view.altitude, aim.ground, groundAlt, false);
-      return wall ? { position: wall.point, altitude: wall.altitude, wall: true } : { position: [...aim.ground] as Position, altitude: groundAlt, wall: false };
+      const altitude = aim.altitude ?? map.groundAt(aim.ground) ?? height();
+      return { position: [...aim.ground] as Position, altitude, wall: Boolean(aim.wall) };
     },
     setFiring(value) { firing = value; },
     flashPlayer(duration) { playerFlashUntil = Math.max(playerFlashUntil, performance.now() + duration); },
@@ -1081,12 +1106,62 @@ export function vehicleLayer(
       fx.explosion(here, { e: 0.8, n: -0.6, u: 1.2 }, 0.8, now + 140, false);
       playerFlashUntil = Math.max(playerFlashUntil, now + 600);
     },
+    plungeSplash() {
+      const here = vehicle.position;
+      const now = performance.now();
+      fx.altitude = height();
+      fx.carSplash(here, { e: 0, n: 0, u: 0.25 }, now);
+    },
     setCar(next) {
       if (next.id === currentCar.id && next.path === currentCar.path) return;
       loadPlayerCar(next, false);
     },
     setTargets,
     setExtraTargets,
+    plantPropWreck(id, opts = {}) {
+      const target = targets.get(id);
+      if (!target) return;
+      const overturned = opts.overturned !== false;
+      const burning = Boolean(opts.burning);
+      target.destroyed = true;
+      target.root.traverse((child) => { if (child.userData.beacon) child.visible = false; });
+      target.root.visible = true;
+      target.blastsLeft = 0;
+      target.explosion.visible = false;
+      target.velUp = 0;
+      if (overturned) {
+        const flip = (Math.random() < 0.5 ? 1 : -1) * Math.PI * (0.85 + Math.random() * 0.3);
+        if (Math.random() < 0.5) {
+          target.spinX = flip;
+          target.spinZ = (Math.random() * 2 - 1) * 0.45;
+        } else {
+          target.spinZ = flip;
+          target.spinX = (Math.random() * 2 - 1) * 0.45;
+        }
+        target.spinY = (Math.random() * 2 - 1) * 0.55;
+      } else {
+        // nosed into a wall / ditch: upright enough, slight lean
+        target.spinX = (Math.random() * 2 - 1) * 0.22;
+        target.spinZ = (Math.random() * 2 - 1) * 0.18;
+        target.spinY = (Math.random() * 2 - 1) * 0.12;
+      }
+      target.charMats = captureCharMats(target.root);
+      tintTarget(target, false);
+      const heading = vehicle.heading;
+      bakeWreckPose(target, heading);
+      const now = performance.now();
+      if (burning) {
+        target.deathPhase = 'burn';
+        // mid-burn: skip tumble, keep flames for a couple of seconds
+        target.explodedAt = now - 1100;
+        applyChar(target, 0.55, 0);
+      } else {
+        target.deathPhase = 'wreck';
+        target.explodedAt = now - 5000;
+        applyChar(target, 1, 0);
+        putOut(target);
+      }
+    },
     setTargetHp(id, hp) {
       const target = targets.get(id);
       if (!target || target.destroyed) return;
@@ -1104,6 +1179,8 @@ export function vehicleLayer(
     set onTargetHit(handler: (id: string) => void) { targetHitHandler = handler; },
     get onTrainCoin() { return trainCoinHandler; },
     set onTrainCoin(handler: (point: Position, altitude: number) => void) { trainCoinHandler = handler; },
+    get onShotCoins() { return shotCoinHandler; },
+    set onShotCoins(handler: (from: Position, fromAlt: number, to: Position, toAlt: number) => void) { shotCoinHandler = handler; },
     get onTargetDestroyed() { return targetDestroyedHandler; },
     set onTargetDestroyed(handler: (id: string, position: Position) => void) { targetDestroyedHandler = handler; },
     setRemotes,
@@ -1151,10 +1228,17 @@ export function vehicleLayer(
         map?.setFirePanes([]);
         return;
       }
-      burningHouse.ignite(site.panes);
+      burningHouse.ignite(site.panes, site.available ?? site.panes.length);
+      map?.setFirePanes(burningHouse.fireMarkers());
+    },
+    /** Skin swap mid-fire: snap burning panes onto the new façade grid, keep ~the same burn %. */
+    remeshFireHouse(candidates, seed) {
+      if (!burningHouse.placed || !candidates.length) return;
+      burningHouse.remesh(candidates, seed);
       map?.setFirePanes(burningHouse.fireMarkers());
     },
     fireWindowsLeft() { return burningHouse.placed ? burningHouse.burningLeft() : null; },
+    fireWindowsTotal() { return burningHouse.placed ? burningHouse.total : null; },
     get onFireWindowOut() { return onFireWindowOut; },
     set onFireWindowOut(handler: (left: number) => void) { onFireWindowOut = handler; },
     setBeacons(on) { beaconsOn = on; applyBeacons(); },
@@ -1355,12 +1439,12 @@ export function vehicleLayer(
           const at: Position = [from[0] + (pickup.position[0] - from[0]) * roll, from[1] + (pickup.position[1] - from[1]) * roll];
           const hop = 1.5 * Math.abs(Math.sin(Math.PI * 3 * t)) * (1 - t) ** 1.6
             // thrown from up on a train car: falls from there first
-            + Math.max(0, (pickup.drop.up ?? 0) - 0.62) * Math.max(0, 1 - t * 3) ** 2;
-          pickup.mesh.position.copy(scenePoint(here, at, heading, lift + 0.62 + hop));
+            + Math.max(0, (pickup.drop.up ?? 0) - 0.78) * Math.max(0, 1 - t * 3) ** 2;
+          pickup.mesh.position.copy(scenePoint(here, at, heading, lift + 0.78 + hop));
           pickup.mesh.rotation.y = now * 0.012 + pickup.phase;
         } else if (pickup.coin) {
           // 1 m coin hovering just above the road, turning about its upright axis
-          pickup.mesh.position.copy(scenePoint(here, pickup.position, heading, lift + 0.62 + Math.sin(now * 0.0018 + pickup.phase) * 0.08));
+          pickup.mesh.position.copy(scenePoint(here, pickup.position, heading, lift + 0.78 + Math.sin(now * 0.0018 + pickup.phase) * 0.08));
           pickup.mesh.rotation.y = now * 0.0032 + pickup.phase;
         } else {
           pickup.mesh.position.copy(scenePoint(here, pickup.position, heading, lift + 0.42 + Math.sin(now * 0.002 + pickup.phase) * 0.07));

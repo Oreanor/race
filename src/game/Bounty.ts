@@ -26,10 +26,10 @@ const NAMES = [
 ];
 
 /** the dangerous car the wanted drive */
-export const WANTED_CAR = '03';
+const WANTED_CAR = '03';
 
 /** Reward for a local hunt — a bit more when the spot is farther out. */
-export function bountyReward(km: number) {
+function bountyReward(km: number) {
   return Math.round((900 + km * 40) / 50) * 50;
 }
 

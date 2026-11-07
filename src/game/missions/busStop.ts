@@ -1,13 +1,13 @@
 import { formatNumber, t } from '@/i18n';
-import { metersBetween, type Position } from '../VehicleController';
+import { metersBetween, type Position } from '../VehicleController.ts';
 import {
   BUS_FARE_MAX,
   BUS_FARE_MIN,
   BUS_FARE_STEP,
   BUS_STOP_REACH_M,
   busFareCoins,
-} from '../tuning';
-import type { Station } from '../poi';
+} from '../tuning.ts';
+import type { Station } from '../poi.ts';
 
 export type BusStopAction = 'board' | 'alight';
 

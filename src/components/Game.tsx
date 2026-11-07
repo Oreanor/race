@@ -92,8 +92,6 @@ type RosterNodes = {
   hp: HTMLElement;
   money: HTMLElement;
   moneyValue: Text;
-  wins: HTMLElement;
-  winsValue: Text;
 };
 
 function syncRoster(root: HTMLElement, store: Map<string, RosterNodes>, drivers: HudParticipant[]) {
@@ -135,17 +133,10 @@ function syncRoster(root: HTMLElement, store: Map<string, RosterNodes>, drivers:
       coin.setAttribute('aria-hidden', 'true');
       const moneyValue = document.createTextNode('0');
       money.append(coin, moneyValue);
-      const wins = document.createElement('span');
-      wins.className = 'roster-wins';
-      const cup = document.createElement('span');
-      cup.className = 'wins-cup';
-      cup.setAttribute('aria-hidden', 'true');
-      const winsValue = document.createTextNode('0');
-      wins.append(cup, winsValue);
-      heading.append(name, hpGroup, money, wins);
+      heading.append(name, hpGroup, money);
       entry.appendChild(heading);
       root.appendChild(entry);
-      nodes = { entry, name, meter, fill, hp, money, moneyValue, wins, winsValue };
+      nodes = { entry, name, meter, fill, hp, money, moneyValue };
       store.set(driver.id, nodes);
     }
     nodes.name.textContent = driver.name;
@@ -158,13 +149,10 @@ function syncRoster(root: HTMLElement, store: Map<string, RosterNodes>, drivers:
     nodes.meter.setAttribute('aria-valuenow', String(Math.ceil(driver.hp)));
     nodes.fill.style.width = `${Math.max(0, Math.min(100, driver.hp / driver.maxHp * 100))}%`;
     nodes.hp.textContent = String(Math.ceil(driver.hp));
-    // other players: their money and wins are not ours to show
+    // other players: their money is not ours to show
     nodes.money.style.visibility = Number.isFinite(driver.money) ? '' : 'hidden';
-    nodes.wins.style.visibility = Number.isFinite(driver.wins) ? '' : 'hidden';
     nodes.moneyValue.data = String(driver.money);
     nodes.money.setAttribute('aria-label', t('roster.coins', { n: driver.money }));
-    nodes.winsValue.data = String(driver.wins);
-    nodes.wins.setAttribute('aria-label', t('roster.wins', { n: driver.wins }));
     root.appendChild(nodes.entry);
   }
 }
@@ -197,6 +185,7 @@ export default function Game() {
   nameRef.current = shownName;
   const speedRef = useRef<HTMLElement>(null);
   const fpsRef = useRef<HTMLElement>(null);
+  const placeRef = useRef<HTMLElement>(null);
   const clockRef = useRef<HTMLElement>(null);
   const compassRef = useRef<HTMLDivElement>(null);
   // compass: the rose turns against the camera so N always points north
@@ -245,6 +234,10 @@ export default function Game() {
   const [driving, setDriving] = useState(false);
   const [approaching, setApproaching] = useState(false);
   const [booted, setBooted] = useState(false);
+  /** after status fades: logo may rise */
+  const [brandRising, setBrandRising] = useState(false);
+  /** after logo settles: plaque fades in under the logo */
+  const [introIn, setIntroIn] = useState(false);
   const [exitConfirm, setExitConfirm] = useState(false);
   const [search, setSearch] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
@@ -288,6 +281,8 @@ export default function Game() {
   const [rideOffer, setRideOffer] = useState<RideOffer | null>(null);
   // Ticket / reload / menu exit: purse taken into the next engine (same intro either way)
   const carryRef = useRef<PlayerCarry | null>(null);
+  /** intro city pick / travel ticket — cleanup must not overwrite carry with the old road spot */
+  const cityHopRef = useRef(false);
   const arriveRef = useRef(false);
   const [purse, setPurse] = useState(() => bootSave()?.money ?? STARTING_CASH);
   const [garageIds, setGarageIds] = useState<string[]>(() => {
@@ -324,31 +319,43 @@ export default function Game() {
     const where = nextPlace ?? place;
     const save = game?.snapshot({ name: place.name, country: place.country, coords: place.coords });
     if (save) {
+      const heading = nextPlace ? where.heading * Math.PI / 180 : save.heading;
+      const position = nextPlace ? [...where.coords] as [number, number] : save.position;
       writeSave({
         ...save,
         place: { name: where.name, country: where.country, coords: [...where.coords] as [number, number] },
         // new city: spawn there; same city: keep the last road position
-        position: nextPlace ? [...where.coords] as [number, number] : save.position,
-        heading: nextPlace ? where.heading * Math.PI / 180 : save.heading,
+        position,
+        heading,
       });
       setPurse(save.money);
       setGarageIds(save.garage ?? [save.carId]);
+      if (nextPlace) cityHopRef.current = true;
       carryRef.current = {
         money: save.money,
         fuel: save.fuel,
         loan: save.loan ?? 0,
-        garage: save.garage,
+        // keep owned cars so a city hop does not re-charge the menu car (that needs `at`)
+        garage: [...new Set([...(save.garage ?? [save.carId]), save.carId, ...GIFT_CARS])],
         collected: save.collected,
-        at: nextPlace
-          ? undefined
-          : { position: save.position, heading: save.heading, hp: save.hp },
+        // resume-style `at` at the destination — skips intro re-buy, map opens on the new city
+        at: { position, heading, hp: save.hp },
       };
       return;
     }
     const prev = carryRef.current;
     if (!prev) return;
     if (nextPlace) {
-      carryRef.current = { ...prev, at: undefined };
+      cityHopRef.current = true;
+      carryRef.current = {
+        ...prev,
+        garage: [...new Set([...(prev.garage ?? []), ...GIFT_CARS])],
+        at: {
+          position: [...where.coords] as [number, number],
+          heading: where.heading * Math.PI / 180,
+          hp: prev.at?.hp ?? 1000,
+        },
+      };
     }
   }, [place]);
   const [settings, setSettings] = useState<Settings>(() => {
@@ -394,8 +401,12 @@ export default function Game() {
     setStatus(t('loading.city'));
     setApproaching(false);
     setBooted(false);
+    setBrandRising(false);
+    setIntroIn(false);
     let game: GameEngine | undefined;
     let clockAt = 0;
+    let riseTimer = 0;
+    let introTimer = 0;
     // the purse this engine starts with (a save or a ticket); handed back if it is torn down unused
     const bootCarry = carryRef.current;
     try {
@@ -412,10 +423,11 @@ export default function Game() {
           if (fpsRef.current) fpsRef.current.textContent = (frames || '—') + ' FPS';
           // local date and time where the car is, a few times a second at most
           const now = performance.now();
-          if (clockRef.current && now - clockAt > 500 && game) {
+          if ((placeRef.current || clockRef.current) && now - clockAt > 500 && game) {
             clockAt = now;
             const { at, timeZone } = game.map.localTime();
-            clockRef.current.textContent = localClock(at, timeZone);
+            if (placeRef.current) placeRef.current.textContent = place.name;
+            if (clockRef.current) clockRef.current.textContent = localClock(at, timeZone);
           }
           // not before the run's purse is in: a booting engine reports 0 coins
           if (drivingRef.current && rosterRef.current && game?.runStarted) syncRoster(rosterRef.current, rosterStoreRef.current, drivers);
@@ -448,13 +460,25 @@ export default function Game() {
       live.setMapLabelFilters(mapLabels);
       live.onApproach = (active) => setApproaching(active);
       live.onBoot = (ready) => {
+        window.clearTimeout(riseTimer);
+        window.clearTimeout(introTimer);
         setBooted(ready);
-        if (!ready) return;
+        if (!ready) {
+          setBrandRising(false);
+          setIntroIn(false);
+          return;
+        }
+        // 1) status fades out → 2) logo rises 1s → 3) plaque fades in place
+        riseTimer = window.setTimeout(() => {
+          setBrandRising(true);
+          introTimer = window.setTimeout(() => setIntroIn(true), 1000);
+        }, 400);
         // Same calm intro for reload and a fresh city — only a bought ticket auto-drives in.
         if (arriveRef.current) {
           arriveRef.current = false;
           setDriving(true);
-          live.setDriving(true);
+          // ticket / arrive: sit in chase cam, no intro fly-in
+          live.setDriving(true, false);
           setApproaching(live.approaching);
         }
       };
@@ -483,9 +507,28 @@ export default function Game() {
       setStatus(t('webgl.failed'));
     }
     return () => {
-      // dev StrictMode (or a quick city switch) drops the engine before it applied the purse:
-      // give it back so the next engine resumes it instead of starting from scratch
-      if (bootCarry && game && !game.runStarted && !carryRef.current) carryRef.current = bootCarry;
+      // StrictMode remount: stash purse + road resume. City hop / ticket already prepared
+      // carry for the destination — do not overwrite with the old map (and wipe the purse).
+      const hopping = cityHopRef.current;
+      cityHopRef.current = false;
+      if (game?.runStarted && !hopping) {
+        const save = game.snapshot({ name: place.name, country: place.country, coords: place.coords });
+        if (save) {
+          writeSave(save);
+          carryRef.current = {
+            money: save.money,
+            fuel: save.fuel,
+            at: { position: save.position, heading: save.heading, hp: save.hp },
+            collected: save.collected ?? [],
+            loan: save.loan ?? 0,
+            garage: save.garage ?? [save.carId],
+          };
+        }
+      } else if (bootCarry && !carryRef.current) {
+        carryRef.current = bootCarry;
+      }
+      window.clearTimeout(riseTimer);
+      window.clearTimeout(introTimer);
       game?.dispose();
       engine.current = null;
     };
@@ -719,6 +762,31 @@ export default function Game() {
   const mapLabelMid = Math.ceil(MAP_LABEL_KINDS.length / 2);
   const mapLabelRows = [MAP_LABEL_KINDS.slice(0, mapLabelMid), MAP_LABEL_KINDS.slice(mapLabelMid)];
 
+  const settingsForm = (
+    <div className="ui-form">
+      <label>{t('settings.language')}<select value={lang} onChange={e => setLang(e.target.value as Lang)}>{LANGS.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select></label>
+      <div className="ui-theme-row">
+        <span>{t('settings.theme')}</span>
+        <div className="ui-theme" role="group" aria-label={t('settings.theme')}>
+          <button type="button" className={`ui-theme-btn${settings.theme === 'light' ? ' is-on' : ''}`} aria-pressed={settings.theme === 'light'} aria-label={t('theme.light')} onClick={() => update({ theme: 'light' as Theme })}>
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="12" cy="12" r="4" fill="currentColor"/><path d="M12 2v2.5M12 19.5V22M4.2 4.2l1.8 1.8M18 18l1.8 1.8M2 12h2.5M19.5 12H22M4.2 19.8 6 18M18 6l1.8-1.8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" fill="none"/></svg>
+          </button>
+          <button type="button" className={`ui-theme-btn${settings.theme === 'night' ? ' is-on' : ''}`} aria-pressed={settings.theme === 'night'} aria-label={t('theme.night')} onClick={() => update({ theme: 'night' as Theme })}>
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M16.5 3.5a8.5 8.5 0 1 0 4 14.2A7 7 0 1 1 16.5 3.5Z" fill="currentColor"/></svg>
+          </button>
+        </div>
+      </div>
+      <label>{t('settings.skin')}<select value={settings.skin} onChange={e => update({ skin: e.target.value as Settings['skin'] })}>{SKINS.map(id => <option key={id} value={id}>{t(`skin.${id}`)}</option>)}</select></label>
+      <label>{t('settings.quality')}<select value={settings.quality} onChange={e => update({ quality: e.target.value as Settings['quality'] })}><option value="low">{t('quality.low')}</option><option value="medium">{t('quality.medium')}</option><option value="high">{t('quality.high')}</option></select></label>
+      <label className="toggle">{t('settings.terrain')}<input type="checkbox" checked={settings.terrain} onChange={e => update({ terrain: e.target.checked })} /></label>
+      <label className="toggle">{t('settings.follow')}<input type="checkbox" checked={settings.follow} onChange={e => update({ follow: e.target.checked })} /></label>
+      <label>{t('settings.sensitivity')}<input type="range" min="0.3" max="2" step="0.1" value={settings.sensitivity} onChange={e => update({ sensitivity: Number(e.target.value) })} /></label>
+      <label className="toggle">{t('settings.stats')}<input type="checkbox" checked={perfOn} onChange={e => toggleStats(e.target.checked)} /></label>
+      <ServerStatus />
+      <button type="button" className="ui-btn is-ghost" onClick={() => { setSettingsOpen(false); setKeysOpen(true); }}>{t('keys.open')} · K</button>
+    </div>
+  );
+
   return (
     <main className={`game-shell${driving ? ' is-driving' : ''}`} data-theme={settings.theme}>
       <div ref={host} className="map" />
@@ -731,76 +799,87 @@ export default function Game() {
       </div>
       {perfOn && <PerfOverlay mode={t('settings.stats')} perf={perf} bench={bench} onBench={runBench} />}
       {!driving && (
-        <div className={`brand-stage${!booted ? ' is-booting' : ''}`}>
-          {!booted && <div className="map-loader-bg" aria-hidden="true" />}
+        <div className={`brand-stage${!booted || !brandRising ? ' is-booting' : introIn ? ' is-ready' : ' is-revealing'}`}>
+          <div className="map-loader-bg" aria-hidden={brandRising} />
           <div className="brand-stage-stack">
             <a className="brand stage-brand" href="/" aria-label="City Rider">
               <span className="brand-icon">↗</span> city rider
             </a>
-            {!booted ? (
-              <div className="brand-stage-slot" aria-live="polite">
-                <div className="boot-preload">
-                  <span className="live-dot" />
-                  <span>{status || t('loading.city')}</span>
-                </div>
+            <div className="brand-stage-slot" aria-live="polite">
+              <div className={`boot-preload${booted ? ' is-out' : ''}`}>
+                <span className="live-dot" />
+                <span>{status || t('loading.city')}</span>
               </div>
-            ) : (
-              <section className="intro">
-                <div className="trip-card">
-                  <input
-                    className="ui-input"
-                    aria-label={t('net.name')}
-                    placeholder={defaultName}
-                    maxLength={24}
-                    value={playerName}
-                    onChange={e => {
-                      const value = e.target.value;
-                      setPlayerName(value);
-                      try { localStorage.setItem('cityRider.name', value.trim()); } catch { /* private mode */ }
-                      engine.current?.joinNetwork(value.trim() || defaultName);
-                    }}
-                  />
-                  <CarCarousel index={car} onIndex={setCar}>
-                    <div className="car-deal">
-                      <span>{t('dealer.price')}</span>
-                      <strong className={canBuyStarter ? undefined : 'is-broke'}><Price value={starterPrice} /></strong>
-                    </div>
-                  </CarCarousel>
-                  <div className="city-search">
-                    <label className="search">
-                      <input
-                        className="ui-input"
-                        aria-label={t('intro.destination')}
-                        placeholder={t('intro.destination')}
-                        value={search}
-                        onFocus={() => setSearchOpen(search.trim().length >= 2)}
-                        onChange={e => {
-                          const value = e.target.value;
-                          setSearch(value);
-                          setSearchOpen(value.trim().length >= 2);
-                        }}
-                      />
-                    </label>
-                    {searchOpen && query.length >= 2 && (
-                      <div className="city-list">
-                        {found.map(option)}
-                        {looking && <p className="empty">{t('search.looking')}</p>}
-                        {!looking && searchFailed && <p className="empty">{t('search.failed')}</p>}
-                        {!looking && !searchFailed && !found.length && <p className="empty">{t('search.none')}</p>}
-                      </div>
+              {introIn && (
+                <section className="intro">
+                  <div className={`trip-card${settingsOpen ? ' is-settings' : ''}`}>
+                    {settingsOpen ? (
+                      <>
+                        <h2 className="ui-title">{t('settings.title')}</h2>
+                        {settingsForm}
+                        <div className="ui-actions">
+                          <button type="button" className="ui-btn" onClick={closeSettings}>{t('settings.back')}</button>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <input
+                          className="ui-input"
+                          aria-label={t('net.name')}
+                          placeholder={defaultName}
+                          maxLength={24}
+                          value={playerName}
+                          onChange={e => {
+                            const value = e.target.value;
+                            setPlayerName(value);
+                            try { localStorage.setItem('cityRider.name', value.trim()); } catch { /* private mode */ }
+                            engine.current?.joinNetwork(value.trim() || defaultName);
+                          }}
+                        />
+                        <CarCarousel index={car} onIndex={setCar}>
+                          <div className="car-deal">
+                            <span>{t('dealer.price')}</span>
+                            <strong className={canBuyStarter ? undefined : 'is-broke'}><Price value={starterPrice} /></strong>
+                          </div>
+                        </CarCarousel>
+                        <div className="city-search">
+                          <label className="search">
+                            <input
+                              className="ui-input"
+                              aria-label={t('intro.destination')}
+                              placeholder={t('intro.destination')}
+                              value={search}
+                              onFocus={() => setSearchOpen(search.trim().length >= 2)}
+                              onChange={e => {
+                                const value = e.target.value;
+                                setSearch(value);
+                                setSearchOpen(value.trim().length >= 2);
+                              }}
+                            />
+                          </label>
+                          {searchOpen && query.length >= 2 && (
+                            <div className="city-list">
+                              {found.map(option)}
+                              {looking && <p className="empty">{t('search.looking')}</p>}
+                              {!looking && searchFailed && <p className="empty">{t('search.failed')}</p>}
+                              {!looking && !searchFailed && !found.length && <p className="empty">{t('search.none')}</p>}
+                            </div>
+                          )}
+                        </div>
+                        <button
+                          className="ui-btn drive"
+                          disabled={!canBuyStarter}
+                          title={canBuyStarter ? undefined : t('dialog.broke')}
+                          onClick={() => { setApproaching(true); setDriving(true); setSettingsOpen(false); }}
+                        >
+                          {t('drive')}
+                        </button>
+                      </>
                     )}
                   </div>
-                  <button
-                    className="ui-btn drive"
-                    disabled={!canBuyStarter}
-                    title={canBuyStarter ? undefined : t('dialog.broke')}
-                    onClick={() => { setApproaching(true); setDriving(true); setSettingsOpen(false); }}
-                  >
-                    {t('drive')}
-                  </button>
-                </div>
-              </section>
-            )}
+                </section>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -831,11 +910,23 @@ export default function Game() {
       )}
       {booted && (
         <div className="clock-hud" aria-hidden="true">
+          <span className="local-place" ref={placeRef} />
           <span className="local-clock" ref={clockRef} />
         </div>
       )}
-      <div className="meta-hud" aria-hidden="true">
-        <span className="fps" ref={fpsRef}>— FPS</span>
+      <div className="meta-hud">
+        <span className="fps" ref={fpsRef} aria-hidden="true">— FPS</span>
+        <button
+          type="button"
+          className={`meta-settings${settingsOpen ? ' is-on' : ''}`}
+          aria-label={t('settings.title')}
+          aria-pressed={settingsOpen}
+          onClick={() => setSettingsOpen((open) => !open)}
+        >
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+            <path fill="currentColor" d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96a7.2 7.2 0 0 0-1.62-.94l-.36-2.54A.48.48 0 0 0 14 2h-4a.48.48 0 0 0-.48.41l-.36 2.54c-.59.24-1.13.55-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.65 8.47a.49.49 0 0 0 .12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94L2.77 14.5a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.3.59.22l2.39-.96c.5.39 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h4c.24 0 .44-.17.48-.41l.36-2.54c.59-.24 1.13-.55 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.49.49 0 0 0-.12-.61l-2.03-1.58ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z"/>
+          </svg>
+        </button>
       </div>
       <div className="roster-hud" ref={rosterRef} aria-label={t('hud.racers')} />
 
@@ -851,37 +942,16 @@ export default function Game() {
         </>
       ) : null}
 
-      {settingsOpen && (
+      {settingsOpen && driving && (
         <Dialog
           title={t('settings.title')}
           onBackdrop={closeSettings}
           actions={<>
-            <button type="button" className="ui-btn" onClick={closeSettings}>{driving ? t('settings.resume') : t('settings.back')}</button>
-            {driving && <button type="button" className="ui-btn is-ghost" onClick={askExit}>{t('settings.exit')}</button>}
+            <button type="button" className="ui-btn" onClick={closeSettings}>{t('settings.resume')}</button>
+            <button type="button" className="ui-btn is-ghost" onClick={askExit}>{t('settings.exit')}</button>
           </>}
         >
-          <div className="ui-form">
-            <label>{t('settings.language')}<select value={lang} onChange={e => setLang(e.target.value as Lang)}>{LANGS.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select></label>
-            <div className="ui-theme-row">
-              <span>{t('settings.theme')}</span>
-              <div className="ui-theme" role="group" aria-label={t('settings.theme')}>
-                <button type="button" className={`ui-theme-btn${settings.theme === 'light' ? ' is-on' : ''}`} aria-pressed={settings.theme === 'light'} aria-label={t('theme.light')} onClick={() => update({ theme: 'light' as Theme })}>
-                  <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="12" cy="12" r="4" fill="currentColor"/><path d="M12 2v2.5M12 19.5V22M4.2 4.2l1.8 1.8M18 18l1.8 1.8M2 12h2.5M19.5 12H22M4.2 19.8 6 18M18 6l1.8-1.8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" fill="none"/></svg>
-                </button>
-                <button type="button" className={`ui-theme-btn${settings.theme === 'night' ? ' is-on' : ''}`} aria-pressed={settings.theme === 'night'} aria-label={t('theme.night')} onClick={() => update({ theme: 'night' as Theme })}>
-                  <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M16.5 3.5a8.5 8.5 0 1 0 4 14.2A7 7 0 1 1 16.5 3.5Z" fill="currentColor"/></svg>
-                </button>
-              </div>
-            </div>
-            <label>{t('settings.skin')}<select value={settings.skin} onChange={e => update({ skin: e.target.value as Settings['skin'] })}>{SKINS.map(id => <option key={id} value={id}>{t(`skin.${id}`)}</option>)}</select></label>
-            <label>{t('settings.quality')}<select value={settings.quality} onChange={e => update({ quality: e.target.value as Settings['quality'] })}><option value="low">{t('quality.low')}</option><option value="medium">{t('quality.medium')}</option><option value="high">{t('quality.high')}</option></select></label>
-            <label className="toggle">{t('settings.terrain')}<input type="checkbox" checked={settings.terrain} onChange={e => update({ terrain: e.target.checked })} /></label>
-            <label className="toggle">{t('settings.follow')}<input type="checkbox" checked={settings.follow} onChange={e => update({ follow: e.target.checked })} /></label>
-            <label>{t('settings.sensitivity')}<input type="range" min="0.3" max="2" step="0.1" value={settings.sensitivity} onChange={e => update({ sensitivity: Number(e.target.value) })} /></label>
-            <label className="toggle">{t('settings.stats')}<input type="checkbox" checked={perfOn} onChange={e => toggleStats(e.target.checked)} /></label>
-            <ServerStatus />
-            <button type="button" className="ui-btn is-ghost" onClick={() => { setSettingsOpen(false); setKeysOpen(true); }}>{t('keys.open')} · K</button>
-          </div>
+          {settingsForm}
         </Dialog>
       )}
 
@@ -957,6 +1027,7 @@ export default function Game() {
             const kind = travelOffer.kind;
             const carry = engine.current?.buyTicket(city.coords);
             if (!carry) return;
+            cityHopRef.current = true;
             carryRef.current = carry;
             arriveRef.current = true;
             setTravelOffer(null);
@@ -987,20 +1058,34 @@ export default function Game() {
 
       {rideOffer && driving && !settingsOpen && (
         <Dialog
-          title={t(rideOffer.kind === 'bus' ? 'bus.offer.title' : 'taxi.offer.title')}
+          title={t(
+            rideOffer.kind === 'bus' ? 'bus.offer.title'
+              : rideOffer.kind === 'ambulance' ? 'ambulance.offer.title'
+                : 'taxi.offer.title',
+          )}
           actions={<>
             <button type="button" className="ui-btn" autoFocus onClick={() => engine.current?.acceptRide()}>
-              {t(rideOffer.kind === 'bus' ? 'bus.take' : 'taxi.take')}
+              {t(
+                rideOffer.kind === 'bus' ? 'bus.take'
+                  : rideOffer.kind === 'ambulance' ? 'ambulance.take'
+                    : 'taxi.take',
+              )}
             </button>
             <button type="button" className="ui-btn is-ghost" onClick={() => engine.current?.declineRide()}>
-              {t(rideOffer.kind === 'bus' ? 'bus.later' : 'taxi.later')}
+              {t(
+                rideOffer.kind === 'bus' ? 'bus.later'
+                  : rideOffer.kind === 'ambulance' ? 'ambulance.later'
+                    : 'taxi.later',
+              )}
             </button>
           </>}
         >
           <p className="ui-text">
             {rideOffer.kind === 'bus'
               ? t('bus.offer.text', { n: formatNumber(rideOffer.n), place: rideOffer.place, km: formatNumber(rideOffer.km) })
-              : t('taxi.offer.text', { km: formatNumber(rideOffer.km) })}
+              : rideOffer.kind === 'ambulance'
+                ? t(rideOffer.place === 'burn' ? 'ambulance.offer.burn' : 'ambulance.offer.crash', { n: formatNumber(rideOffer.n) })
+                : t('taxi.offer.text', { km: formatNumber(rideOffer.km) })}
           </p>
           <div className="ui-row ui-wallet is-reward"><span>{t('bounty.reward')}</span><Price value={rideOffer.reward} /></div>
         </Dialog>
@@ -1045,22 +1130,25 @@ export default function Game() {
                   : eventResult.kind === 'impound' ? t('event.impound')
                     : eventResult.kind === 'taxi' ? t('event.taxi')
                       : eventResult.kind === 'bus' ? t('event.bus')
-                        : t(`event.${eventResult.kind}`);
+                        : eventResult.kind === 'ambulance' ? t('event.ambulance')
+                          : t(`event.${eventResult.kind}`);
         const text = busStop
           ? t(busParts![0] === 'alight' ? 'bus.alight' : 'bus.board', {
               n: busParts![1] || String(Math.max(1, Math.round(cash / 10))),
             })
-          : eventResult.kind === 'hijack' && eventResult.won
-            ? t('hijack.won', { car: eventResult.name ?? '' })
-            : eventResult.kind === 'heist' && eventResult.won
-              ? t('heist.won')
-              : eventResult.kind === 'bounty' && !eventResult.won
-                ? t('bounty.escaped', { name: eventResult.name ?? '' })
-                : eventResult.kind === 'arena' && !eventResult.won
-                  ? t('arena.lost')
-                  : eventResult.kind === 'race' && !eventResult.won
-                    ? t('race.lost', { name: eventResult.name ?? '' })
-                    : t('event.success');
+          : eventResult.kind === 'ambulance' && eventResult.won
+            ? t('ambulance.won', { n: eventResult.name ?? '1' })
+            : eventResult.kind === 'hijack' && eventResult.won
+              ? t('hijack.won', { car: eventResult.name ?? '' })
+              : eventResult.kind === 'heist' && eventResult.won
+                ? t('heist.won')
+                : eventResult.kind === 'bounty' && !eventResult.won
+                  ? t('bounty.escaped', { name: eventResult.name ?? '' })
+                  : eventResult.kind === 'arena' && !eventResult.won
+                    ? t('arena.lost')
+                    : eventResult.kind === 'race' && !eventResult.won
+                      ? t('race.lost', { name: eventResult.name ?? '' })
+                      : t('event.success');
         return (
           <Dialog
             title={title}

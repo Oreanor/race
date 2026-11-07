@@ -1,4 +1,4 @@
-import { NET_HZ, NET_PATH, NET_PORT, NET_VERSION, PLAYER_HP, type ClientMessage, type NetPlayer, type ServerMessage, type TrafficCar } from './protocol';
+import { NET_HZ, NET_PATH, NET_PORT, NET_VERSION, PLAYER_HP, type ClientMessage, type NetPlayer, type ServerMessage, type TrafficCar } from './protocol.ts';
 
 // Client side of multiplayer, through our relay (server/multiplayer.ts): we
 // report our car ten times a second, keep the last snapshots of everybody else

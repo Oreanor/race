@@ -23,8 +23,14 @@ export type GroundMesh = {
 };
 
 export type GroundData = {
-  /** grid heights after carving the water beds, (grid+1)² */
+  /** grid heights after carving the water beds, (grid+1)² — visual mesh / roads */
   heights: Float32Array;
+  /**
+   * Drive surface (grid+1)²: shore dips stay visual-only. Wet / bank cells are
+   * lifted to the dry-bank height the shore mesh draws, so the car doesn't sink
+   * into the tan strip.
+   */
+  driveHeights: Float32Array;
   /** water surface level per grid point (NaN on dry land) */
   waterLevel: Float32Array;
   terrain: GroundMesh;
@@ -183,7 +189,12 @@ export function flattenUnderRoads(H: Float32Array, grid: number, mask: Uint8Arra
 class SegmentGrid {
   private cells = new Map<number, number[]>();
   private segs: [Pt, Pt][] = [];
-  constructor(private size: number, private reach: number) {}
+  private size: number;
+  private reach: number;
+  constructor(size: number, reach: number) {
+    this.size = size;
+    this.reach = reach;
+  }
   private key(i: number, j: number) { return i * 73856093 ^ j * 19349663; }
   add(a: Pt, b: Pt) {
     const index = this.segs.push([a, b]) - 1, r = this.reach, c = this.size;
@@ -322,6 +333,8 @@ export function buildGround(vt: VectorTile, span: number, grid: number, dem: Flo
     waters.forEach((w, k) => { if (!w.pool) low.set(root(k), Math.min(low.get(root(k)) ?? Infinity, w.level)); });
     waters.forEach((w, k) => { if (!w.pool) w.level = low.get(root(k))!; });
   }
+  // DEM before beds/banks are carved — restore this for driving on the shore
+  const land = Float32Array.from(H);
   const wet = new Uint8Array(n * n);
   const waterLevel = new Float32Array(n * n).fill(Number.NaN);
   for (const w of waters) {
@@ -400,6 +413,27 @@ export function buildGround(vt: VectorTile, span: number, grid: number, dem: Flo
   }
 
   flattenUnderRoads(H, grid, onRoad, wet);
+
+  // drive grid: same as the shore mesh's dry bank (not the dipped visual H)
+  const driveHeights = Float32Array.from(H);
+  const CLEAR = 0.35;
+  for (let k = 0; k < n * n; k++) {
+    if (!Number.isFinite(waterLevel[k])) continue;
+    if (!wet[k]) driveHeights[k] = Math.max(H[k], land[k], waterLevel[k] + CLEAR);
+  }
+  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+    const k = j * n + i;
+    if (!wet[k]) continue;
+    let sum = 0, count = 0;
+    for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+      const ii = i + di, jj = j + dj;
+      if (ii < 0 || jj < 0 || ii >= n || jj >= n || wet[jj * n + ii]) continue;
+      sum += driveHeights[jj * n + ii];
+      count++;
+    }
+    const surface = Number.isFinite(waterLevel[k]) ? waterLevel[k] : H[k];
+    driveHeights[k] = count ? Math.max(sum / count, surface + CLEAR) : surface + CLEAR;
+  }
 
   // ---- the cells a shoreline runs through, with the shore segments in each ----
   // The 20 m grid can't follow a bank: a slope between a dry and a wet grid point
@@ -626,11 +660,11 @@ export function buildGround(vt: VectorTile, span: number, grid: number, dem: Flo
     drape(w.rings, (piece) => water.polygon(piece.map((p) => [p[0], p[1], w.level]), rgb, piece.map(shoreOf)));
   });
 
-  return { heights: H, waterLevel, terrain: terrain.done(), layers, water: water.done(true) };
+  return { heights: H, driveHeights, waterLevel, terrain: terrain.done(), layers, water: water.done(true) };
 }
 
 export function groundTransferables(g: GroundData): ArrayBuffer[] {
-  const out: ArrayBuffer[] = [g.heights.buffer as ArrayBuffer, g.waterLevel.buffer as ArrayBuffer];
+  const out: ArrayBuffer[] = [g.heights.buffer as ArrayBuffer, g.driveHeights.buffer as ArrayBuffer, g.waterLevel.buffer as ArrayBuffer];
   for (const m of [g.terrain, ...g.layers, g.water]) {
     out.push(m.positions.buffer as ArrayBuffer, m.ground.buffer as ArrayBuffer, m.colors.buffer as ArrayBuffer, m.index.buffer as ArrayBuffer);
     if (m.shore) out.push(m.shore.buffer as ArrayBuffer);

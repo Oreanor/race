@@ -71,7 +71,13 @@ export class MapCamera {
     const toHorizon = horizonAngle > minToHorizon ? 2 * horizonAngle * 0.5 : minToHorizon;
     const topHalfHorizon = (Math.sin(toHorizon) * lowest) / Math.sin(clamp(Math.PI - groundAngle - toHorizon));
     const farZ = (Math.cos(Math.PI / 2 - limitedPitch) * Math.min(topHalf, topHalfHorizon) + lowest) * 1.01;
-    const nearZ = s.height / 50;
+    // Near plane in *meters*, not raw screen px. `height/N` grows on tall canvases
+    // and clips bumper-cam façades → a floating far wall / roof with a gap to the street.
+    const nearMeters = 0.75;
+    const nearZ = Math.max(
+      0.8,
+      Math.min(this.cameraToCenterDistance * 0.025, nearMeters * this.pixelsPerMeter),
+    );
 
     const top = nearZ * Math.tan(fovRad / 2);
     const right = top * (s.width / s.height);

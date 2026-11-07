@@ -37,8 +37,10 @@ export function primaryTileSeam(
 
 /**
  * Style identity for a (possibly tile-clipped) footprint.
- * Edge-cut houses: midpoint of the primary tile-edge cut (shared by both
- * halves). Interior houses: the full ring.
+ * Interior: unique footprint (neighbouring houses stay different).
+ * Tile cut: span of the shared edge (min/max, ~11 m) so both halves match;
+ * height omitted so OSM height jitter does not recolour the seam.
+ * Leading `s` marks a seam key — clustering prefers it over an interior key.
  */
 export function buildingStyleKey(
   height: number,
@@ -47,14 +49,16 @@ export function buildingStyleKey(
   seamLngLat?: readonly Pt[],
 ) {
   const seam = seamLngLat && seamLngLat.length >= 2 ? seamLngLat : null;
-  let id: string;
   if (seam) {
-    let sx = 0, sy = 0;
-    for (const [lng, lat] of seam) { sx += lng; sy += lat; }
-    // ~11 m — absorbs MVT clip jitter; still separates neighbouring houses
-    id = `m${(sx / seam.length).toFixed(4)},${(sy / seam.length).toFixed(4)}`;
-  } else {
-    id = footprintKey([ringLngLat]);
+    let minLng = Infinity, maxLng = -Infinity, minLat = Infinity, maxLat = -Infinity;
+    for (const [lng, lat] of seam) {
+      if (lng < minLng) minLng = lng;
+      if (lng > maxLng) maxLng = lng;
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+    }
+    const id = `s${minLng.toFixed(4)},${minLat.toFixed(4)}-${maxLng.toFixed(4)},${maxLat.toFixed(4)}`;
+    return `0:0.0:${id}`;
   }
-  return `${Math.round(height)}:${base.toFixed(1)}:${id}`;
+  return `${Math.round(height)}:${base.toFixed(1)}:${footprintKey([ringLngLat])}`;
 }

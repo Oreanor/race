@@ -5,11 +5,15 @@
   "scripts": {
     "dev": "next dev --hostname 0.0.0.0",
     "build": "next build --webpack",
+    "build:desktop": "node scripts/build-desktop.mjs",
     "start": "next start --hostname 0.0.0.0",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test tests/physics.test.ts tests/buildings.test.ts tests/water.test.ts tests/vegetation.test.ts tests/world3d.test.ts tests/fuel.test.ts tests/travel.test.ts tests/astro.test.ts tests/places.test.ts tests/trains.test.ts tests/errands.test.ts tests/wallcut.test.ts tests/dem.test.ts",
+    "test": "node --experimental-strip-types --test tests/physics.test.ts tests/buildings.test.ts tests/water.test.ts tests/vegetation.test.ts tests/world3d.test.ts tests/fuel.test.ts tests/travel.test.ts tests/astro.test.ts tests/places.test.ts tests/trains.test.ts tests/errands.test.ts tests/wallcut.test.ts tests/dem.test.ts tests/bridges.test.ts tests/streetNames.test.ts tests/botsOnRealRoads.test.ts",
     "server": "node --experimental-strip-types server/multiplayer.ts",
-    "server:tunnel": "node --env-file-if-exists=.env.tunnel --experimental-strip-types server/multiplayer.ts --tunnel"
+    "server:tunnel": "node --env-file-if-exists=.env.tunnel --experimental-strip-types server/multiplayer.ts --tunnel",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
   },
   "dependencies": {
     "@mapbox/vector-tile": "^3.0.0",
@@ -24,6 +28,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.0.0",
+    "@tauri-apps/cli": "^2.12.4",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",

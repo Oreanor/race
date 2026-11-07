@@ -57,18 +57,22 @@ test('a bridge deck crosses the channel and the side of the bridge does not', ()
   const water = new WaterCollisionController();
   const ring = [[-30, 30], [30, 30], [30, 34], [-30, 34], [-30, 30]].map(([east, north]) => at(east, north));
   water.update([0, 0], [[ring]], [{ line: [at(-6, 32), at(6, 32)], half: 8 }]);
-  const over = water.resolve(at(0, 10), at(0, 55), 0, 1);
+  // elevated=true: on the deck ribbon water is dry; under the bridge stays wet
+  const over = water.resolve(at(0, 10), at(0, 55), 0, 1, true);
   assert.equal(over.stopped, false);
   assert.ok(northOf(over.position) > 50);
-  const aside = water.resolve(at(20, 10), at(20, 55), 0, 1);
+  const aside = water.resolve(at(20, 10), at(20, 55), 0, 1, false);
   assert.equal(aside.stopped, true);
   assert.ok(northOf(aside.position) < 30);
+  // same XY as the deck but not elevated (under the span) still hits water
+  const under = water.resolve(at(0, 31), at(0, 33), 0, 1, false);
+  assert.equal(under.stopped, true);
 });
 
 test('water geometry stays cached near the car and expires farther away', () => {
   const water = shore();
-  assert.equal(water.covers(at(100, 0)), true);
-  assert.equal(water.covers(at(400, 0)), false);
+  assert.equal(water.near(at(100, 0)), true);
+  assert.equal(water.near(at(400, 0)), false);
 });
 
 test('small repeated inputs cannot creep into the bank and slow reverse remains free', () => {

@@ -22,7 +22,7 @@ export const COLLECT_RADIUS_M = 2000;
 const BOX_SPACING_M = 140;
 /** drive this close to a box to pick it up (m) */
 export const BOX_REACH_M = 6;
-export const COLLECT_REWARD = 6000;
+export const COLLECT_REWARD = 5000;
 
 /** Pay for a delivery: more for a longer way, rounded to 50. */
 export const deliveryReward = (meters: number) => Math.round((500 + meters * 0.9) / 50) * 50;

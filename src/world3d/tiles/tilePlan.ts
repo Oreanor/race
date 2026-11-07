@@ -32,3 +32,31 @@ export function tilesAround(center: LngLat, radius: number, z: number): PlannedT
   }
   return out.sort((a, b) => a.distance - b.distance);
 }
+
+/**
+ * Every tile intersecting the lng/lat rectangle [west,south]–[east,north],
+ * nearest to `focus` first. Used for the top-down map so screen corners stay filled
+ * (a circular radius drops the corners of a wide view).
+ */
+export function tilesCovering(west: number, south: number, east: number, north: number, z: number, focus: LngLat): PlannedTile[] {
+  if (!(east > west) || !(north > south)) return tilesAround(focus, 0, z);
+  const a = tileAt(west, south, z);
+  const b = tileAt(east, north, z);
+  const x0 = Math.min(a.x, b.x);
+  const x1 = Math.max(a.x, b.x);
+  const y0 = Math.min(a.y, b.y);
+  const y1 = Math.max(a.y, b.y);
+  const mx = mercatorX(focus[0]);
+  const my = mercatorY(focus[1]);
+  const metersScale = Math.cos(focus[1] * Math.PI / 180);
+  const n = 2 ** z;
+  const out: PlannedTile[] = [];
+  for (let y = y0; y <= y1; y++) {
+    if (y < 0 || y >= n) continue;
+    for (let x = x0; x <= x1; x++) {
+      const tile = { z, x: ((x % n) + n) % n, y };
+      out.push({ tile, key: `${z}/${tile.x}/${y}`, distance: distanceToTile(mx, my, tile, metersScale) });
+    }
+  }
+  return out.sort((a, b) => a.distance - b.distance);
+}

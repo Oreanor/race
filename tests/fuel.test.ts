@@ -43,8 +43,8 @@ test('real Coimbra tile has fuel stations, deduplicated and searchable', () => {
   const near = nearestStation([-8.42922, 40.20805], stations)!;
   assert.ok(near.distance > 0 && near.distance < 3000);
   assert.equal(atStation(near.station.position, stations)?.id, near.station.id);
-  // street-side approach: still counts when a few dozen metres off the POI
-  const beside: [number, number] = [near.station.position[0] + 0.00035, near.station.position[1]];
+  // street-side approach: still counts within station reach (~22 m), not only on the shop point
+  const beside: [number, number] = [near.station.position[0] + 0.0002, near.station.position[1]];
   assert.ok(atStation(beside, stations), 'reachable from the forecourt / street, not only on the shop point');
 });
 

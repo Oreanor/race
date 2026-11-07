@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { Lighting } from './lighting';
+import type { Lighting } from './lighting.ts';
 
 // Sun and moon on the sky, at their real directions. Camera-facing quads far
 // out, drawn before the world (no depth write) so buildings and hills cover them.
