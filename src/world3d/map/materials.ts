@@ -1,17 +1,17 @@
 import * as THREE from 'three';
-import { seasonWeights, snowCover, worldTime } from './simpleLit';
+import { seasonWeights, snowCover, worldTime } from './simpleLit.ts';
 import {
   COMMON,
   LAMP_FRAGMENT,
   LAMP_VERTEX,
   lampMapUniform,
-} from './shaders/common';
-import { baseUniforms, type BaseUniforms } from './shaders/uniforms';
+} from './shaders/common.ts';
+import { baseUniforms, type BaseUniforms } from './shaders/uniforms.ts';
 
-export type { BaseUniforms } from './shaders/uniforms';
-export { baseUniforms } from './shaders/uniforms';
-export { MAX_FIRES, MAX_SHOTS } from './shaders/common';
-export { facadeMask, farBuildingMaterial } from './facadeMaterial';
+export type { BaseUniforms } from './shaders/uniforms.ts';
+export { baseUniforms } from './shaders/uniforms.ts';
+export { MAX_FIRES, MAX_SHOTS } from './shaders/common.ts';
+export { facadeMask, farBuildingMaterial } from './facadeMaterial.ts';
 
 // Shaders of the base world (ground, roads, water). Facade lives in facadeMaterial.ts.
 

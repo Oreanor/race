@@ -28,7 +28,9 @@ export function smokeTexture() {
 }
 
 export function puffMesh(texture: THREE.Texture) {
-  const material = new THREE.MeshBasicMaterial({ map: texture, color: '#8b887f', transparent: true, depthWrite: false, depthTest: false, side: THREE.DoubleSide, opacity: 0 });
+  // depthTest on: under an overpass the deck must occlude the plume (depthWrite
+  // stays off so soft puffs don't punch holes in later transparent geometry)
+  const material = new THREE.MeshBasicMaterial({ map: texture, color: '#8b887f', transparent: true, depthWrite: false, depthTest: true, side: THREE.DoubleSide, opacity: 0 });
   const flat = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), material);
   flat.rotation.x = -Math.PI / 2;
   const upright = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), material);

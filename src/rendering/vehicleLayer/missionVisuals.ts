@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { MissionBeaconSpec } from './types';
+import type { MissionBeaconSpec } from './types.ts';
 
 export function makeCoin() {
   const gold = new THREE.MeshStandardMaterial({ color: '#ffd54a', emissive: '#c88a10', emissiveIntensity: 0.45, metalness: 0.25, roughness: 0.3 });
@@ -48,10 +48,11 @@ export function colorsForBeacon(beacon: Pick<MissionBeaconSpec, 'kind' | 'colors
   if (beacon.kind === 'impound') return { pole: '#7c3aed', glow: '#5b21b6', orb: '#c4b5fd' };
   if (beacon.kind === 'taxi') return { pole: '#f2c230', glow: '#b8860b', orb: '#ffe56a' };
   if (beacon.kind === 'bus') return { pole: '#e85d2a', glow: '#9a3a12', orb: '#ffb08a' };
+  if (beacon.kind === 'ambulance') return { pole: '#e11d48', glow: '#9f1239', orb: '#fb7185' };
   return { pole: '#ff7a1a', glow: '#b84a00', orb: '#ffb86b' };
 }
 
-/** Inverted map-pin beacon (caller adds to the scene). */
+/** Inverted map-pin beacon (caller adds to the scene). Soft / see-through so the street still reads. */
 export function makeBeacon(pole: string, glow: string, orb: string) {
   const group = new THREE.Group();
   const profile = [
@@ -66,15 +67,23 @@ export function makeBeacon(pole: string, glow: string, orb: string) {
   ];
   const tip = new THREE.Mesh(
     new THREE.LatheGeometry(profile, 28),
-    new THREE.MeshStandardMaterial({ color: pole, emissive: glow, emissiveIntensity: 0.7, metalness: 0.18, roughness: 0.32 }),
+    new THREE.MeshStandardMaterial({
+      color: pole, emissive: glow, emissiveIntensity: 0.35, metalness: 0.12, roughness: 0.4,
+      transparent: true, opacity: 0.38, depthWrite: false,
+    }),
   );
   tip.frustumCulled = false;
+  tip.renderOrder = 6;
   const core = new THREE.Mesh(
     new THREE.SphereGeometry(0.55, 16, 12),
-    new THREE.MeshStandardMaterial({ color: orb, emissive: pole, emissiveIntensity: 1.05, metalness: 0.05, roughness: 0.22 }),
+    new THREE.MeshStandardMaterial({
+      color: orb, emissive: pole, emissiveIntensity: 0.55, metalness: 0.05, roughness: 0.28,
+      transparent: true, opacity: 0.48, depthWrite: false,
+    }),
   );
   core.position.y = 3.35;
   core.frustumCulled = false;
+  core.renderOrder = 7;
   group.add(tip, core);
   group.visible = false;
   group.frustumCulled = false;

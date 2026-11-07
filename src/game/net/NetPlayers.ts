@@ -3,8 +3,8 @@ import { t } from '@/i18n';
 import { createNet, type ChatLine, type Net, type NetNotice, type RemotePlayer } from '@/net/NetClient';
 import type { TrafficCar } from '@/net/protocol';
 import type { VehicleSceneLayer } from '@/rendering/VehicleLayer';
-import { bumpDamage, metersBetween, resolveVehicleCollision, type Position, type VehicleController } from '../VehicleController';
-import { nameIndicator, placeIndicator, type IndicatorView } from '../hud/indicators';
+import { bumpDamage, metersBetween, resolveVehicleCollision, type Position, type VehicleController } from '../VehicleController.ts';
+import { nameIndicator, placeIndicator, type IndicatorView } from '../hud/indicators.ts';
 
 /** other players' map marker and the name over their health bar */
 export const PLAYER_MARKER_COLOR = '#7cf0b0';

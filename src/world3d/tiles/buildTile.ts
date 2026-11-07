@@ -15,6 +15,7 @@ import { buildRoof, canPitch, simplifyRing, type RoofKind as PitchedKind, type R
 import { PIECES, ROOF_LIP } from '../../game/buildings/pieces.ts';
 import type { InstanceSet } from './vegetationTile.ts';
 import { buildingStyleKey, primaryTileSeam } from '../../game/buildings/wallOverlap.ts';
+import { clusterBuildingStyleKeys, ringArea } from '../../game/buildings/buildingStyleCluster.ts';
 import { cutCoveredWalls } from './wallCut.ts';
 import { tileCorner, tileSpan, latFromMercator, type TileId } from '../mercator.ts';
 import { DEM_SIZE, sampleDem } from './dem.ts';
@@ -115,6 +116,12 @@ export type BuildOptions = {
   windows: boolean;
   /** decoded terrarium heights of the same tile, or null for flat ground */
   dem?: Float32Array | null;
+  /**
+   * Processed terrain grid (same as the ground mesh: water-carved, road-flattened).
+   * When set, building feet sample this instead of raw DEM — otherwise houses float
+   * above plazas/roads where the mesh was lowered under the DEM.
+   */
+  terrain?: { heights: Float32Array; grid: number };
   /** shrink footprints and roofs by this many meters, so a detailed copy drawn
    *  on top hides this one completely (no z-fighting) */
   inset?: number;
@@ -126,7 +133,26 @@ export type BuildOptions = {
    * Value is the region (country) that biases architecture styles.
    */
   detailed?: { region: string };
+  /**
+   * True when this building would punch through an elevated deck (tile-local x/z, crest/foot/top m).
+   * Skipped so overpasses keep a clear carriageway and their piers.
+   */
+  onElevatedBridge?: (x: number, z: number, crest: number, foot: number, top: number) => boolean;
 };
+
+/** Bilinear sample of the terrain height grid at tile fraction (u, v). */
+function sampleTerrainGrid(heights: Float32Array, grid: number, u: number, v: number) {
+  const n = grid + 1;
+  const x = Math.min(grid, Math.max(0, u * grid)), y = Math.min(grid, Math.max(0, v * grid));
+  const i = Math.min(grid - 1, Math.floor(x)), j = Math.min(grid - 1, Math.floor(y));
+  const fu = x - i, fv = y - j;
+  const ha = heights[j * n + i], hb = heights[j * n + i + 1], hc = heights[(j + 1) * n + i], hd = heights[(j + 1) * n + i + 1];
+  return fu + fv <= 1 ? ha + (hb - ha) * fu + (hc - ha) * fv : hd + (hc - hd) * (1 - fu) + (hb - hd) * (1 - fv);
+}
+
+/** How far walls dig into the ground so a small DEM/mesh mismatch never shows a gap. */
+/** reach below sampled crest so walls still meet DEM on slopes / tile seams */
+const WALL_SKIRT = 3.5;
 
 type Pt = [number, number];
 
@@ -398,18 +424,26 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
   const vt = buffer instanceof VectorTile ? buffer : new VectorTile(new PbfReader(buffer));
   const layer = vt.layers.building;
   const dem = options.dem ?? null;
+  const terrain = options.terrain ?? null;
   if (layer) {
     const extent = layer.extent;
     const k = span / extent; // tile pixels → mercator meters
     const demScale = DEM_SIZE / extent;
-    const groundAt = (p: Pt) => dem ? sampleDem(dem, p[0] * demScale, p[1] * demScale) : 0;
+    // Prefer the same height field the ground mesh uses (carved/flattened); raw DEM
+    // sits above plazas and road beds and leaves houses hanging in the air.
+    const groundAt = (p: Pt) => terrain
+      ? sampleTerrainGrid(terrain.heights, terrain.grid, p[0] / extent, p[1] / extent)
+      : dem ? sampleDem(dem, p[0] * demScale, p[1] * demScale) : 0;
     const inset = (options.inset ?? 0) * toMerc / k; // meters → tile pixels
 
     // Pass 1. OSM often has a building outline plus its parts (building:part) with
     // the same or overlapping footprints. Identical footprints keep only the
     // tallest copy; buildings that contain or sit
     // inside another one get no pitched roof, so roofs never cut through walls.
-    type Candidate = { id: string; fp: string; height: number; ring: { x: number; y: number }[]; cx: number; cy: number; box: number[] };
+    type Candidate = {
+      id: string; fp: string; height: number; base: number; measured: number;
+      ring: { x: number; y: number }[]; cx: number; cy: number; box: number[];
+    };
     const parsed: (ReturnType<typeof classifyRings> | null)[] = [];
     const best = new Map<string, Candidate>();
     for (let f = 0; f < layer.length; f++) {
@@ -418,7 +452,8 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
       if (feature.type !== 3 || props.hide_3d === true || props.hide_3d === 'true') { parsed.push(null); continue; }
       const reported = Number(props.render_height ?? props.height);
       const base0 = Math.max(0, Number(props.render_min_height ?? props.min_height ?? 0) || 0);
-      const height0 = Math.max(base0 + 3, Math.max(3, Math.min(320, Number.isFinite(reported) && reported > 0 ? reported : 10)));
+      const measured0 = Math.max(3, Math.min(320, Number.isFinite(reported) && reported > 0 ? reported : 10));
+      const height0 = Math.max(base0 + 3, measured0);
       const polygons = classifyRings(feature.loadGeometry());
       parsed.push(polygons);
       polygons.forEach((polygon, pi) => {
@@ -427,7 +462,10 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
         const fp = [...new Set(ring.map((p) => `${p.x},${p.y}`))].sort().join(';');
         let sx = 0, sy = 0, x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
         for (const p of ring) { sx += p.x; sy += p.y; x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
-        const candidate: Candidate = { id: `${f}:${pi}`, fp, height: height0, ring, cx: sx / ring.length, cy: sy / ring.length, box: [x0, y0, x1, y1] };
+        const candidate: Candidate = {
+          id: `${f}:${pi}`, fp, height: height0, base: base0, measured: measured0, ring,
+          cx: sx / ring.length, cy: sy / ring.length, box: [x0, y0, x1, y1],
+        };
         const prior = best.get(fp);
         if (!prior || height0 > prior.height + 0.05) best.set(fp, candidate);
       });
@@ -467,6 +505,26 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
       }
     }
 
+    // Abutting parts (shared wall) → one style key (largest footprint wins), so
+    // diagonal OSM cuts do not paint the same house two colours.
+    const styleParts = [];
+    for (const c of best.values()) {
+      if (!keep.has(c.id) || buried.has(c.id)) continue;
+      const outer = prepareRing(c.ring, extent);
+      if (outer.length < 3) continue;
+      const ringLngLat = outer.map((p) => lngLatOf(tile, extent, p[0], p[1]));
+      const seamPx = primaryTileSeam(outer.map((p) => ({ x: p[0], y: p[1] })), extent);
+      const seamLngLat = seamPx.map((p) => lngLatOf(tile, extent, p.x, p.y));
+      styleParts.push({
+        id: c.id,
+        height: c.height,
+        area: ringArea(c.ring),
+        ring: c.ring,
+        styleKey: buildingStyleKey(c.measured, c.base, ringLngLat, seamLngLat),
+      });
+    }
+    const styleKeyById = clusterBuildingStyleKeys(styleParts, { pxToMeters: k * metersScale });
+
     for (let f = 0; f < layer.length; f++) {
       const feature = layer.feature(f);
       stats.features++;
@@ -487,13 +545,12 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
         const outer = prepareRing(polygon[0], extent);
         if (outer.length < 3) continue;
         const rings = [outer, ...polygon.slice(1).map((ring) => prepareRing(ring, extent)).filter((ring) => ring.length >= 3)];
-        // Colour/style seed: full footprint inside the tile; on a tile seam only the
-        // primary cut edge (busiest of N/E/S/W). A thin sliver has most vertices
-        // "on edge" — hashing all of them made the two halves diverge.
+        // Colour/style seed: clustered abutting parts share one key; tile-cut
+        // halves agree via the span of the primary seam (see buildingStyleKey).
         const ringLngLat = outer.map((p) => lngLatOf(tile, extent, p[0], p[1]));
         const seamPx = primaryTileSeam(outer.map((p) => ({ x: p[0], y: p[1] })), extent);
         const seamLngLat = seamPx.map((p) => lngLatOf(tile, extent, p.x, p.y));
-        const key = buildingStyleKey(measured, base, ringLngLat, seamLngLat);
+        const key = styleKeyById.get(buildingId) ?? buildingStyleKey(measured, base, ringLngLat, seamLngLat);
         const seed = hashSeed(key);
         let wall = WALLS[indexFor(WALLS.length, seed)];
         let roof = ROOFS[indexFor(ROOFS.length, seed ^ 0x51f0c3)];
@@ -513,6 +570,19 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
         const cut = outer.filter(onEdge);
         let crest = 0;
         for (const p of cut.length >= 2 ? cut : outer) crest = Math.max(crest, groundAt(p));
+        // overpass through this volume → no house (keeps the deck / piers clear)
+        if (options.onElevatedBridge) {
+          let sx = 0, sz = 0;
+          for (const p of outer) { sx += p[0] * k; sz += p[1] * k; }
+          const samples: Pt[] = [[sx / outer.length, sz / outer.length]];
+          for (const p of outer) samples.push([p[0] * k, p[1] * k]);
+          for (let i = 0; i < outer.length; i++) {
+            const a = outer[i], b = outer[(i + 1) % outer.length];
+            samples.push([(a[0] + b[0]) * 0.5 * k, (a[1] + b[1]) * 0.5 * k]);
+          }
+          const foot = crest + base, top = crest + height;
+          if (samples.some(([x, z]) => options.onElevatedBridge!(x, z, crest, foot, top))) continue;
+        }
         chunk.buildings++;
         const recipe = options.detailed
           ? createRecipe({ id: 0, key, height: measured, base }, HOUSE_PALETTE, 'auto', options.detailed.region)
@@ -586,12 +656,12 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
             }
             const textured = hasWindows && length >= 1.55;
             if (!textured) {
-              chunk.quad(ax, az, bx, bz, base - 1, top, nx, nz, wall, 0, 0, 0, glassIndex, false, g);
+              chunk.quad(ax, az, bx, bz, base - WALL_SKIRT, top, nx, nz, wall, 0, 0, 0, glassIndex, false, g);
               continue;
             }
             const bays = length >= 3.4 ? Math.max(1, Math.round(length / BAY)) : 0;
             // walls hang from the crest; the lower band reaches down to the sloped ground
-            chunk.quad(ax, az, bx, bz, base - 1, body0, nx, nz, wall, 0, 0, 0, glassIndex, false, g);
+            chunk.quad(ax, az, bx, bz, base - WALL_SKIRT, body0, nx, nz, wall, 0, 0, 0, glassIndex, false, g);
             chunk.quad(ax, az, bx, bz, body0, body1, nx, nz, wall, bays, 0, floors, glassIndex, bays > 0, [crest, crest, crest, crest]);
             chunk.quad(ax, az, bx, bz, body1, top, nx, nz, wall, 0, 0, 0, glassIndex, false, [crest, crest, crest, crest]);
             if (options.windows && length >= 2.5) {
@@ -766,9 +836,9 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
       const bx = face.ax + (face.bx - face.ax) * t1, bz = face.az + (face.bz - face.az) * t1;
       const ga = face.ground[0] + (face.ground[1] - face.ground[0]) * t0;
       const gb = face.ground[0] + (face.ground[1] - face.ground[0]) * t1;
-      // a wall on the ground hangs a metre into it (no gap on a slope); a raised part starts at its
-      // base, else that metre lies over the wall of the part below it and the two flicker
-      const y0 = face.base > 0.3 ? face.base : face.base - 1;
+      // a wall on the ground hangs into it (no gap on a slope / DEM mismatch); a raised part
+      // starts at its base, else the skirt would cover the wall of the part below and flicker
+      const y0 = face.base > 0.3 ? face.base : face.base - WALL_SKIRT;
       // under a raised part the wall stops where that part begins (no roof lip up there)
       const capped = cap != null && cap - face.crest < face.top - 0.05;
       const wallTop = capped ? Math.max(y0 + 0.1, cap - face.crest) : face.top;

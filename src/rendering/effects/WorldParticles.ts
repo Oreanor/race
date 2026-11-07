@@ -484,6 +484,20 @@ export class WorldParticles {
     }
   }
 
+  /** Car hitting the river: a big spray plus rising mist while it sinks. */
+  carSplash(here: Position, at: Enu, now: number) {
+    this.splash(here, at, { e: 0, n: 0, u: 1 }, now, 2.4);
+    this.splash(here, { e: at.e + 0.6, n: at.n - 0.4, u: at.u + 0.1 }, { e: 0.2, n: -0.15, u: 1 }, now + 40, 1.6);
+    for (let i = 0; i < 5; i++) {
+      this.add(here, { e: at.e + rand(-1.2, 1.2), n: at.n + rand(-1.2, 1.2), u: at.u + rand(0.1, 0.5) }, {
+        kind: 'mist', tint: [0.88, 0.92, 0.95],
+        ve: rand(-0.6, 0.6), vn: rand(-0.6, 0.6), vu: rand(1.2, 2.8),
+        life: rand(900, 1600), size0: rand(0.8, 1.3), size1: rand(2.2, 3.4),
+        drag: 0.35, gravity: -0.35, stretch: 0,
+      }, now + i * 70);
+    }
+  }
+
   /** Bullet impact: a spray of sparks bouncing back from the surface, a flash, dust on walls and ground. */
   impact(here: Position, at: Enu, normal: Enu, now: number, options: { scale?: number; dust?: boolean } = {}) {
     const s = options.scale ?? 1;
@@ -498,6 +512,28 @@ export class WorldParticles {
           life: rand(450, 750), size0: 0.25, size1: 0.9, drag: 2.2, gravity: -0.3, stretch: 0,
         }, now);
       }
+    }
+  }
+
+  /** Bus-shelter pane: pale shards flying off the glass, a short flash. */
+  glassShatter(here: Position, at: Enu, normal: Enu, now: number) {
+    this.add(here, at, { kind: 'flash', ve: 0, vn: 0, vu: 0, life: 90, size0: 0.45, size1: 0.85, drag: 0, gravity: 0, stretch: 0 }, now);
+    const tint: [number, number, number] = [0.72, 0.88, 0.98];
+    for (let i = 0; i < 16; i++) {
+      const ve = normal.e * rand(2, 7) + rand(-4, 4);
+      const vn = normal.n * rand(2, 7) + rand(-4, 4);
+      const vu = rand(1.5, 8);
+      this.add(here, { e: at.e + rand(-0.2, 0.2), n: at.n + rand(-0.2, 0.2), u: at.u + rand(-0.15, 0.35) }, {
+        kind: 'grit', tint, ve, vn, vu,
+        life: rand(420, 900), size0: rand(0.04, 0.09), size1: 0.02, drag: 1.1, gravity: 9.8, stretch: 0.025,
+      }, now);
+    }
+    for (let i = 0; i < 3; i++) {
+      this.add(here, at, {
+        kind: 'dust', tint: [0.55, 0.7, 0.82],
+        ve: normal.e * rand(0.3, 0.9) + rand(-0.5, 0.5), vn: normal.n * rand(0.3, 0.9) + rand(-0.5, 0.5), vu: rand(0.4, 1.2),
+        life: rand(380, 650), size0: 0.2, size1: 0.7, drag: 2.0, gravity: -0.25, stretch: 0,
+      }, now);
     }
   }
 

@@ -56,3 +56,18 @@ test('nearby elevated footbridge tips snap to one height', () => {
   assert.ok(Math.abs(a - b) < 0.4, `footbridge tips should meet, Δ=${Math.abs(a - b)} (${a} vs ${b})`);
   assert.ok(a > 12, `joined tips should stay elevated, got ${a}`);
 });
+
+test('border tip extension does not yank glancing ramps onto the edge', () => {
+  // A ramp tip ~12 m inside, aimed diagonally at the left edge — the old
+  // extendNearBorderTips pulled it to (0, …) and left a diagonal ear.
+  const ways = new Map<number, Way>([
+    [1, { lines: [[{ x: 12, y: 40 }, { x: 80, y: 55 }]], bridge: true, level: 1, foot: false }],
+    [2, { lines: [[{ x: 40, y: 0 }, { x: 40, y: 100 }]], bridge: false, level: 0, foot: false }],
+  ]);
+  const plan = planBridges(ways, 100, 100, flat);
+  const deck = plan.get(1)?.decks[0];
+  assert.ok(deck, 'deck present');
+  const [x, z] = deck!.pts[0];
+  assert.ok(x > 8, `tip should stay near OSM end, got x=${x}`);
+  assert.ok(Math.abs(z - 40) < 2, `tip should not slide sideways, got z=${z}`);
+});

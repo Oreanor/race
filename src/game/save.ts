@@ -37,9 +37,3 @@ export function writeSave(save: GameSave) {
     localStorage.setItem(STORE, JSON.stringify(save));
   } catch { /* private mode: this session only */ }
 }
-
-export function clearSave() {
-  try {
-    localStorage.removeItem(STORE);
-  } catch { /* private mode */ }
-}

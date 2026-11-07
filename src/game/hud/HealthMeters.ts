@@ -1,6 +1,6 @@
 import { t } from '@/i18n';
-import { healthColor } from '../health';
-import type { Position } from '../VehicleController';
+import { healthColor } from '../health.ts';
+import type { Position } from '../VehicleController.ts';
 
 // Health bars hovering over the cars on screen: us, mission bots, other players,
 // shared traffic and test cars alike. One list a frame says who has one and where.

@@ -1,7 +1,7 @@
 import { cars as carsConfig } from '@/config/vehicle.config';
 import { t } from '@/i18n';
 import type { TargetVehicle } from '@/rendering/VehicleLayer';
-import { metersBetween, type Position } from './VehicleController';
+import { metersBetween, type Position } from './VehicleController.ts';
 
 // Parked cars to shoot at while testing effects: ?testcars=N in the address
 // (none otherwise). They stand in rings around the car, only where a car could

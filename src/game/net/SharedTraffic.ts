@@ -1,8 +1,8 @@
 import { cars as carsConfig, vehicleConfig, type Car } from '@/config/vehicle.config';
 import { HIT_DAMAGE, NET_HZ, TRAFFIC_MAX, type TrafficCar } from '@/net/protocol';
 import type { TargetVehicle, VehicleSceneLayer } from '@/rendering/VehicleLayer';
-import { advanceTrafficBot, createTrafficBot, type TrafficBot, type TrafficRoadNetwork } from '../TrafficBots';
-import { METERS_PER_DEGREE, metersBetween, VehicleController, type Position } from '../VehicleController';
+import { advanceTrafficBot, createTrafficBot, type TrafficBot, type TrafficRoadNetwork } from '../TrafficBots.ts';
+import { METERS_PER_DEGREE, metersBetween, VehicleController, type Position } from '../VehicleController.ts';
 
 // Light traffic everybody around sees and can shoot at. Among players near each
 // other, the one who joined first drives it: a couple of cars going about their
@@ -25,11 +25,11 @@ const STALE_MS = 2500;
 /** traffic takes it easy */
 const TOP_SPEED = 14;
 /** parked cars: kept this close (m); new ones only farther than PARK_NEAR so none appears in view */
-const PARK_KEEP = 1200;
+const PARK_KEEP = 900;
 const PARK_NEAR = 250;
-const PARK_MAX = 22;
+const PARK_MAX = 14;
 /** new parked cars no farther than this (m) */
-const PARK_FAR = 900;
+const PARK_FAR = 700;
 /** about one kerb spot in three has a car */
 const PARK_SHARE = 0.35;
 /** police and other people's mission cars never stand parked */
@@ -56,6 +56,8 @@ export type TrafficHost = {
   extras(): TrafficCar[];
   /** somebody's bullet hit one of those */
   hitExtra(id: string): void;
+  /** a driven car was attacked — leave the route and chase the player */
+  provoke(id: string): void;
   /** a car could stand at `at` facing `heading` (no wall, no water) */
   canPark(at: Position, heading: number): boolean;
   /** a move from → to against the houses: where the car ends up, and whether a wall stopped or turned it */
@@ -108,13 +110,22 @@ export class SharedTraffic {
     return this.driven.filter((d) => !d.deadAt && layer?.isTargetAlive(d.bot.id) !== false).map((d) => d.bot);
   }
 
+  /** Driven traffic only (for bumper contacts — parked are handled separately). */
+  drivenBodies(): { id: string; controller: VehicleController; car: Car }[] {
+    return this.bots().map((bot) => ({ id: bot.id, controller: bot.controller, car: bot.car }));
+  }
+
+  /** Parked props that still stand (player/movers bump them; they do not bump each other). */
+  parkedBodies(): { id: string; controller: VehicleController; car: Car }[] {
+    const layer = this.host.layer();
+    return this.parked
+      .filter((p) => layer?.isTargetAlive(p.id) !== false)
+      .map((p) => ({ id: p.id, controller: p.controller, car: p.car }));
+  }
+
   /** Everything of ours that bumps: the traffic we drive and the cars we parked. */
   bodies(): { id: string; controller: VehicleController; car: Car }[] {
-    const layer = this.host.layer();
-    return [
-      ...this.bots().map((bot) => ({ id: bot.id, controller: bot.controller, car: bot.car })),
-      ...this.parked.filter((p) => layer?.isTargetAlive(p.id) !== false).map((p) => ({ id: p.id, controller: p.controller, car: p.car })),
-    ];
+    return [...this.drivenBodies(), ...this.parkedBodies()];
   }
 
   /** The nearest parked car (ours or somebody else's) still standing within `reach` m. */
@@ -301,7 +312,12 @@ export class SharedTraffic {
 
   /** Somebody's bullet hit one of the cars we drive, parked, or the police after us. */
   hitByOther(id: string) {
-    if (this.driven.some((d) => d.bot.id === id) || this.parked.some((p) => p.id === id)) {
+    if (this.driven.some((d) => d.bot.id === id)) {
+      this.host.layer()?.damageTarget(id, HIT_DAMAGE);
+      this.host.provoke(id);
+      return;
+    }
+    if (this.parked.some((p) => p.id === id)) {
       this.host.layer()?.damageTarget(id, HIT_DAMAGE);
       return;
     }
@@ -335,10 +351,22 @@ export class SharedTraffic {
     }
     for (const d of this.driven) {
       if (d.deadAt || d.bot.id === this.held) continue;
-      const config = { ...vehicleConfig, acceleration: Math.min(d.bot.car.acceleration, 9), maxSpeed: Math.min(d.bot.car.maxSpeed, TOP_SPEED) };
-      // give way to us and the other players: brake, then go round — no ramming
+      const hunting = d.bot.mood === 'hunt';
+      // provoked cars push harder so they can catch up and return fire
+      const config = hunting
+        ? { ...vehicleConfig, acceleration: Math.max(d.bot.car.acceleration, 11), maxSpeed: Math.max(Math.min(d.bot.car.maxSpeed, 22), 18) }
+        : { ...vehicleConfig, acceleration: Math.min(d.bot.car.acceleration, 9), maxSpeed: Math.min(d.bot.car.maxSpeed, TOP_SPEED) };
+      const peers = hunting
+        ? [{ id: 'player', position: here, alive: true }]
+        : [];
+      // calm traffic yields; hunters ignore us and cut in
+      const obstacles = hunting ? [] : [here, ...this.host.others().map((p) => p.position)];
       const before: Position = [...d.bot.position] as Position;
-      advanceTrafficBot(d.bot, dt, this.host.network, config, [], [here, ...this.host.others().map((p) => p.position)]);
+      // close chase: drive straight at the player instead of looping the block
+      const direct = hunting && metersBetween(d.bot.position, here) < 120
+        ? ([...here] as Position)
+        : null;
+      advanceTrafficBot(d.bot, dt, this.host.network, config, peers, obstacles, direct);
       // never through a house (going round us or turning about it may leave the road)
       const hit = this.host.hitWalls(before, d.bot.controller.position, d.bot.controller.heading);
       if (hit.stopped || hit.slid) {

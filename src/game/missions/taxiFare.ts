@@ -1,5 +1,5 @@
 import { formatNumber, t } from '@/i18n';
-import { metersBetween, type Position } from '../VehicleController';
+import { metersBetween, type Position } from '../VehicleController.ts';
 import {
   TAXI_ARRIVE_M,
   TAXI_MAX_M,
@@ -7,8 +7,8 @@ import {
   TAXI_PER_KM,
   TAXI_REACH_M,
   taxiFareReward,
-} from '../tuning';
-import type { RideOffer } from '../offers';
+} from '../tuning.ts';
+import type { RideOffer } from '../offers.ts';
 
 export type TaxiFarePending = {
   goal: [number, number];
@@ -92,7 +92,7 @@ export function updateTaxiFare(state: TaxiFareState, world: TaxiFareWorld) {
 }
 
 /** Arrive at the passenger: show the NPC modal; accept starts the fare. */
-export function offerTaxiFare(state: TaxiFareState, world: TaxiFareWorld) {
+function offerTaxiFare(state: TaxiFareState, world: TaxiFareWorld) {
   if (!state.pickup || state.active || state.pending) return;
   const from = state.pickup;
   const seed = Math.round(from[0] * 1e5) ^ Math.round(from[1] * 1e5) ^ (performance.now() | 0);
@@ -147,7 +147,7 @@ export function declineTaxiFare(state: TaxiFareState, world: TaxiFareWorld) {
   world.say(t('taxi.declined'), true);
 }
 
-export function completeTaxiFare(state: TaxiFareState, world: TaxiFareWorld) {
+function completeTaxiFare(state: TaxiFareState, world: TaxiFareWorld) {
   if (!state.active || !state.goal) return;
   const meters = state.meters || metersBetween(world.position, state.goal);
   const payout = taxiFareReward(meters);

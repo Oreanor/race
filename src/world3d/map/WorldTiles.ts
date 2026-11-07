@@ -1,24 +1,35 @@
 import * as THREE from 'three';
 import { VectorTile } from '@mapbox/vector-tile';
 import { PbfReader } from 'pbf';
-import type { ChunkData } from '../tiles/buildTile';
-import { ROOF_STRIDE } from '../tiles/buildTile';
-import type { GeoFeature, MeshData, WorldTileData } from '../tiles/worldTile';
-import { bridgeDeck, gridGround, gridWaterLevel, pickDriveHeight } from '../tiles/worldTile';
-import { tileTemplate } from '../tiles/tileSource';
-import { tilesAround, distanceToTile } from '../tiles/tilePlan';
-import { latFromMercator, lngFromMercator, mercatorX, mercatorY, tileAt, tileCorner, tileSpan, WORLD_SIZE, type LngLat, type TileId } from '../mercator';
-import { farBuildingMaterial, groundMaterial, overlayMaterial, roadMaterial, waterMaterial, type BaseUniforms } from './materials';
-import { VegetationRenderer } from './vegetation';
-import { simpleLit } from './simpleLit';
+import type { ChunkData } from '../tiles/buildTile.ts';
+import { ROOF_STRIDE } from '../tiles/buildTile.ts';
+import type { GeoFeature, MeshData, WorldTileData } from '../tiles/worldTile.ts';
+import { bridgeDeck, gridGround, gridWaterLevel, pickDriveHeight } from '../tiles/worldTile.ts';
+import { tileTemplate } from '../tiles/tileSource.ts';
+import { tilesAround, tilesCovering, distanceToTile, type PlannedTile } from '../tiles/tilePlan.ts';
+import { latFromMercator, lngFromMercator, mercatorX, mercatorY, tileAt, tileCorner, tileSpan, WORLD_SIZE, type LngLat, type TileId } from '../mercator.ts';
+import { farBuildingMaterial, groundMaterial, overlayMaterial, roadMaterial, waterMaterial, type BaseUniforms } from './materials.ts';
+import { VegetationRenderer } from './vegetation.ts';
+import { simpleLit } from './simpleLit.ts';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { bakeLampLight, FELL_STRIDE, LAMP_ARM, LAMP_MAP, lampRegion, SOLID_STRIDE } from '../tiles/vegetationTile';
+import { bakeLampLight, FELL_STRIDE, GLASS_STRIDE, LAMP_ARM, LAMP_MAP, lampRegion, SOLID_STRIDE } from '../tiles/vegetationTile.ts';
 import { roofClearanceAt, type RoofProfile } from '@/game/buildings/RoofGenerator';
 import { METERS_PER_DEGREE } from '@/game/meters';
+import type { SkinId } from '../buildings/skins.ts';
+
+/** Window rhythm for fire markers — must track what the façade shader draws per skin. */
+function fireWindowRhythm(skin: SkinId): { floor: number; spacing: number; yMid: number } {
+  // yMid: fraction up the floor cell where glass sits (futuristic ribbons are the upper band)
+  if (skin === 'futuristic') return { floor: 3.4, spacing: 1.4, yMid: 0.68 };
+  if (skin === 'modern') return { floor: 3.2, spacing: 2.4, yMid: 0.55 };
+  if (skin === 'victorian') return { floor: 3.2, spacing: 2.2, yMid: 0.55 };
+  // original + mixed: baked city grid (buildTile FLOOR / bay)
+  return { floor: 3.2, spacing: 2.7, yMid: 0.55 };
+}
 
 
 /** top of the pavement above the terrain (road ribbons sit 0.09–0.15 m up) */
-export const ROAD_TOP = 0.12;
+const ROAD_TOP = 0.12;
 
 /** A nearby building for vehicle collisions: footprint + roof skin (crest already exaggerated). */
 export type BuildingCollider = {
@@ -81,12 +92,18 @@ type Live = {
   data: WorldTileData;
   group: THREE.Group;
   waiting: (() => void)[];
+  /** buildings / flora — deferred while the M-map is open so London doesn't hitch */
+  deferred: (() => void)[];
+  /** wall meshes — hidden on M-map (Manhattan fill-rate) */
+  buildings: THREE.Mesh[];
   roads: THREE.Mesh | null;
   disposables: { dispose(): void }[];
   /** lazily decoded non-gameplay layers (poi, housenumber, place…) */
   extra: Map<string, GeoFeature[]>;
   /** vegetation meshes by kind (trunk, leaf0…, lamp), for knocking things over */
   props: Map<string, THREE.InstancedMesh[]>;
+  /** flora* meshes only — cached so LOD doesn't rebuild the list every frame */
+  floraMeshes: THREE.InstancedMesh[] | null;
   /** trees and lamps bucketed by PROP_CELL, built on first use (shots and bumps look only nearby) */
   propCells: Map<number, number[]> | null;
   /** buildings bucketed by FOOTPRINT_CELL (a building in every cell its box covers), built on first use */
@@ -99,17 +116,27 @@ type Live = {
   spires: THREE.InstancedMesh | null;
   /** the water surface, matched to the neighbours' at the tile edges (seamWater) */
   water?: WaterSeams;
+  /** 0..1 ease-in: drawn as fog until fully present (set per mesh just before draw) */
+  fade: number;
 };
 
-/** A tree or lamp knocked over by gunfire; it stands up again once out of sight. */
+/** A tree, lamp, shelter or statue knocked over; stands up again once out of sight. */
 type Fallen = {
   live: Live;
   /** index into the tile's fell list */
   index: number;
+  /** 0 tree, 1 lamp, 2 shelter, 3 figure, 4 rider */
+  kind: number;
   started: number;
   /** tips toward this direction (tile-local, unit, horizontal) */
   dirX: number;
   dirZ: number;
+  /** how far it slides aside while tipping (meters); bollards/shelters scale with impact speed */
+  slideM: number;
+  /** tip duration (s); shelters finish faster when hit hard */
+  fallS: number;
+  /** raise while tipping so a flat face sits on the ground instead of burying */
+  restLift: number;
   /** the instance matrices it moves, with their standing copies */
   parts: { matrices: Float32Array; offset: number; standing: Float32Array; meshes: THREE.InstancedMesh[] }[];
   settled: boolean;
@@ -117,16 +144,68 @@ type Fallen = {
   unseenSince: number;
   /** a street lamp: put its light back when it stands up again */
   relight?: () => void;
+  /** shelter: restore the solid footprint when it stands again */
+  restoreSolid?: () => void;
+};
+
+/** Bus-shelter glass shattered by a shot; the pane comes back once out of sight. */
+type Shattered = {
+  live: Live;
+  /** shelterGlass instance index */
+  index: number;
+  parts: { matrices: Float32Array; offset: number; standing: Float32Array; meshes: THREE.InstancedMesh[] }[];
+  unseenSince: number;
 };
 
 const FALL_TIME = 0.75; // s
+/** new tiles ease in from fog colour so they don't pop onto empty ground */
+const TILE_FADE_IN = 0.7; // s
 /** bucket size (m) of the tree / lamp index */
 const PROP_CELL = 16;
 /** bucket size (m) of the building index */
 const FOOTPRINT_CELL = 64;
 const cellKey = (i: number, j: number) => i * 73856093 ^ j * 19349663;
 const FALL_ANGLE = Math.PI / 2 - 0.06; // lies almost flat, a bit propped on the crown
-const UNSEEN_RESTORE = 1.2; // s out of view before it stands again
+/** how long a knocked prop must stay off-screen before it may stand up again */
+const UNSEEN_RESTORE = 75; // s — stay down until you've driven well away
+/** and it must be at least this far from the focus (m) — looking back shouldn't revive it yet */
+const RESTORE_AWAY_M = 220;
+
+/**
+ * Ray vs the shelter's two glass panes in local meters (open side +Z). Returns
+ * the nearest hit t ∈ [0,1], or null. Matches shelterGlassGeometry().
+ */
+function glassPaneHit(ax: number, ay: number, az: number, bx: number, by: number, bz: number): number | null {
+  let best: number | null = null;
+  // back pane + end pane (thin boxes)
+  for (const box of [
+    { cx: 0, cy: 1.25, cz: -0.6, hx: 1.56, hy: 1.05, hz: 0.05 },
+    { cx: -1.6, cy: 1.25, cz: -0.03, hx: 0.05, hy: 1.05, hz: 0.55 },
+  ] as const) {
+    const t = rayAabb(ax - box.cx, ay - box.cy, az - box.cz, bx - box.cx, by - box.cy, bz - box.cz, box.hx, box.hy, box.hz);
+    if (t != null && (best == null || t < best)) best = t;
+  }
+  return best;
+}
+
+/** Segment A→B vs axis-aligned box centred at 0 with half-extents hx/hy/hz. */
+function rayAabb(ax: number, ay: number, az: number, bx: number, by: number, bz: number, hx: number, hy: number, hz: number): number | null {
+  const dx = bx - ax, dy = by - ay, dz = bz - az;
+  let t0 = 0, t1 = 1;
+  for (const [p, d, h] of [[ax, dx, hx], [ay, dy, hy], [az, dz, hz]] as const) {
+    if (Math.abs(d) < 1e-12) {
+      if (p < -h || p > h) return null;
+      continue;
+    }
+    const inv = 1 / d;
+    let u0 = (-h - p) * inv, u1 = (h - p) * inv;
+    if (u0 > u1) { const s = u0; u0 = u1; u1 = s; }
+    t0 = Math.max(t0, u0);
+    t1 = Math.min(t1, u1);
+    if (t0 > t1) return null;
+  }
+  return t0;
+}
 
 type Pending = { id: number; key: string; tile: TileId };
 
@@ -141,11 +220,23 @@ export class WorldTiles {
   readonly root = new THREE.Group();
   private tiles = new Map<string, Live>();
   private fallen = new Map<string, Fallen>();
+  private shattered = new Map<string, Shattered>();
   private spiresOn = false;
   private side: THREE.Side = THREE.FrontSide;
   private spireGeometry: THREE.BufferGeometry | null = null;
   private spireMaterial: THREE.Material | null = null;
   private frustum = new THREE.Frustum();
+  /** reused by updateFallen — no per-prop Matrix4 allocs */
+  private fallPivot = new THREE.Matrix4();
+  private fallTurn = new THREE.Matrix4();
+  private fallBack = new THREE.Matrix4();
+  private fallMat = new THREE.Matrix4();
+  private fallScaleIn = new THREE.Matrix4();
+  private fallScaleOut = new THREE.Matrix4();
+  private fallShift = new THREE.Matrix4();
+  private fallAxis = new THREE.Vector3();
+  private fallPoint = new THREE.Vector3();
+  private fallSphere = new THREE.Sphere();
   private pending = new Map<string, Pending>();
   private workers: Worker[] = [];
   private load: number[] = [];
@@ -166,6 +257,15 @@ export class WorldTiles {
   private origin01 = new THREE.Vector2();
   private sceneScale = 1;
   private metersPer01 = 1;
+  private lastFadeMs = 0;
+  /** after leaving M-map: hold the last screen tile set so toggle doesn't thrash GPU */
+  private softKeep = new Set<string>();
+  private softKeepUntil = 0;
+  private softKeepAt: LngLat | null = null;
+  /** M-map / calm: only ground+roads upload; buildings wait until chase */
+  private mapLite = false;
+  /** hide trees/lamps while looking straight down (London fill-rate) */
+  private propsHidden = false;
   onTile: (key: string) => void = () => {};
   revision = 0;
 
@@ -225,46 +325,107 @@ export class WorldTiles {
    * Stream tiles around the view. Pass `heading` (rad, 0 = north) so driving
    * prefers the road ahead. Pass `burst` during boot so the start ring fills
    * isotropically and GPU uploads drain faster before the player moves.
+   * Pass `screen` (lng/lat west/south/east/north) for the top-down map so the
+   * whole viewport rectangle is loaded — a circular radius empties the corners.
+   * Pass `calm` during camera blends (intro fly-in / M open) so uploads stay tiny.
    */
-  update(focus: LngLat, heading = 0, burst = false) {
+  update(
+    focus: LngLat,
+    heading = 0,
+    burst = false,
+    screen?: { west: number; south: number; east: number; north: number },
+    calm = false,
+  ) {
     if (this.disposed || !this.template) return;
     const o = this.options;
     // pull the load centre a few hundred metres forward so hitching stays behind the car
     // (boot: stay on the spawn so the whole first-lap ring is warm, not just ahead)
     const cosLat = Math.cos(focus[1] * Math.PI / 180);
-    const aheadM = burst ? 0 : 520;
+    const aheadM = burst || screen ? 0 : 520;
     const stream: LngLat = [
       focus[0] + Math.sin(heading) * aheadM / (METERS_PER_DEGREE * cosLat),
       focus[1] + Math.cos(heading) * aheadM / METERS_PER_DEGREE,
     ];
-    const wanted = tilesAround(stream, o.loadRadius, o.zoom);
-    // prefer tiles in front of travel when several are equally near
-    if (!burst) {
-      const he = Math.sin(heading), hn = Math.cos(heading);
-      const mx = mercatorX(stream[0]), my = mercatorY(stream[1]);
-      const mScale = Math.cos(stream[1] * Math.PI / 180);
-      wanted.sort((a, b) => {
-        const score = (p: typeof a) => {
-          const [cx, cy] = tileCorner(p.tile);
-          const span = tileSpan(p.tile.z);
-          const te = ((cx + span / 2) - mx) * mScale;
-          const tn = (my - (cy - span / 2)) * mScale; // mercator y south → north
-          const ahead = te * he + tn * hn;
-          return p.distance - Math.max(0, ahead) * 0.5;
-        };
-        return score(a) - score(b);
-      });
+    let wanted: PlannedTile[];
+    const keep = new Set<string>();
+    if (screen) {
+      // same pad for load + keep — old loadPad≪keepPad left edge tiles "kept" but never requested.
+      // calm blend: tighter pad so we don't request a city block mid-lerp
+      const pad = calm ? 500 : 800;
+      const dLng = pad / (METERS_PER_DEGREE * cosLat);
+      const dLat = pad / METERS_PER_DEGREE;
+      wanted = tilesCovering(
+        screen.west - dLng, screen.south - dLat,
+        screen.east + dLng, screen.north + dLat,
+        o.zoom, focus,
+      );
+      for (const t of wanted) keep.add(t.key);
+    } else {
+      wanted = tilesAround(stream, o.loadRadius, o.zoom);
+      // prefer tiles in front of travel when several are equally near
+      if (!burst) {
+        const he = Math.sin(heading), hn = Math.cos(heading);
+        const mx = mercatorX(stream[0]), my = mercatorY(stream[1]);
+        const mScale = Math.cos(stream[1] * Math.PI / 180);
+        wanted.sort((a, b) => {
+          const score = (p: PlannedTile) => {
+            const [cx, cy] = tileCorner(p.tile);
+            const span = tileSpan(p.tile.z);
+            const te = ((cx + span / 2) - mx) * mScale;
+            const tn = (my - (cy - span / 2)) * mScale; // mercator y south → north
+            const ahead = te * he + tn * hn;
+            return p.distance - Math.max(0, ahead) * 0.5;
+          };
+          return score(a) - score(b);
+        });
+      }
+      for (const t of tilesAround(focus, o.unloadRadius, o.zoom)) keep.add(t.key);
     }
-    const keep = new Set(tilesAround(focus, o.unloadRadius, o.zoom).map((t) => t.key));
     for (const p of wanted) keep.add(p.key);
-    for (const [key, live] of this.tiles) if (!keep.has(key)) this.unload(key, live);
-    for (const [key, job] of this.pending) {
+    const nowKeep = performance.now();
+    if (screen) {
+      // sticky rectangle: reopen M in the same area must not refetch the sides
+      this.softKeep = new Set(keep);
+      this.softKeepUntil = nowKeep + 90000;
+      this.softKeepAt = [...focus];
+    } else if (this.softKeep.size && this.softKeepAt) {
+      const dx = (focus[0] - this.softKeepAt[0]) * METERS_PER_DEGREE * cosLat;
+      const dy = (focus[1] - this.softKeepAt[1]) * METERS_PER_DEGREE;
+      // hold until the car leaves the last map area, not just a few seconds
+      if (nowKeep < this.softKeepUntil || Math.hypot(dx, dy) < 2800) {
+        for (const k of this.softKeep) keep.add(k);
+      } else {
+        this.softKeep.clear();
+        this.softKeepAt = null;
+      }
+    }
+    // spread unloads across frames — dumping a full M-map rectangle in one tick tanks FPS.
+    // while soft-keeping the map rectangle, drip slowly (never dump the softKeep set itself)
+    const holdingMap = !screen && this.softKeep.size > 0;
+    // fly-in: don't dispose meshes mid-lerp (unload hitch = the other half of хрясть)
+    const dropCap = calm ? 0 : holdingMap ? 1 : screen ? 2 : 6;
+    let dropped = 0;
+    for (const [key, live] of this.tiles) {
       if (keep.has(key)) continue;
-      this.cancel(job.id);
-      this.pending.delete(key);
+      if (dropped >= dropCap) break;
+      this.unload(key, live);
+      dropped++;
+    }
+    if (!calm) {
+      for (const [key, job] of this.pending) {
+        if (keep.has(key) || this.softKeep.has(key)) continue;
+        this.cancel(job.id);
+        this.pending.delete(key);
+      }
     }
     const now = performance.now();
-    const flightCap = burst ? Math.max(o.maxInFlight, 10) : o.maxInFlight;
+    // camera blends must stay smooth — never storm the GPU mid-lerp (was 5–7 FPS on M open)
+    const mapBurst = !!screen && !calm;
+    // intro fly-in: zero new fetches / uploads — even one tower chunk was the 17 fps hitch
+    const flightCap = calm ? 0
+      : this.mapLite ? 2
+        : (burst || mapBurst) ? Math.max(o.maxInFlight, mapBurst ? 4 : 8)
+          : o.maxInFlight;
     for (const plan of wanted) {
       if (this.tiles.has(plan.key) || this.pending.has(plan.key)) continue;
       const failed = this.failures.get(plan.key);
@@ -273,15 +434,40 @@ export class WorldTiles {
       this.request(plan.key, plan.tile);
     }
     let backlog = 0;
-    for (const plan of wanted) backlog += this.tiles.get(plan.key)?.waiting.length ?? 0;
-    // boot / first-lap hitch: data is ready but uploads are throttled — catch up
-    let budget = burst ? Math.max(o.uploadsPerFrame, 10) : o.uploadsPerFrame;
-    if (backlog > 12) budget = Math.min(burst ? 16 : 8, budget + (burst ? 6 : 4));
-    else if (backlog > 5) budget = Math.min(burst ? 12 : 6, budget + (burst ? 4 : 2));
+    for (const live of this.tiles.values()) backlog += live.waiting.length;
+    let budget = o.uploadsPerFrame;
+    if (calm) {
+      budget = 0;
+    } else if (burst) {
+      // boot only (map still hidden / settled) — keep visible play under ~8
+      budget = backlog > 24 ? 12 : backlog > 12 ? 9 : backlog > 5 ? 7 : 5;
+    } else if (mapBurst) {
+      // M-map / top-down: drain a little, but never storm the GPU (was 5–7 FPS)
+      budget = 2;
+    } else {
+      // chase: don't ramp with backlog — that was the mid-drive FPS dip while tiles stream in
+      budget = 2;
+    }
+    if (this.mapLite) budget = Math.min(budget, 2);
+    // wanted first; soft-kept only when not calm (otherwise M leftovers hitch the intro fly-in)
     for (const plan of wanted) {
       const live = this.tiles.get(plan.key);
       while (live && live.waiting.length && budget > 0) { live.waiting.shift()!(); budget--; }
       if (budget <= 0) break;
+    }
+    if (budget > 0 && !calm && !this.mapLite) {
+      for (const live of this.tiles.values()) {
+        while (live.waiting.length && budget > 0) { live.waiting.shift()!(); budget--; }
+        if (budget <= 0) break;
+      }
+    }
+    // ease newly installed tiles in (unload still drops immediately — memory, not cosmetics)
+    const nowFade = performance.now();
+    const dt = this.lastFadeMs ? Math.min(0.05, (nowFade - this.lastFadeMs) / 1000) : 0;
+    this.lastFadeMs = nowFade;
+    if (dt > 0) {
+      const step = dt / TILE_FADE_IN;
+      for (const live of this.tiles.values()) if (live.fade < 1) live.fade = Math.min(1, live.fade + step);
     }
   }
 
@@ -350,14 +536,17 @@ export class WorldTiles {
     lampMap.magFilter = THREE.LinearFilter;
     lampMap.generateMipmaps = false;
     lampMap.needsUpdate = true;
-    const live: Live = { key, tile: data.tile, data, group, waiting: [], roads: null, disposables: [lampMap], extra: new Map(), props: new Map(), propCells: null, footprintCells: null, footprintSeen: null, lampMap, spires: null };
+    const live: Live = {
+      key, tile: data.tile, data, group, waiting: [], deferred: [], buildings: [], roads: null,
+      disposables: [lampMap], extra: new Map(), props: new Map(), floraMeshes: null, propCells: null,
+      footprintCells: null, footprintSeen: null, lampMap, spires: null, fade: 0,
+    };
     this.place(live);
     this.root.add(group);
     this.tiles.set(key, live);
 
-    // Ground and roads first (cheap, and they define the street layout), buildings after.
+    // Ground first, then water/roads/seams — one waiting slot used to hitch a whole frame.
     live.waiting.push(() => {
-      // vector ground: terrain, then land use (three layers), then water and roads
       const g = data.ground;
       const terrain = this.lampLit(this.mesh(g.terrain, this.groundMat, false), live);
       terrain.renderOrder = -4;
@@ -370,8 +559,12 @@ export class WorldTiles {
         group.add(mesh);
         live.disposables.push(mesh.geometry);
       });
+      group.updateMatrixWorld(true);
+    });
+    live.waiting.push(() => {
+      const g = data.ground;
       if (g.water.index.length) {
-        const water = this.mesh(g.water, this.waterMat, false);
+        const water = this.lampLit(this.mesh(g.water, this.waterMat, false), live);
         if (g.water.shore) water.geometry.setAttribute('aShore', new THREE.BufferAttribute(g.water.shore, 1));
         water.renderOrder = -3;
         group.add(water);
@@ -382,7 +575,7 @@ export class WorldTiles {
       }
       if (data.streams.index.length) {
         // streams look like the rest of the water: away from a bank, no foam
-        const streams = this.mesh(data.streams, this.waterMat, false);
+        const streams = this.lampLit(this.mesh(data.streams, this.waterMat, false), live);
         streams.geometry.setAttribute('aShore', new THREE.BufferAttribute(new Float32Array(data.streams.positions.length / 3).fill(3), 1));
         streams.renderOrder = -3;
         group.add(streams);
@@ -395,21 +588,29 @@ export class WorldTiles {
         live.roads = roads;
         live.disposables.push(roads.geometry);
       }
-      // static meshes: matrixAutoUpdate is off, so place them explicitly
       group.updateMatrixWorld(true);
     });
-    for (const chunk of data.buildings.chunks) live.waiting.push(() => this.addChunk(live, chunk));
-    live.waiting.push(() => {
+    // Manhattan/London: while M-map is open, don't upload towers/trees — ground+roads are enough top-down
+    const detail: (() => void)[] = [];
+    for (const chunk of data.buildings.chunks) detail.push(() => this.addChunk(live, chunk));
+    detail.push(() => {
       const meshes = [...this.vegetation.build(data.vegetation), ...this.vegetation.buildAccents(data.buildings.accents)];
+      const flora: THREE.InstancedMesh[] = [];
       for (const mesh of meshes) {
+        this.lampLit(mesh, live);
+        mesh.visible = true;
         group.add(mesh);
         const list = live.props.get(mesh.name);
         if (list) list.push(mesh); else live.props.set(mesh.name, [mesh]);
+        if (mesh.name.startsWith('flora')) flora.push(mesh);
       }
+      live.floraMeshes = flora;
       group.updateMatrixWorld(true);
       live.disposables.push({ dispose: () => this.vegetation.release(meshes) });
       if (this.spiresOn) this.buildSpires(live);
     });
+    if (this.mapLite) live.deferred.push(...detail);
+    else live.waiting.push(...detail);
     // Gameplay may read this tile now: features and DEM are final.
     this.revision++;
     this.onTile(key);
@@ -431,15 +632,18 @@ export class WorldTiles {
   }
 
   /**
-   * The materials are shared by every tile; each tile has its own street-light map.
-   * Hand this mesh's tile map to its material right before it draws.
+   * The materials are shared by every tile; each tile has its own street-light map
+   * and fade. Hand them to the material right before it draws.
    */
   private lampLit<T extends THREE.Mesh>(mesh: T, live: Live): T {
     mesh.onBeforeRender = (_renderer, _scene, _camera, _geometry, material) => {
       const uniforms = (material as THREE.ShaderMaterial).uniforms;
-      if (!uniforms?.uLampMap || uniforms.uLampMap.value === live.lampMap) return;
-      uniforms.uLampMap.value = live.lampMap;
-      (material as THREE.ShaderMaterial).uniformsNeedUpdate = true;
+      if (!uniforms) return;
+      if (uniforms.uTileFade) uniforms.uTileFade.value = live.fade;
+      if (uniforms.uLampMap && uniforms.uLampMap.value !== live.lampMap) {
+        uniforms.uLampMap.value = live.lampMap;
+        (material as THREE.ShaderMaterial).uniformsNeedUpdate = true;
+      }
     };
     return mesh;
   }
@@ -462,15 +666,46 @@ export class WorldTiles {
     );
     const mesh = this.lampLit(new THREE.Mesh(geometry, this.farMat), live);
     mesh.matrixAutoUpdate = false;
+    mesh.visible = true;
     live.group.add(mesh);
     mesh.updateMatrixWorld(true);
+    live.buildings.push(mesh);
     live.disposables.push(geometry);
+  }
+
+  /**
+   * Was used to blank walls on the M-map for fill-rate; we no longer hide them.
+   * Still drains any leftover deferred uploads if something had queued them.
+   */
+  setMapLite(on: boolean) {
+    if (this.mapLite === on) return;
+    this.mapLite = on;
+    for (const live of this.tiles.values()) {
+      for (const mesh of live.buildings) mesh.visible = true;
+      if (live.spires) live.spires.visible = true;
+      if (live.deferred.length) {
+        live.waiting.push(...live.deferred);
+        live.deferred.length = 0;
+      }
+    }
+  }
+
+  /** Trees/lamps stay drawn on the map too. */
+  setPropsHidden(on: boolean) {
+    if (this.propsHidden === on) return;
+    this.propsHidden = on;
+    for (const live of this.tiles.values()) {
+      for (const list of live.props.values()) for (const mesh of list) mesh.visible = true;
+    }
   }
 
   private unload(key: string, live: Live) {
     for (const [id, f] of this.fallen) if (f.live === live) this.fallen.delete(id);
+    for (const [id, g] of this.shattered) if (g.live === live) this.shattered.delete(id);
     this.root.remove(live.group);
     for (const fn of live.waiting.splice(0)) void fn; // never uploaded
+    live.deferred.length = 0;
+    live.buildings.length = 0;
     for (const d of live.disposables) d.dispose();
     this.tiles.delete(key);
     this.revision++;
@@ -547,12 +782,11 @@ export class WorldTiles {
    */
   updateFloraDetail(eye: THREE.Vector3, above: number) {
     for (const live of this.tiles.values()) {
-      if (!live.props.size || !live.group.visible) continue;
+      const meshes = live.floraMeshes;
+      if (!meshes?.length || !live.group.visible) continue;
       const size = tileSpan(live.tile.z) * this.sceneScale;
       const x0 = live.group.position.x, z0 = live.group.position.z;
       const dx = Math.max(x0 - eye.x, 0, eye.x - (x0 + size)), dz = Math.max(z0 - eye.z, 0, eye.z - (z0 + size));
-      const meshes: THREE.InstancedMesh[] = [];
-      for (const [name, list] of live.props) if (name.startsWith('flora')) meshes.push(...list);
       this.vegetation.floraDetail(meshes, Math.hypot(dx, dz, above));
     }
   }
@@ -561,6 +795,19 @@ export class WorldTiles {
     const mx = mercatorX(focus[0]), my = mercatorY(focus[1]);
     const cos = Math.cos(focus[1] * Math.PI / 180);
     for (const live of this.tiles.values()) live.group.visible = distanceToTile(mx, my, live.tile, cos) <= distance;
+  }
+
+  /** Hide tiles wholly outside the lng/lat rectangle (top-down map: keep the screen filled). */
+  cullOutside(west: number, south: number, east: number, north: number) {
+    for (const live of this.tiles.values()) {
+      const [x0, y0] = tileCorner(live.tile);
+      const span = tileSpan(live.tile.z);
+      const tw = lngFromMercator(x0);
+      const te = lngFromMercator(x0 + span);
+      const tn = latFromMercator(y0);
+      const ts = latFromMercator(y0 - span);
+      live.group.visible = te >= west && tw <= east && tn >= south && ts <= north;
+    }
   }
 
   // ---- queries -------------------------------------------------------------
@@ -582,13 +829,33 @@ export class WorldTiles {
     const [cx, cy] = live.data.corner;
     const x = mercatorX(lng) - cx, z = cy - mercatorY(lat);
     const u = x / span, v = z / span;
-    let ground = gridGround(live.data.ground.heights, this.options.grid, u, v);
+    // driveHeights keep the dry bank; visual `heights` are dipped for the shore mesh
+    const drive = live.data.ground.driveHeights ?? live.data.ground.heights;
+    let ground = gridGround(drive, this.options.grid, u, v);
     // carved baths are only visual — don't drop the car into a 2 m hole (launches on the way out)
     const water = gridWaterLevel(live.data.ground.waterLevel, this.options.grid, u, v);
     if (water != null && ground < water - 0.4) ground = water - 0.12;
-    const deck = bridgeDeck(live.data.bridges, x, z);
+    // if already elevated, widen the ribbon so curve chords / deck seams don't miss
+    const hint = atAltitude == null ? undefined : atAltitude - ROAD_TOP;
+    const elevated = hint != null && hint > ground + 1.4;
+    const deck = bridgeDeck(live.data.bridges, x, z, elevated ? 1.45 : 1.22);
     // roads lie on the terrain, lifted a little: wheels stand on the pavement, not in it
-    return pickDriveHeight(ground, deck, atAltitude == null ? undefined : atAltitude - ROAD_TOP) + ROAD_TOP;
+    return pickDriveHeight(ground, deck, hint) + ROAD_TOP;
+  }
+
+  /**
+   * True when `altitude` sits on a bridge deck ribbon (not the river road under it).
+   * Used so water collision doesn't wall off the on-ramp the moment XY crosses water.
+   */
+  isDeckAt(lng: number, lat: number, altitude: number): boolean {
+    const live = this.liveAt(lng, lat);
+    if (!live?.data.bridges.length) return false;
+    const [cx, cy] = live.data.corner;
+    const x = mercatorX(lng) - cx, z = cy - mercatorY(lat);
+    const deck = bridgeDeck(live.data.bridges, x, z, 1.45);
+    if (deck == null) return false;
+    // near the deck surface — under the bridge altitude is far below
+    return altitude >= deck - 2.8 && altitude <= deck + 6;
   }
 
   /**
@@ -646,6 +913,22 @@ export class WorldTiles {
     return out;
   }
 
+  /** One loaded tile's layer (empty if the tile is gone or still uploading). */
+  featuresOf(key: string, layer: string): GeoFeature[] {
+    const live = this.tiles.get(key);
+    if (!live) return [];
+    return live.data.features[layer] ?? this.extraLayer(live, layer);
+  }
+
+  /** Keys of tiles currently resident (for gameplay ingest bookkeeping). */
+  tileKeys(): string[] {
+    return [...this.tiles.keys()];
+  }
+
+  hasTile(key: string) {
+    return this.tiles.has(key);
+  }
+
   /** Any other layer of the tile, decoded on first use from the kept PBF bytes. */
   private extraLayer(live: Live, name: string): GeoFeature[] {
     const cached = live.extra.get(name);
@@ -670,10 +953,11 @@ export class WorldTiles {
 
   /**
    * The house a shop is in: the building around the point, else the nearest one
-   * within `radius` m. Its middle and the height of its top (m, not exaggerated).
+   * within `radius` m. Middle, top height (m, not exaggerated), and footprint
+   * radius (m from middle to the farthest corner) for service reach.
    */
-  houseAt(point: LngLat, radius: number): { middle: LngLat; top: number } | null {
-    let best: { middle: LngLat; top: number; d: number } | null = null;
+  houseAt(point: LngLat, radius: number): { middle: LngLat; top: number; radius: number } | null {
+    let best: { middle: LngLat; top: number; d: number; radius: number } | null = null;
     const cos = Math.cos(point[1] * Math.PI / 180);
     this.eachFootprint(point, radius, (rings, height, roof, crest) => {
       const outer = rings()[0];
@@ -684,24 +968,33 @@ export class WorldTiles {
       const inside = insideLngLat(point, outer);
       const d = inside ? 0 : Math.hypot((middle[0] - point[0]) * 111320 * cos, (middle[1] - point[1]) * 111320);
       if (d > radius || (best && d >= best.d)) return;
+      let span = 0;
+      for (const [lng, lat] of outer) {
+        const r = Math.hypot((lng - middle[0]) * 111320 * cos, (lat - middle[1]) * 111320);
+        if (r > span) span = r;
+      }
       const ridge = roof.half > 0 && roof.peak < 1e6 ? roof.peak : 0;
-      best = { middle, top: crest + Math.max(height, ridge), d };
+      best = { middle, top: crest + Math.max(height, ridge), d, radius: Math.max(6, span) };
     });
-    return best ? { middle: (best as { middle: LngLat }).middle, top: (best as { top: number }).top } : null;
+    return best
+      ? { middle: (best as { middle: LngLat }).middle, top: (best as { top: number }).top, radius: (best as { radius: number }).radius }
+      : null;
   }
 
   /**
    * Street-facing, accessible window centres on the nearest house to `street`
    * (road pin). Only façades that open toward the street and are not blocked by
-   * a neighbour. Heights match the drawn wall grid (~3.2 m floors).
+   * a neighbour. Rhythm follows the active architecture skin (esp. futuristic ribbons).
    */
   fireFacadesNear(
     street: LngLat,
     exaggeration: number,
     radius = 55,
+    skin: SkinId = 'original',
+    /** stop once we have this many panes — dense cities otherwise build thousands and hitch */
+    maxPanes = Infinity,
   ): { middle: LngLat; crest: number; top: number; panes: { at: LngLat; altitude: number; oe: number; on: number }[] } | null {
-    const FLOOR = 3.2;
-    const SPACING = 2.7;
+    const { floor: FLOOR, spacing: SPACING, yMid } = fireWindowRhythm(skin);
     const cos = Math.cos(street[1] * Math.PI / 180);
     type Cand = { middle: LngLat; outer: [number, number][]; height: number; crest: number; d: number };
     let best: Cand | null = null;
@@ -771,10 +1064,12 @@ export class WorldTiles {
 
       const columns = Math.max(1, Math.floor((length - 0.6) / SPACING));
       for (let fl = 0; fl < floors; fl++) {
-        const altitude = (body0 + floorH * (fl + 0.55)) * exaggeration;
+        if (panes.length >= maxPanes) break;
+        const altitude = (body0 + floorH * (fl + yMid)) * exaggeration;
         // skip very low ground-floor panes buried in plinth noise
         if (altitude < crestEx + 1.2) continue;
         for (let c = 0; c < columns; c++) {
+          if (panes.length >= maxPanes) break;
           const t = (c + 0.5) / columns;
           const alongE = ae.e + de * t + oe * 0.08;
           const alongN = ae.n + dn * t + on * 0.08;
@@ -785,6 +1080,7 @@ export class WorldTiles {
           panes.push({ at, altitude, oe, on });
         }
       }
+      if (panes.length >= maxPanes) break;
     }
     if (!panes.length) return null;
     return {
@@ -803,20 +1099,30 @@ export class WorldTiles {
     });
     // street furniture: pedestals, basins, bus shelters (a car stops at them, flies over on a jump)
     const mx = mercatorX(center[0]), my = mercatorY(center[1]);
+    const cos = Math.cos(center[1] * Math.PI / 180);
     for (const live of this.tiles.values()) {
       const m = live.data.vegetation.solids;
       if (!m?.length) continue;
+      // skip whole tiles whose nearest corner is outside the query radius
+      if (distanceToTile(mx, my, live.tile, cos) > radius + 80) continue;
       const [cx, cy] = live.data.corner;
       const k = 1 / live.data.metersScale;
+      const ms = live.data.metersScale;
+      const r2 = (radius / ms) * (radius / ms);
       for (let i = 0; i < m.length; i += SOLID_STRIDE) {
+        // knocked-aside shelter: half-sizes zeroed so the car can drive through
+        if (m[i + 3] < 1e-4 || m[i + 4] < 1e-4) continue;
         const x = cx + m[i], y = cy - m[i + 1];
-        if (Math.hypot(x - mx, y - my) * live.data.metersScale > radius) continue;
+        const dx = x - mx, dy = y - my;
+        if (dx * dx + dy * dy > r2) continue;
         const c = Math.cos(m[i + 5]), s = Math.sin(m[i + 5]);
-        const ring: [number, number][] = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => {
-          const ex = a * m[i + 3] * k, ez = b * m[i + 4] * k;
-          // yaw as the instance matrix turns it (x east, z south)
-          return [lngFromMercator(x + c * ex + s * ez), latFromMercator(y - (-s * ex + c * ez))];
-        });
+        const hw = m[i + 3] * k, hl = m[i + 4] * k;
+        const ring: [number, number][] = [
+          [lngFromMercator(x + c * -hw + s * -hl), latFromMercator(y - (-s * -hw + c * -hl))],
+          [lngFromMercator(x + c * hw + s * -hl), latFromMercator(y - (-s * hw + c * -hl))],
+          [lngFromMercator(x + c * hw + s * hl), latFromMercator(y - (-s * hw + c * hl))],
+          [lngFromMercator(x + c * -hw + s * hl), latFromMercator(y - (-s * -hw + c * hl))],
+        ];
         out.push({ rings: [ring], crest: m[i + 2] * exaggeration, roof: { eaves: m[i + 6], peak: m[i + 6], half: 0, ridgeA: null, ridgeB: null } });
       }
     }
@@ -961,6 +1267,7 @@ export class WorldTiles {
     mesh.computeBoundingSphere();
     if (mesh.boundingSphere) mesh.boundingSphere.radius += 400;
     mesh.visible = this.spiresOn;
+    this.lampLit(mesh, live);
     live.group.add(mesh);
     live.group.updateMatrixWorld(true);
     live.spires = mesh;
@@ -994,8 +1301,15 @@ export class WorldTiles {
       const i0 = Math.floor((Math.min(ax, bx) - widest) / cell), i1 = Math.floor((Math.max(ax, bx) + widest) / cell);
       const j0 = Math.floor((Math.min(az, bz) - widest) / cell), j1 = Math.floor((Math.max(az, bz) + widest) / cell);
       for (let cj = j0; cj <= j1; cj++) for (let ci = i0; ci <= i1; ci++) for (const i of cells.get(cellKey(ci, cj)) ?? []) {
-        // bullets: the trunk plus some crown; a car (reach > 0): the trunk is just a point
-        const r = (reach > 0 ? reach : fell[i] === 1 ? 0.3 : 0.75) / live.data.metersScale;
+        const kind = fell[i];
+        // bullets: trunk/crown; car (reach>0): point + half-width. Shelters/statues/clutter are wider.
+        const body = kind === 2 ? 1.4
+          : kind === 3 || kind === 4 ? 0.9
+            : kind === 5 ? 0.25
+              : kind === 6 || kind === 7 ? 0.55
+                : kind === 8 ? 1.05
+                  : kind === 1 ? 0.3 : 0.75;
+        const r = (reach > 0 ? Math.max(reach * (kind >= 5 ? 0.55 : 1), body * 0.5) : body) / live.data.metersScale;
         const ox = ax - fell[i + 1], oz = az - fell[i + 2];
         const b = 2 * (ox * dx + oz * dz), c = ox * ox + oz * oz - r * r;
         const disc = b * b - 4 * a * c;
@@ -1004,7 +1318,10 @@ export class WorldTiles {
         if (t < 0 || t > 1 || (best && t >= best.t)) continue;
         const altitude = fromAlt + (toAlt - fromAlt) * t;
         const base = fell[i + 3] * exaggeration;
-        if (altitude < base - 0.3 || altitude > base + fell[i + 4]) continue;
+        // car bumper (reach>0): DEM / driveHeights can sit a metre off the trunk base
+        const top = reach > 0 ? Math.max(fell[i + 4], 3) : fell[i + 4];
+        const loft = reach > 0 ? 2.5 : 0.3;
+        if (altitude < base - loft || altitude > base + top) continue;
         const key = `${live.key}#${i}`;
         if (this.fallen.has(key)) continue; // already down
         const point: LngLat = [from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t];
@@ -1027,12 +1344,77 @@ export class WorldTiles {
     return (live.propCells = cells);
   }
 
-  /** Knock a tree or lamp over, away from the shot. */
-  /** True when a tree (not a lamp) went down. */
-  topple(hit: NonNullable<ReturnType<WorldTiles['raycastProps']>>, now: number): boolean {
-    if (this.fallen.has(hit.key)) return false;
+  /**
+   * First intact bus-shelter glass pane on from → to. `t` is the fraction along
+   * the segment (same frame as raycastProps). The metal frame stays; only glass
+   * counts here.
+   */
+  raycastGlass(from: LngLat, fromAlt: number, to: LngLat, toAlt: number, exaggeration: number) {
+    let best: { t: number; point: LngLat; altitude: number; key: string; live: Live; index: number } | null = null;
+    const fx = mercatorX(from[0]), fy = mercatorY(from[1]), tx = mercatorX(to[0]), ty = mercatorY(to[1]);
+    for (const live of this.tiles.values()) {
+      const glass = live.data.vegetation.glass;
+      if (!glass?.length || !live.props.has('shelterGlass')) continue;
+      const span = tileSpan(live.tile.z);
+      const [cx, cy] = live.data.corner;
+      const ms = live.data.metersScale;
+      const ax = fx - cx, az = cy - fy, bx = tx - cx, bz = cy - ty;
+      const pad = 8 / ms;
+      if (Math.max(ax, bx) < -pad || Math.min(ax, bx) > span + pad || Math.max(az, bz) < -pad || Math.min(az, bz) > span + pad) continue;
+      const dx = bx - ax, dz = bz - az, dy = toAlt - fromAlt;
+      const len2 = dx * dx + dz * dz;
+      if (len2 < 1e-12) continue;
+      for (let i = 0, slot = 0; i < glass.length; i += GLASS_STRIDE, slot++) {
+        const key = `${live.key}:glass#${slot}`;
+        if (this.shattered.has(key)) continue;
+        const gx = glass[i], gz = glass[i + 1], ground = glass[i + 2] * exaggeration, yaw = glass[i + 3];
+        const c = Math.cos(yaw), s = Math.sin(yaw);
+        // shelter-local meters (same yaw as the instance): glass sits near the back and one end
+        const toLocal = (x: number, z: number, alt: number) => {
+          const ex = (x - gx) * ms, ez = (z - gz) * ms;
+          return { x: c * ex - s * ez, y: alt - ground, z: s * ex + c * ez };
+        };
+        const a = toLocal(ax, az, fromAlt), b = toLocal(bx, bz, toAlt);
+        const hitT = glassPaneHit(a.x, a.y, a.z, b.x, b.y, b.z);
+        if (hitT == null || hitT < 0 || hitT > 1 || (best && hitT >= best.t)) continue;
+        const altitude = fromAlt + dy * hitT;
+        const point: LngLat = [from[0] + (to[0] - from[0]) * hitT, from[1] + (to[1] - from[1]) * hitT];
+        best = { t: hitT, point, altitude, key, live, index: slot };
+      }
+    }
+    return best;
+  }
+
+  /** Hide a shelter's glass instance (shot went through the pane). */
+  shatterGlass(hit: NonNullable<ReturnType<WorldTiles['raycastGlass']>>): boolean {
+    if (this.shattered.has(hit.key)) return false;
+    const meshes = hit.live.props.get('shelterGlass') ?? [];
+    if (!meshes.length) return false;
+    const matrices = meshes[0].instanceMatrix.array as Float32Array;
+    const offset = hit.index * 16;
+    if (offset + 16 > matrices.length) return false;
+    const standing = matrices.slice(offset, offset + 16);
+    // keep translation, collapse scale so the pane vanishes without shifting the frame
+    const hidden = new Float32Array(16);
+    hidden[12] = standing[12];
+    hidden[13] = standing[13];
+    hidden[14] = standing[14];
+    hidden[15] = 1;
+    this.write({ matrices, offset, standing, meshes }, hidden);
+    this.shattered.set(hit.key, { live: hit.live, index: hit.index, parts: [{ matrices, offset, standing, meshes }], unseenSince: 0 });
+    return true;
+  }
+
+  /**
+   * Knock a prop over away from the shot / along the car's path.
+   * `speed` is impact m/s (car); bullets omit it.
+   * Returns km/h to shave: 50 tree/shelter, 10 bollard/bin/dumpster/fence, 0 else.
+   */
+  topple(hit: NonNullable<ReturnType<WorldTiles['raycastProps']>>, now: number, speed = 0): number {
+    if (this.fallen.has(hit.key)) return 0;
     const { live, index } = hit;
     const fell = live.data.vegetation.fell;
+    const kind = fell[index];
     const parts: Fallen['parts'] = [];
     const take = (kinds: string[], slot: number) => {
       const meshes = kinds.flatMap((k) => live.props.get(k) ?? []);
@@ -1041,52 +1423,160 @@ export class WorldTiles {
       parts.push({ matrices, offset: slot * 16, standing: matrices.slice(slot * 16, slot * 16 + 16), meshes });
     };
     let relight: (() => void) | undefined;
-    if (fell[index] === 1) {
+    let restoreSolid: (() => void) | undefined;
+    const clearSolid = () => {
+      const solid = fell[index + 7];
+      const solids = live.data.vegetation.solids;
+      const o = solid * SOLID_STRIDE;
+      if (solid < 0 || o + 6 >= solids.length) return;
+      const hw = solids[o + 3], hl = solids[o + 4], hh = solids[o + 6];
+      solids[o + 3] = 0;
+      solids[o + 4] = 0;
+      solids[o + 6] = 0;
+      restoreSolid = () => { solids[o + 3] = hw; solids[o + 4] = hl; solids[o + 6] = hh; };
+    };
+    if (kind === 1) {
       take(['lamp'], fell[index + 5]);
       relight = this.lampOut(live, index);
+    } else if (kind === 2) {
+      take(['shelter'], fell[index + 5]);
+      take(['shelterGlass'], fell[index + 6]);
+      clearSolid();
+    } else if (kind === 3) {
+      take(['figure'], fell[index + 5]); // plinth stays
+    } else if (kind === 4) {
+      take(['rider'], fell[index + 5]);
+    } else if (kind === 5) {
+      take(['bollard'], fell[index + 5]);
+    } else if (kind === 6) {
+      take(['bin'], fell[index + 5]);
+    } else if (kind === 7) {
+      take(['dumpster'], fell[index + 5]);
+      clearSolid();
+    } else if (kind === 8) {
+      // one fence bay: both rails flop; posts stay for neighbouring sections
+      take(['rail'], fell[index + 5]);
+      take(['rail'], fell[index + 6]);
+    } else {
+      take([`flora${fell[index + 6]}`], fell[index + 5]); // the whole tree is one instance
     }
-    else take([`flora${fell[index + 6]}`], fell[index + 5]); // the whole tree is one instance
-    if (!parts.length) return false;
-    this.fallen.set(hit.key, { live, index, started: now, dirX: hit.dirX, dirZ: hit.dirZ, parts, settled: false, unseenSince: 0, relight });
-    return fell[index] !== 1;
+    if (!parts.length) return 0;
+    // bin / dumpster: tip onto a box face; shelter: forward + a bit aside (car path)
+    let dirX = hit.dirX, dirZ = hit.dirZ;
+    if (kind === 6 || kind === 7) {
+      const m = parts[0].standing;
+      const yaw = Math.atan2(m[8], m[10]);
+      const hitYaw = Math.atan2(dirX, dirZ);
+      const snapped = yaw + Math.round((hitYaw - yaw) / (Math.PI / 2)) * (Math.PI / 2);
+      dirX = Math.sin(snapped);
+      dirZ = Math.cos(snapped);
+    } else if (kind === 2) {
+      // mostly along the car, ~25° aside so it clears the lane in view
+      const hitYaw = Math.atan2(dirX, dirZ);
+      const side = (Math.sin(hitYaw * 12.9898) >= 0 ? 1 : -1);
+      const yaw = hitYaw + side * 0.42;
+      dirX = Math.sin(yaw);
+      dirZ = Math.cos(yaw);
+    }
+    // shelters/bollards: farther + faster the harder the hit
+    const v = Math.max(speed, 4);
+    const slideM = kind === 5 ? Math.min(55, 3 + v * 1.35)
+      : kind === 2 ? Math.min(48, 5 + v * 1.15)
+        : kind === 8 ? 1.6
+          : kind === 6 || kind === 7 ? 1.2
+            : 0;
+    const fallS = kind === 2 ? Math.max(0.32, FALL_TIME - v * 0.012) : FALL_TIME;
+    // shelter depth ~0.75 m past the foot — lift so the side rests on the ground
+    const restLift = kind === 2 ? 0.95 : kind === 5 || kind === 6 || kind === 7 ? 0.35 : 0;
+    this.fallen.set(hit.key, {
+      live, index, kind, started: now, dirX, dirZ, slideM, fallS, restLift,
+      parts, settled: false, unseenSince: 0, relight, restoreSolid,
+    });
+    if (kind === 0 || kind === 2) return 50;
+    if (kind === 5 || kind === 6 || kind === 7 || kind === 8) return 10;
+    return 0;
   }
 
-  /** Animate falling props; stand them up again once they have been out of view a moment. `clip`: scene → clip. */
-  updateFallen(now: number, clip: THREE.Matrix4) {
-    if (!this.fallen.size) return;
+  /**
+   * Animate falling props; stand them up again only after they've been off-screen
+   * a long while *and* the focus has driven far away — so a quick glance back
+   * or a U-turn nearby doesn't pop them upright.
+   */
+  updateFallen(now: number, clip: THREE.Matrix4, focus?: LngLat) {
+    if (!this.fallen.size && !this.shattered.size) return;
     this.frustum.setFromProjectionMatrix(clip);
-    const pivot = new THREE.Matrix4(), turn = new THREE.Matrix4(), back = new THREE.Matrix4(), m = new THREE.Matrix4();
-    const axis = new THREE.Vector3(), p = new THREE.Vector3(), sphere = new THREE.Sphere();
+    const pivot = this.fallPivot, turn = this.fallTurn, back = this.fallBack, m = this.fallMat;
+    const scaleIn = this.fallScaleIn, scaleOut = this.fallScaleOut;
+    const axis = this.fallAxis, p = this.fallPoint, sphere = this.fallSphere;
     const exag = this.uniforms.uExag.value;
-    for (const [key, f] of this.fallen) {
+    const focusX = focus ? mercatorX(focus[0]) : null;
+    const focusY = focus ? mercatorY(focus[1]) : null;
+    if (this.fallen.size) for (const [key, f] of this.fallen) {
       const fell = f.live.data.vegetation.fell, i = f.index;
       const x = fell[i + 1], z = fell[i + 2], top = fell[i + 4];
       const toMerc = 1 / f.live.data.metersScale;
+      const ms = f.live.data.metersScale;
       if (f.settled) {
-        // in view? a sphere around the lying prop, in scene space
+        // fat sphere so “just off the edge of the screen” still counts as seen
         p.set(x + f.dirX * top * 0.5 * toMerc, fell[i + 3] * exag, z + f.dirZ * top * 0.5 * toMerc).applyMatrix4(f.live.group.matrixWorld);
-        sphere.set(p, top);
+        sphere.set(p, Math.max(top * 1.4, 18));
         if (this.frustum.intersectsSphere(sphere)) { f.unseenSince = 0; continue; }
+        if (focusX != null && focusY != null) {
+          const [cx, cy] = f.live.data.corner;
+          const away = Math.hypot((cx + x) - focusX, (cy - z) - focusY) * ms;
+          if (away < RESTORE_AWAY_M) { f.unseenSince = 0; continue; }
+        }
         if (!f.unseenSince) { f.unseenSince = now; continue; }
         if (now - f.unseenSince < UNSEEN_RESTORE * 1000) continue;
         for (const part of f.parts) this.write(part, part.standing);
         this.fallen.delete(key);
         f.relight?.();
+        f.restoreSolid?.();
         continue;
       }
-      // falls like a cut tree: slow start, hits the ground fast
-      const k = Math.min(1, (now - f.started) / 1000 / FALL_TIME);
-      const angle = FALL_ANGLE * k * k;
+      // falls like a cut tree: slow start, hits the ground fast (shelters finish quicker when hit hard)
+      const k = Math.min(1, (now - f.started) / 1000 / f.fallS);
+      // shelter flops flat onto a side; fence tips; bollard/bin/dumpster onto a face; statues off the plinth
+      const maxAngle = f.kind === 2 || f.kind === 5 || f.kind === 6 || f.kind === 7 ? FALL_ANGLE
+        : f.kind === 8 ? FALL_ANGLE * 0.85
+          : FALL_ANGLE;
+      const angle = maxAngle * k * k;
+      // shelters/bollards ease out so they keep sailing forward late in the tip
+      const slideK = f.kind === 2 || f.kind === 5 ? 1 - (1 - k) * (1 - k) : k * k;
+      const slide = f.slideM * slideK * toMerc;
+      // lift while tipping: the resting face sits on the ground instead of burying past the foot
+      const lift = f.restLift * Math.sin(angle);
       // rotate in true meters (x, z are mercator meters here), about the foot of the prop
       axis.set(f.dirZ, 0, -f.dirX); // up × direction: the top swings toward the direction
-      pivot.makeTranslation(x, 0, z).multiply(new THREE.Matrix4().makeScale(toMerc, 1, toMerc));
-      back.makeScale(1 / toMerc, 1, 1 / toMerc).multiply(new THREE.Matrix4().makeTranslation(-x, 0, -z));
+      scaleIn.makeScale(toMerc, 1, toMerc);
+      scaleOut.makeScale(1 / toMerc, 1, 1 / toMerc);
+      pivot.makeTranslation(x + f.dirX * slide, lift, z + f.dirZ * slide).multiply(scaleIn);
+      back.copy(scaleOut).multiply(this.fallShift.makeTranslation(-x, 0, -z));
       turn.makeRotationAxis(axis, angle);
       for (const part of f.parts) {
         m.fromArray(part.standing).premultiply(back).premultiply(turn).premultiply(pivot);
         this.write(part, m.elements);
       }
       if (k >= 1) f.settled = true;
+    }
+    // shattered bus-stop glass: same late restore as fallen props
+    if (this.shattered.size) for (const [key, g] of this.shattered) {
+      const glass = g.live.data.vegetation.glass;
+      const i = g.index * GLASS_STRIDE;
+      if (i + 3 >= glass.length) { this.shattered.delete(key); continue; }
+      const ms = g.live.data.metersScale;
+      p.set(glass[i], glass[i + 2] * exag, glass[i + 1]).applyMatrix4(g.live.group.matrixWorld);
+      sphere.set(p, 18);
+      if (this.frustum.intersectsSphere(sphere)) { g.unseenSince = 0; continue; }
+      if (focusX != null && focusY != null) {
+        const [cx, cy] = g.live.data.corner;
+        const away = Math.hypot((cx + glass[i]) - focusX, (cy - glass[i + 1]) - focusY) * ms;
+        if (away < RESTORE_AWAY_M) { g.unseenSince = 0; continue; }
+      }
+      if (!g.unseenSince) { g.unseenSince = now; continue; }
+      if (now - g.unseenSince < UNSEEN_RESTORE * 1000) continue;
+      for (const part of g.parts) this.write(part, part.standing);
+      this.shattered.delete(key);
     }
   }
 

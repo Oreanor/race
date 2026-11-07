@@ -1,5 +1,8 @@
 node_modules/
 .next/
+out/
+src-tauri/target/
+src/app/_api.desktop-stash/
 *.tsbuildinfo
 .browser-render-check/
 render-check*.png

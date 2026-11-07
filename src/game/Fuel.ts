@@ -71,6 +71,6 @@ export {
   type Station,
   type CivicKind,
   type PoiFeature,
-} from './poi';
+} from './poi.ts';
 
-export { metersBetween } from './meters';
+export { metersBetween } from './meters.ts';

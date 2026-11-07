@@ -1,14 +1,45 @@
-import { metersBetween } from './meters';
+import { metersBetween } from './meters.ts';
 import type { Position } from './VehicleController.ts';
 
 /**
  * OpenMapTiles `poi` layer → drive-to spots.
- * `position` is where to drive (often road-snapped later); `place` / `top` are the building.
+ * `position` is where to drive (often road-snapped later); `place` / `top` / `radius`
+ * are the building (footprint radius in metres from middle to farthest corner).
  */
-export type Station = { id: string; position: Position; place?: Position; top?: number };
+export type Station = {
+  id: string;
+  position: Position;
+  place?: Position;
+  top?: number;
+  /** building footprint radius (m); with SERVICE_MARGIN this is the dialog reach */
+  radius?: number;
+};
 
-/** meters from the (road-snapped) pumps — OSM points often sit inside the shop */
-export const STATION_REACH = 55;
+/**
+ * Fallback when no building footprint is known yet (open lot / tiles still loading).
+ * Prefer `station.radius + SERVICE_MARGIN` once the house is resolved.
+ */
+export const STATION_REACH = 22;
+export const SERVICE_MARGIN = 2.5;
+export const SERVICE_REACH = {
+  fuel: 24,
+  repair: 18,
+  dealer: 22,
+  bank: 14,
+  civic: 20,
+} as const;
+
+/** Drive pin, or the building middle when we have a footprint. */
+export function servicePoint(station: Station, preferPlace = false): Position {
+  if (preferPlace && station.place) return station.place;
+  if (station.radius != null && station.place) return station.place;
+  return station.position;
+}
+
+/** How close counts as “at” this station. */
+export function serviceReach(station: Station, fallback = STATION_REACH) {
+  return station.radius != null ? station.radius + SERVICE_MARGIN : fallback;
+}
 
 export type PoiFeature = {
   id?: string | number;
@@ -158,17 +189,32 @@ export function landmarksFromFeatures(features: PoiFeature[]): Landmark[] {
   return out;
 }
 
-export function nearestStation(position: Position, stations: readonly Station[]) {
+export function nearestStation(position: Position, stations: readonly Station[], preferPlace = false) {
   let best: Station | null = null;
   let distance = Infinity;
   for (const station of stations) {
-    const d = metersBetween(position, station.position);
+    const d = metersBetween(position, servicePoint(station, preferPlace));
     if (d < distance) { distance = d; best = station; }
   }
   return best ? { station: best, distance } : null;
 }
 
-export function atStation(position: Position, stations: readonly Station[]) {
-  const near = nearestStation(position, stations);
-  return near && near.distance <= STATION_REACH ? near.station : null;
+export function atStation(
+  position: Position,
+  stations: readonly Station[],
+  fallbackReach = STATION_REACH,
+  preferPlace = false,
+) {
+  let best: Station | null = null;
+  let bestDistance = Infinity;
+  for (const station of stations) {
+    const at = servicePoint(station, preferPlace || station.radius != null);
+    const d = metersBetween(position, at);
+    const reach = serviceReach(station, fallbackReach);
+    if (d <= reach && d < bestDistance) {
+      best = station;
+      bestDistance = d;
+    }
+  }
+  return best;
 }

@@ -1,5 +1,5 @@
 import type { Car } from '@/config/vehicle.config';
-import type { MapFeature } from './WaterCollisionController';
+import type { MapFeature } from './WaterCollisionController.ts';
 import { VehicleController, type Position, metersBetween, METERS_PER_DEGREE } from './VehicleController.ts';
 
 const ROAD_CLASSES = new Set(['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'minor', 'service']);

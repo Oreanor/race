@@ -23,6 +23,7 @@ export type SimpleLitUniforms = {
   uFogColor: { value: THREE.Color };
   uFogNear: { value: number };
   uFogFar: { value: number };
+  uTileFade: { value: number };
 };
 
 const SUN = new THREE.Vector3(0.45, 0.8, 0.3).normalize();
@@ -52,6 +53,7 @@ export function standaloneUniforms(): SimpleLitUniforms {
     uFogColor: { value: new THREE.Color(1, 1, 1) },
     uFogNear: { value: 1e9 },
     uFogFar: { value: 2e9 },
+    uTileFade: { value: 1 },
   };
 }
 
@@ -176,6 +178,7 @@ export function simpleLit(color: THREE.ColorRepresentation, uniforms: SimpleLitU
       uniform vec3 uFogColor;
       uniform float uFogNear;
       uniform float uFogFar;
+      uniform float uTileFade;
       varying vec3 vNormal;
       varying vec3 vWorld;
       varying vec3 vTint;
@@ -231,7 +234,7 @@ export function simpleLit(color: THREE.ColorRepresentation, uniforms: SimpleLitU
           color += lampGlow * strength * vGlow;
           color = mix(color, lampGlow * 0.55, vGlow * futuristic * (0.35 + 0.45 * uNight));
         #endif
-        float fog = smoothstep(uFogNear, uFogFar, distance(vWorld, uCameraPos));
+        float fog = 1.0 - (1.0 - smoothstep(uFogNear, uFogFar, distance(vWorld, uCameraPos))) * uTileFade;
         color = mix(color, pow(uFogColor, vec3(2.2)), fog);
         gl_FragColor = linearToOutputTexel(vec4(color, 1.0));
       }
@@ -319,6 +322,7 @@ export function floraLit(uniforms: SimpleLitUniforms) {
       uniform vec3 uFogColor;
       uniform float uFogNear;
       uniform float uFogFar;
+      uniform float uTileFade;
       varying vec3 vNormal;
       varying vec3 vWorld;
       varying vec3 vColor;
@@ -358,7 +362,7 @@ export function floraLit(uniforms: SimpleLitUniforms) {
           vec3 light = uAmbient * (0.69 + 0.25 * n.y) + uSunColor * 0.68 * max(dot(n, uSun), 0.0) + headlight(vWorld, n);
           color = vColor * light;
         }
-        float fog = smoothstep(uFogNear, uFogFar, distance(vWorld, uCameraPos));
+        float fog = 1.0 - (1.0 - smoothstep(uFogNear, uFogFar, distance(vWorld, uCameraPos))) * uTileFade;
         color = mix(color, pow(uFogColor, vec3(2.2)), fog);
         gl_FragColor = linearToOutputTexel(vec4(color, 1.0));
       }

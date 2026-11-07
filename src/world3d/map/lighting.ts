@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { moonIllumination, moonPosition, skyDirection, sunPosition, type SkyPosition } from '../astro';
+import { moonIllumination, moonPosition, skyDirection, sunPosition, type SkyPosition } from '../astro.ts';
 
 // Real light for a place and a moment: sun height drives the colour of the
 // sunlight, the ambient sky light and the sky/fog colour; at night the moon

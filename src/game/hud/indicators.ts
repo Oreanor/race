@@ -1,6 +1,6 @@
 import { formatNumber, t } from '@/i18n';
-import { bearingTo } from '../Bounty';
-import { metersBetween, type Position } from '../VehicleController';
+import { bearingTo } from '../Bounty.ts';
+import { metersBetween, type Position } from '../VehicleController.ts';
 
 // Screen indicators for things in the world (bots, other players, mission goals):
 // a pin over the target while it is near and in view, otherwise an arrow on the

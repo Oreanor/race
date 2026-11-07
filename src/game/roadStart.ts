@@ -1,5 +1,5 @@
 import type { ThreeMap } from '@/world3d/map/ThreeMap';
-import { METERS_PER_DEGREE, type Position } from './VehicleController';
+import { METERS_PER_DEGREE, type Position } from './VehicleController.ts';
 
 const DRIVABLE_ROADS = new Set(['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'minor', 'service']);
 

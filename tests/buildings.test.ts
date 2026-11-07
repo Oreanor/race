@@ -5,6 +5,7 @@ import { facadeBands, layoutFacade, pieceExtents } from '../src/game/buildings/F
 import { buildRoof, canPitch } from '../src/game/buildings/RoofGenerator.ts';
 import { PIECES } from '../src/game/buildings/pieces.ts';
 import { buildingStyleKey, primaryTileSeam } from '../src/game/buildings/wallOverlap.ts';
+import { clusterBuildingStyleKeys, isSeamStyleKey } from '../src/game/buildings/buildingStyleCluster.ts';
 
 const palette = ['#f0c43a', '#7a6fe0', '#4aa3e8', '#ef6f93', '#f08a3c', '#63c47a'];
 
@@ -89,16 +90,77 @@ test('the same building keeps its style after a reload', () => {
   assert.equal(createRecipe({ id: 7, key: '7:10:1:2', height: 14, base: 0 }, palette, 'portuguese', 'Portugal').style, 'portuguese');
 });
 
-test('tile-split halves share a style key via the seam', () => {
-  // Same cut, different sample density — midpoint quantisation must match.
+test('tile-split halves share a style key via the seam cell', () => {
   const leftSeam: [number, number][] = [[-8.41, 40.20], [-8.41, 40.2005], [-8.41, 40.201]];
   const rightSeam: [number, number][] = [[-8.41, 40.20], [-8.41, 40.201]];
   const left: [number, number][] = [[-8.412, 40.20], ...leftSeam, [-8.412, 40.201]];
   const right: [number, number][] = [...rightSeam, [-8.408, 40.201], [-8.408, 40.20]];
-  const a = buildingStyleKey(12, 0, left, leftSeam);
-  const b = buildingStyleKey(12, 0, right, rightSeam);
-  assert.equal(a, b);
-  assert.notEqual(buildingStyleKey(12, 0, left), buildingStyleKey(12, 0, right));
+  assert.equal(buildingStyleKey(12, 0, left, leftSeam), buildingStyleKey(12, 0, right, rightSeam));
+  // Far-apart interiors stay distinct cells
+  const far: [number, number][] = [[-8.5, 40.5], [-8.49, 40.5], [-8.49, 40.51], [-8.5, 40.51]];
+  assert.notEqual(buildingStyleKey(12, 0, left), buildingStyleKey(12, 0, far));
+});
+
+test('long tile cut agrees when each half samples a different stretch', () => {
+  const southHeavy: [number, number][] = [[-8.41, 40.20], [-8.41, 40.2002], [-8.41, 40.2004], [-8.41, 40.201]];
+  const northHeavy: [number, number][] = [[-8.41, 40.20], [-8.41, 40.2006], [-8.41, 40.2008], [-8.41, 40.201]];
+  assert.equal(buildingStyleKey(20, 0, southHeavy, southHeavy), buildingStyleKey(20, 0, northHeavy, northHeavy));
+});
+
+test('abutting footprints share the largest part style key', () => {
+  const a = {
+    id: 'a', height: 12, area: 200,
+    ring: [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 20 }, { x: 0, y: 20 }],
+    styleKey: '0:0.0:c1,1',
+  };
+  const b = {
+    id: 'b', height: 14, area: 400,
+    ring: [{ x: 10, y: 0 }, { x: 30, y: 0 }, { x: 30, y: 20 }, { x: 10, y: 20 }],
+    styleKey: '0:0.0:c2,2',
+  };
+  const map = clusterBuildingStyleKeys([a, b], { pxToMeters: 1 });
+  assert.equal(map.get('a'), '0:0.0:c2,2');
+  assert.equal(map.get('b'), '0:0.0:c2,2');
+});
+
+test('cluster keeps a seam key over a larger interior footprint', () => {
+  const seamKey = '0:0.0:s10,20';
+  assert.ok(isSeamStyleKey(seamKey));
+  const seam = {
+    id: 'seam', height: 12, area: 50,
+    ring: [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 5 }, { x: 0, y: 5 }],
+    styleKey: seamKey,
+  };
+  const interior = {
+    id: 'in', height: 12, area: 500,
+    ring: [{ x: 10, y: 0 }, { x: 40, y: 0 }, { x: 40, y: 5 }, { x: 10, y: 5 }],
+    styleKey: '0:0.0:c99,99',
+  };
+  const map = clusterBuildingStyleKeys([seam, interior], { pxToMeters: 1 });
+  assert.equal(map.get('seam'), seamKey);
+  assert.equal(map.get('in'), seamKey);
+});
+
+test('near footprints without a shared edge still merge by proximity', () => {
+  const a = {
+    id: 'a', height: 10, area: 100,
+    ring: [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }],
+    styleKey: '0:0.0:c1,1',
+  };
+  // 5 px gap, pxToMeters=1 → 5 m < 15 m proximity
+  const b = {
+    id: 'b', height: 11, area: 100,
+    ring: [{ x: 15, y: 0 }, { x: 25, y: 0 }, { x: 25, y: 10 }, { x: 15, y: 10 }],
+    styleKey: '0:0.0:c9,9',
+  };
+  const map = clusterBuildingStyleKeys([a, b], { pxToMeters: 1 });
+  assert.equal(map.get('a'), map.get('b'));
+});
+
+test('seam style keys ignore height so tile halves match', () => {
+  const cut: [number, number][] = [[-8.41, 40.20], [-8.41, 40.201]];
+  assert.equal(buildingStyleKey(10, 0, cut, cut), buildingStyleKey(28, 2, cut, cut));
+  assert.ok(isSeamStyleKey(buildingStyleKey(10, 0, cut, cut)));
 });
 
 test('thin edge sliver uses the primary cut, not every on-edge vertex', () => {

@@ -63,7 +63,7 @@ export function resolveVehicleCollision(a: VehicleBody, b: VehicleBody, scale = 
   };
 }
 
-export { metersBetween, METERS_PER_DEGREE, metersScale, eastNorth, offsetMeters } from './meters';
+export { metersBetween, METERS_PER_DEGREE } from './meters.ts';
 
 export class VehicleController {
   position: Position; heading: number; speed=0; distance=0; throttle=0; slip=0;

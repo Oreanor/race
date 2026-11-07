@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { FLORA_MODELS, type FloraModel } from '../tiles/flora';
+import { FLORA_MODELS, type FloraModel } from '../tiles/flora.ts';
 
 // The 16 base shapes of the vegetation catalog, built in code as clean low-poly
 // meshes: a trunk with a few visible limbs (bark) and a crown of several

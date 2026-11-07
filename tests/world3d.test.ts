@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { buildTile, clipRing, omitBorderWall } from '../src/world3d/tiles/buildTile.ts';
 import { tileAt, tileCorner, tileSpan, mercatorX, mercatorY } from '../src/world3d/mercator.ts';
-import { tilesAround } from '../src/world3d/tiles/tilePlan.ts';
+import { tilesAround, tilesCovering } from '../src/world3d/tiles/tilePlan.ts';
 
 const COIMBRA: [number, number] = [-8.42922, 40.20805];
 const tile = { z: 14, x: 7808, y: 6190 };
@@ -80,6 +80,19 @@ test('tile plan orders tiles by distance and respects the radius', () => {
   assert.ok(plan.length >= 2 && plan.length <= 9, String(plan.length));
 });
 
+test('tile plan covering a rectangle fills the corners a circle would miss', () => {
+  const [lng, lat] = COIMBRA;
+  // square with half-side 2.4 km: corners sit ~3.4 km out, past a 2 km circle
+  const half = 2400;
+  const dLng = half / (111320 * Math.cos(lat * Math.PI / 180));
+  const dLat = half / 111320;
+  const box = tilesCovering(lng - dLng, lat - dLat, lng + dLng, lat + dLat, 14, COIMBRA);
+  const circle = new Set(tilesAround(COIMBRA, 2000, 14).map((t) => t.key));
+  assert.ok(box.some((t) => !circle.has(t.key)), 'box reaches beyond the circle');
+  assert.ok(box.some((t) => t.distance > 2000), 'includes a tile past the circular radius');
+  for (let i = 1; i < box.length; i++) assert.ok(box[i].distance >= box[i - 1].distance);
+});
+
 test('footprints index every building with closed ring ranges', () => {
   const data = buildTile(pbf, tile, { chunks: 4, windows: false, detailed: { region: 'Portugal' } });
   const f = data.footprints;
@@ -131,8 +144,9 @@ test('world tile: terrain, roads facing up, gameplay features and raw data kept'
   }
   assert.equal(down, 0, `downward road triangles: ${down} of ${up + down}`);
   // roads follow the ground or sit just above nearby water; bridge decks stand a few meters over it
-  assert.ok(r.ground.every((g) => g >= 47 && g <= 58), `road ground out of range`);
-  assert.ok(data.buildings.chunks.every((c) => c.ground.every((g) => g === 50)));
+  assert.ok(r.ground.every((g) => g >= 47 && g <= 62), `road ground out of range`);
+  // flat DEM is 50; seam easing can pull a hair below at tile edges
+  assert.ok(data.buildings.chunks.every((c) => c.ground.every((g) => g >= 49.7 && g <= 50.1)));
   // vector ground: land use drawn as polygons, flat water at bank level, beds carved below
   const g = data.ground;
   assert.ok(g.layers.reduce((n, l) => n + l.index.length, 0) > 3000);

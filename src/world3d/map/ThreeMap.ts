@@ -1,16 +1,16 @@
 import * as THREE from 'three';
-import { MapCamera, mercatorPerMeter, mercatorX01, mercatorY01 } from './camera';
-import { WorldTiles, defaultWorldOptions } from './WorldTiles';
-import { baseUniforms, facadeMask, type BaseUniforms } from './materials';
-import type { GeoFeature } from '../tiles/worldTile';
-import { seasonWeights, snowCover, worldTime, type SimpleLitUniforms } from './simpleLit';
-import { computeLighting, timeFor, TIME_MODES, type Lighting, type TimeMode } from './lighting';
-import { placeClock, placeMoment, placeZone } from '../placeTime';
-import { seasonAt, snowCoverAt, SEASON_MODES, SEASONS, type Season, type SeasonMode } from '../seasons';
-import { SkyBodies } from './sky';
-import { LensFlare } from './LensFlare';
-import { skyDirection } from '../astro';
-import { PAINTED_SKINS, SKIN_DATA, type Skin, type SkinId } from '../buildings/skins';
+import { MapCamera, latFrom01, lngFrom01, mercatorPerMeter, mercatorX01, mercatorY01 } from './camera.ts';
+import { WorldTiles, defaultWorldOptions } from './WorldTiles.ts';
+import { baseUniforms, facadeMask, type BaseUniforms } from './materials.ts';
+import type { GeoFeature } from '../tiles/worldTile.ts';
+import { seasonWeights, snowCover, worldTime, type SimpleLitUniforms } from './simpleLit.ts';
+import { computeLighting, timeFor, TIME_MODES, type Lighting, type TimeMode } from './lighting.ts';
+import { placeClock, placeMoment, placeZone } from '../placeTime.ts';
+import { seasonAt, snowCoverAt, SEASON_MODES, SEASONS, type Season, type SeasonMode } from '../seasons.ts';
+import { SkyBodies } from './sky.ts';
+import { LensFlare } from './LensFlare.ts';
+import { skyDirection } from '../astro.ts';
+import { PAINTED_SKINS, SKIN_DATA, type Skin, type SkinId } from '../buildings/skins.ts';
 import { METERS_PER_DEGREE } from '@/game/meters';
 
 
@@ -149,8 +149,10 @@ export class ThreeMap {
    * gives way to newer ones.
    */
   private panes: { at: [number, number]; altitude: number; seed: number }[] = [];
-  /** burning façade windows for the fire-truck mission (scene markers via uFires) */
-  private fires: { at: [number, number]; altitude: number }[] = [];
+  private panesDirty = false;
+  private panesAt = 0;
+  /** burning / soot façade windows (scene markers via uFires; lit=false → soot only) */
+  private fires: { at: [number, number]; altitude: number; lit: boolean }[] = [];
   private firesDirty = false;
   private firesOrigin = '';
   private holeMesh: THREE.InstancedMesh;
@@ -166,6 +168,16 @@ export class ThreeMap {
   private programsWarmed = false;
   /** while the map is hidden: fill a full tile ring and drain GPU uploads faster */
   private streamBurst = true;
+  /** intro fly-in / M blend: tiny upload budget so the lerp stays at 60 */
+  private streamCalm = false;
+  /** reused each frame — avoid Matrix4 alloc in the render path */
+  private clipScratch = new THREE.Matrix4();
+  /** M-map open / blending: keep screen-rectangle streaming so pitch lerp doesn't dump tiles */
+  private screenStream = false;
+  /** last good top-down ground rect — reused while pitch lerp makes unproject miss */
+  private lastScreenBounds: { west: number; south: number; east: number; north: number } | null = null;
+  /** current architecture skin — fire window centres follow its façade rhythm */
+  private skinId: SkinId = 'original';
   loaded = false;
 
   constructor(options: ThreeMapOptions) {
@@ -194,7 +206,7 @@ export class ThreeMap {
 
     this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true, powerPreference: 'high-performance', stencil: false });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.25));
     this.renderer.setClearColor(new THREE.Color(SKY));
     this.scene.matrixAutoUpdate = false;
     this.sceneCamera.matrixAutoUpdate = false;
@@ -305,6 +317,11 @@ export class ThreeMap {
     const [lng, lat] = toLngLat(p);
     return this.world.groundAt(lng, lat, atAltitude === undefined ? this.focusCar?.altitude : atAltitude ?? undefined);
   }
+  /** Riding a bridge deck (for water exemptions), not the road under it. */
+  isDeckAt(p: LngLatLike, altitude: number) {
+    const [lng, lat] = toLngLat(p);
+    return this.world.isDeckAt(lng, lat, altitude);
+  }
   getCenterElevation() { return this.camera.state.elevation; }
   /** What the wheels are on at a point: paved, grass (and earth) or sand. */
   surfaceAt(p: LngLatLike) {
@@ -312,23 +329,29 @@ export class ThreeMap {
     return this.world.surfaceAt(lng, lat);
   }
 
-  /** The house a shop is in (or the nearest within `radius` m): its middle and its top, as drawn. */
+  /** The house a shop is in (or the nearest within `radius` m): middle, top, footprint radius (m). */
   houseAt(p: LngLatLike, radius = 80) {
     const house = this.world.houseAt(toLngLat(p), radius);
-    return house ? { middle: house.middle, top: house.top * this.exaggeration } : null;
+    return house
+      ? { middle: house.middle, top: house.top * this.exaggeration, radius: house.radius }
+      : null;
   }
 
   /**
    * Fire call on an existing house by a street pin: street-facing accessible
    * window centres (exaggerated altitudes) ready to ignite.
    */
-  fireFacadesNear(street: LngLatLike, radius = 55) {
-    return this.world.fireFacadesNear(toLngLat(street), this.exaggeration, radius);
+  fireFacadesNear(street: LngLatLike, radius = 55, maxPanes = Infinity) {
+    return this.world.fireFacadesNear(toLngLat(street), this.exaggeration, radius, this.skinId, maxPanes);
   }
 
-  /** Burning window markers for the façade shader (cleared with empty list). */
-  setFirePanes(panes: { at: [number, number]; altitude: number }[]) {
-    this.fires = panes.map((p) => ({ at: [...p.at] as [number, number], altitude: p.altitude }));
+  /** Burning / soot window markers for the façade shader (cleared with empty list). */
+  setFirePanes(panes: { at: [number, number]; altitude: number; lit?: boolean }[]) {
+    this.fires = panes.map((p) => ({
+      at: [...p.at] as [number, number],
+      altitude: p.altitude,
+      lit: p.lit !== false,
+    }));
     this.firesDirty = true;
     this.firesOrigin = '';
   }
@@ -340,11 +363,57 @@ export class ThreeMap {
   }
   /** What the mouse may do to the camera (the map view, the intro): pan + wheel zoom, right-drag rotate. */
   setInteractive(on: { pan: boolean; rotate: boolean }) { this.interactive = { ...on }; }
-  /** Everything inside the fog is in: the world can be shown without anything popping in later. */
-  areTilesLoaded() { return this.world.loadedAround(this.camera.state.center, this.uniforms.uFogFar.value); }
+  /** Stream ring used for isotropic boot warm (past fog so looking around stays hot). */
+  get loadRadius() { return this.world.options.loadRadius; }
 
-  /** Leave boot streaming (full ring + fast uploads) once the map is shown. */
+  /** Everything inside the fog is in: the world can be shown without anything popping in later. */
+  areTilesLoaded(radius = this.uniforms.uFogFar.value) {
+    return this.world.loadedAround(this.camera.state.center, radius);
+  }
+
+  /** Boot: isotropic ring + faster uploads while the canvas is still hidden / settled. */
+  beginStreamBurst() { this.streamBurst = true; this.streamCalm = false; }
+  /** Leave burst streaming once the chase cam has settled. */
   endStreamBurst() { this.streamBurst = false; }
+  /** Camera blends (intro fly-in, M open/close): starve uploads so the lerp doesn't hitch. */
+  setStreamCalm(on: boolean) {
+    this.streamCalm = on;
+    if (on) this.streamBurst = false;
+  }
+  /** Drive M-map / overview blend: screen streaming even while pitch is mid-lerp. */
+  setScreenStream(on: boolean) {
+    this.screenStream = on;
+  }
+  /** Tiles + GPU uploads done around a point (not only the current camera). */
+  areTilesLoadedAround(at: [number, number], radius = this.loadRadius) {
+    return this.world.loadedAround(at, radius);
+  }
+
+  /** Ground lng/lat rectangle under the screen corners (top-down map streaming). */
+  private screenGroundBounds(): { west: number; south: number; east: number; north: number } | null {
+    const s = this.camera.state;
+    // steep pitch: rays miss the ground or shoot to the horizon — junk bounds thrash the stream
+    if (s.pitch > 18) return this.lastScreenBounds;
+    const elev = s.elevation;
+    let west = Infinity, east = -Infinity, south = Infinity, north = -Infinity, hits = 0;
+    for (const [x, y] of [[0, 0], [s.width, 0], [s.width, s.height], [0, s.height]] as [number, number][]) {
+      const ll = this.camera.unproject(x, y, elev);
+      if (!ll) continue;
+      hits++;
+      west = Math.min(west, ll[0]);
+      east = Math.max(east, ll[0]);
+      south = Math.min(south, ll[1]);
+      north = Math.max(north, ll[1]);
+    }
+    if (hits < 3 || !(east > west) || !(north > south)) return this.lastScreenBounds;
+    // cap insane spans from near-horizon hits
+    const cosLat = Math.cos(((south + north) / 2) * Math.PI / 180);
+    const spanE = (east - west) * METERS_PER_DEGREE * cosLat;
+    const spanN = (north - south) * METERS_PER_DEGREE;
+    if (spanE > 12000 || spanN > 12000) return this.lastScreenBounds;
+    this.lastScreenBounds = { west, south, east, north };
+    return this.lastScreenBounds;
+  }
 
   /** GeoJSON features of a tile layer near the view (all loaded layers, incl. poi…). */
   features(layer: string): GeoFeature[] {
@@ -399,6 +468,69 @@ export class ThreeMap {
     return { lng: hit[0], lat: hit[1] };
   }
 
+  /**
+   * What the cursor sees in 3D: first façade on the real camera ray through the
+   * pixel, else the ground. Guns used to aim at the ground plane only — walls
+   * always took hits at bumper height.
+   */
+  pickScreen(x: number, y: number): { point: [number, number]; altitude: number; wall: boolean } {
+    this.camera.update();
+    const cam = this.camera;
+    const nx = (x / cam.state.width) * 2 - 1;
+    const ny = 1 - (y / cam.state.height) * 2;
+    const a = new THREE.Vector4(nx, ny, -1, 1).applyMatrix4(cam.invViewProj);
+    const b = new THREE.Vector4(nx, ny, 1, 1).applyMatrix4(cam.invViewProj);
+    a.divideScalar(a.w);
+    b.divideScalar(b.w);
+    const from: [number, number] = [lngFrom01(a.x / cam.worldSize), latFrom01(a.y / cam.worldSize)];
+    const fromAlt = a.z;
+    const cos = Math.cos(from[1] * Math.PI / 180);
+    const toLng = lngFrom01(b.x / cam.worldSize);
+    const toLat = latFrom01(b.y / cam.worldSize);
+    let de = (toLng - from[0]) * METERS_PER_DEGREE * cos;
+    let dn = (toLat - from[1]) * METERS_PER_DEGREE;
+    let du = b.z - a.z;
+    const span = Math.hypot(de, dn, du) || 1;
+    const reach = 220;
+    const s = reach / span;
+    const to: [number, number] = [
+      from[0] + (de * s) / (METERS_PER_DEGREE * Math.max(0.05, cos)),
+      from[1] + (dn * s) / METERS_PER_DEGREE,
+    ];
+    const toAlt = fromAlt + du * s;
+    const wall = this.raycastBuildings(from, fromAlt, to, toAlt, false);
+    if (wall) return { point: wall.point, altitude: wall.altitude, wall: true };
+    // Walk the camera ray onto the DEM — plane unproject misses / returns null on
+    // steep near-car aims (gun needs to pitch below horizontal to hit the kerb).
+    let prevAlt = fromAlt;
+    let prevG = this.groundAt(from);
+    for (let i = 1; i <= 24; i++) {
+      const t = i / 24;
+      const p: [number, number] = [from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t];
+      const rayAlt = fromAlt + (toAlt - fromAlt) * t;
+      const g = this.groundAt(p);
+      if (g == null) { prevAlt = rayAlt; prevG = g; continue; }
+      const above = prevG == null || prevAlt >= prevG - 0.4;
+      const below = rayAlt <= g + 0.15;
+      if (above && below) {
+        // interpolate the crossing for a stable aim height
+        const a0 = prevAlt - (prevG ?? g), a1 = rayAlt - g;
+        const u = Math.abs(a0 - a1) < 1e-6 ? 1 : Math.max(0, Math.min(1, a0 / (a0 - a1)));
+        const hit: [number, number] = [
+          (from[0] + (to[0] - from[0]) * ((i - 1) / 24)) * (1 - u) + p[0] * u,
+          (from[1] + (to[1] - from[1]) * ((i - 1) / 24)) * (1 - u) + p[1] * u,
+        ];
+        const alt = this.groundAt(hit) ?? g;
+        return { point: hit, altitude: alt, wall: false };
+      }
+      prevAlt = rayAlt;
+      prevG = g;
+    }
+    const g = this.unproject([x, y]);
+    const altitude = this.groundAt([g.lng, g.lat]) ?? cam.state.elevation;
+    return { point: [g.lng, g.lat], altitude, wall: false };
+  }
+
   /** Next time of day: real → morning → day → evening → night → real. */
   cycleTime() {
     return this.setTimeMode(TIME_MODES[(TIME_MODES.indexOf(this.timeMode) + 1) % TIME_MODES.length]);
@@ -427,41 +559,72 @@ export class ThreeMap {
   }
 
   /** First building hit along a shot (like CityBuildings.shoot); `mark` leaves a bullet hole. */
-  raycastBuildings(from: [number, number], fromAlt: number, to: [number, number], toAlt: number, mark = false) {
+  raycastBuildings(from: [number, number], fromAlt: number, to: [number, number], toAlt: number, mark = false): { point: [number, number]; altitude: number; glass?: boolean } | null {
     const exaggeration = this.exaggeration;
     const hit = this.world.raycastBuildings(from, fromAlt, to, toAlt, exaggeration);
     // a tree or street lamp in front of the wall takes the bullet and goes down
     const prop = this.world.raycastProps(from, fromAlt, to, toAlt, exaggeration);
-    if (prop) {
-      const dx = to[0] - from[0], dy = to[1] - from[1];
-      const wallT = hit ? ((hit.point[0] - from[0]) * dx + (hit.point[1] - from[1]) * dy) / (dx * dx + dy * dy || 1) : Infinity;
-      if (prop.t < wallT) {
-        if (mark) {
-          if (this.world.topple(prop, performance.now())) this.emit('topple', { point: prop.point });
-          this.triggerRepaint();
-        }
-        return { point: prop.point, altitude: prop.altitude };
+    // bus-shelter glass panes shatter instead of taking a wall hole
+    const glass = this.world.raycastGlass(from, fromAlt, to, toAlt, exaggeration);
+    const dx = to[0] - from[0], dy = to[1] - from[1];
+    const denom = dx * dx + dy * dy || 1;
+    const wallT = hit ? ((hit.point[0] - from[0]) * dx + (hit.point[1] - from[1]) * dy) / denom : Infinity;
+    const propT = prop?.t ?? Infinity;
+    const glassT = glass?.t ?? Infinity;
+    if (glassT < wallT && glassT < propT) {
+      if (mark) {
+        this.world.shatterGlass(glass!);
+        this.triggerRepaint();
       }
+      return { point: glass!.point, altitude: glass!.altitude, glass: true };
+    }
+    if (prop && propT < wallT) {
+      if (mark) {
+        if (this.world.topple(prop, performance.now()) >= 50) this.emit('topple', { point: prop.point });
+        this.triggerRepaint();
+      }
+      return { point: prop.point, altitude: prop.altitude };
     }
     if (hit && mark) this.addHole(hit.point, hit.altitude, hit.normal);
     return hit ? { point: hit.point, altitude: hit.altitude } : null;
   }
 
   /**
-   * A car moving from → to at `altitude` (exaggerated, like the car's) knocks
-   * over the first tree or street lamp in its way. True if something went down.
+   * A car moving from → to at `altitude` knocks over the first tree, lamp,
+   * statue, bollard/bin, or (above ~100 km/h) bus shelter in its way.
+   * `speed` is m/s. Returns km/h to shave off and whether a solid was cleared.
    */
-  knockDown(from: [number, number], to: [number, number], altitude: number, halfWidth = 0.9) {
-    const prop = this.world.raycastProps(from, altitude + 0.6, to, altitude + 0.6, this.exaggeration, halfWidth);
-    if (!prop) return false;
-    if (this.world.topple(prop, performance.now())) this.emit('topple', { point: prop.point });
-    this.triggerRepaint();
-    return true;
+  knockDown(from: [number, number], to: [number, number], altitude: number, halfWidth = 0.9, speed = 0) {
+    const cos = Math.cos(from[1] * Math.PI / 180);
+    const de = (to[0] - from[0]) * METERS_PER_DEGREE * cos;
+    const dn = (to[1] - from[1]) * METERS_PER_DEGREE;
+    const dist = Math.hypot(de, dn);
+    const steps = Math.max(1, Math.ceil(dist / 1.25));
+    let slowKmh = 0;
+    let clearedSolid = false;
+    const shelterMin = 100 / 3.6; // bus stops only fly aside above 100 km/h
+    for (let s = 0; s < steps; s++) {
+      const t0 = s / steps, t1 = (s + 1) / steps;
+      const a: [number, number] = [from[0] + (to[0] - from[0]) * t0, from[1] + (to[1] - from[1]) * t0];
+      const b: [number, number] = [from[0] + (to[0] - from[0]) * t1, from[1] + (to[1] - from[1]) * t1];
+      const prop = this.world.raycastProps(a, altitude + 0.6, b, altitude + 0.6, this.exaggeration, halfWidth);
+      if (!prop) continue;
+      const kind = prop.live.data.vegetation.fell[prop.index];
+      // below 100: shelter stays a hard wall (buildingsNear); don't tip it
+      if (kind === 2 && speed < shelterMin) continue;
+      slowKmh = this.world.topple(prop, performance.now(), speed);
+      if (slowKmh >= 50) this.emit('topple', { point: prop.point });
+      if (kind === 2 || kind === 7) clearedSolid = true;
+      break; // one prop per move step — next physics tick can fell another
+    }
+    if (slowKmh > 0 || clearedSolid) this.triggerRepaint();
+    return { slowKmh, clearedSolid };
   }
 
   /** Repaint every building in an architecture skin (or the city's own look); instant, nothing reloads. */
   setSkin(id: SkinId) {
     const u = this.uniforms;
+    this.skinId = id;
     // neon lamps + spires only for a fully futuristic city (mixed keeps classic streets)
     this.world.setSpires(id === 'futuristic');
     if (id === 'original') { u.uSkin.value = 0; this.triggerRepaint(); return; }
@@ -507,13 +670,38 @@ export class ThreeMap {
   private addHole(at: [number, number], altitude: number, normal: [number, number, number]) {
     this.holes.push({ at: [...at], altitude, normal });
     if (this.holes.length > MAX_HOLES) this.holes.shift(); // the oldest hole goes
-    if (Math.abs(normal[1]) < 0.5) {
-      // roofs and ground have no glass
-      this.panes.push({ at: [...at], altitude, seed: Math.abs(Math.sin(at[0] * 12.9898 + at[1] * 78.233) * 43758.5453) % 1 });
-      if (this.panes.length > MAX_PANES) this.panes.shift();
-    }
+    if (Math.abs(normal[1]) < 0.5) this.addBrokenPane(at, altitude);
     this.holesDirty = true;
     this.triggerRepaint();
+  }
+
+  /**
+   * One shader slot per window: spray on the same pane used to burn the MAX_SHOTS
+   * budget so farther glass stayed lit with no cracks while hole decals still showed.
+   */
+  private addBrokenPane(at: [number, number], altitude: number) {
+    const cos = Math.cos(at[1] * Math.PI / 180);
+    const MERGE_M = 1.2;
+    const MERGE_UP = 1.0;
+    for (let i = 0; i < this.panes.length; i++) {
+      const pane = this.panes[i];
+      const de = (pane.at[0] - at[0]) * METERS_PER_DEGREE * cos;
+      const dn = (pane.at[1] - at[1]) * METERS_PER_DEGREE;
+      if (Math.hypot(de, dn) < MERGE_M && Math.abs(pane.altitude - altitude) < MERGE_UP) {
+        // refresh: keep it near the end so prune keeps recently shot glass
+        this.panes.splice(i, 1);
+        this.panes.push(pane);
+        this.panesDirty = true;
+        return;
+      }
+    }
+    this.panes.push({
+      at: [...at],
+      altitude,
+      seed: Math.abs(Math.sin(at[0] * 12.9898 + at[1] * 78.233) * 43758.5453) % 1,
+    });
+    if (this.panes.length > MAX_PANES) this.panes.shift();
+    this.panesDirty = true;
   }
 
   private placeHoles(perMeter: number) {
@@ -552,15 +740,27 @@ export class ThreeMap {
   /** Broken panes: forget those past the drawn area, hand the nearest ones to the facade shader. */
   private placePanes(perMeter: number) {
     const shots = this.uniforms.uShots.value;
-    if (!this.panes.length) { this.uniforms.uShotCount.value = 0; return; }
+    if (!this.panes.length) {
+      if (this.uniforms.uShotCount.value !== 0) this.uniforms.uShotCount.value = 0;
+      this.panesDirty = false;
+      return;
+    }
+    // origin rebase / new hits / occasional prune — not every camera micro-move
+    const now = performance.now();
+    const key = `${this.origin.x01},${this.origin.y01}`;
+    if (!this.panesDirty && now - this.panesAt < 180 && key === this.holesOrigin) return;
+    this.panesDirty = false;
+    this.panesAt = now;
     const eye = this.uniforms.uCameraPos.value;
+    // Prefer panes by the car: long bursts used to fill the shader budget with
+    // farther hits so glass next to you looked whole again (night lights "on fire").
+    const prefer = this.focusCar ? this.uniforms.uCar.value : eye;
     const reach = this.uniforms.uFogFar.value;
     const near: { d: number; x: number; y: number; z: number; seed: number }[] = [];
     this.panes = this.panes.filter((pane) => {
       const x = (mercatorX01(pane.at[0]) - this.origin.x01) / perMeter, z = (mercatorY01(pane.at[1]) - this.origin.y01) / perMeter;
-      const d = Math.hypot(x - eye.x, z - eye.z);
-      if (d > reach) return false; // out of the drawn area: the glass is whole again next time
-      near.push({ d, x, y: pane.altitude, z, seed: pane.seed });
+      if (Math.hypot(x - eye.x, z - eye.z) > reach) return false; // out of the drawn area: whole again next time
+      near.push({ d: Math.hypot(x - prefer.x, z - prefer.z), x, y: pane.altitude, z, seed: pane.seed });
       return true;
     });
     if (near.length > shots.length) near.sort((a, b) => a.d - b.d);
@@ -569,7 +769,7 @@ export class ThreeMap {
     this.uniforms.uShotCount.value = count;
   }
 
-  /** Burning windows: nearest ones to the camera → façade shader fire glow. */
+  /** Burning / soot windows: nearest ones to the camera → façade shader (w: 1 lit, 0 soot only). */
   private placeFires(perMeter: number) {
     const fires = this.uniforms.uFires.value;
     if (!this.fires.length) {
@@ -582,14 +782,14 @@ export class ThreeMap {
     this.firesDirty = false;
     this.firesOrigin = key;
     const eye = this.uniforms.uCameraPos.value;
-    const near: { d: number; x: number; y: number; z: number }[] = [];
+    const near: { d: number; x: number; y: number; z: number; lit: number }[] = [];
     for (const pane of this.fires) {
       const x = (mercatorX01(pane.at[0]) - this.origin.x01) / perMeter, z = (mercatorY01(pane.at[1]) - this.origin.y01) / perMeter;
-      near.push({ d: Math.hypot(x - eye.x, z - eye.z), x, y: pane.altitude, z });
+      near.push({ d: Math.hypot(x - eye.x, z - eye.z), x, y: pane.altitude, z, lit: pane.lit ? 1 : 0 });
     }
     if (near.length > fires.length) near.sort((a, b) => a.d - b.d);
     const count = Math.min(fires.length, near.length);
-    for (let i = 0; i < count; i++) fires[i].set(near[i].x, near[i].y, near[i].z, 1);
+    for (let i = 0; i < count; i++) fires[i].set(near[i].x, near[i].y, near[i].z, near[i].lit);
     this.uniforms.uFireCount.value = count;
   }
 
@@ -671,40 +871,55 @@ export class ThreeMap {
     // boot burst: isotropic ring + faster uploads until the map is revealed.
     const streamHeading = this.focusCar?.heading
       ?? (-cam.state.bearing * Math.PI / 180);
-    this.world.update(cam.state.center, streamHeading, this.streamBurst);
+    // top-down map: stream the whole screen rectangle so corners don't go black
+    // (circular load/unload drops tiles while they are still on screen)
+    const above = Math.max(0, cam.cameraAltitude() - cam.state.elevation);
+    const mapView = this.screenStream || (cam.state.pitch < 25 && above > 900);
+    const screen = mapView ? this.screenGroundBounds() : null;
+    // never blank walls/trees for the M-map — keep the city drawn
+    this.world.setMapLite(false);
+    this.world.setPropsHidden(false);
+    this.world.update(
+      cam.state.center,
+      streamHeading,
+      this.streamBurst && !this.streamCalm,
+      screen ?? undefined,
+      this.streamCalm,
+    );
     worldTime.value = performance.now() / 1000;
     this.uniforms.uClock.value = worldTime.value;
     this.updateSeason();
     // tiles past the opaque fog are pure fog colour (= sky): skip them entirely.
     // Cap altitude fog growth — Manhattan skylines from height used to pull fog to 3–4 km
     // and fill the GPU with tower overdraw.
-    const above = Math.max(0, cam.cameraAltitude() - cam.state.elevation);
     const fogLift = Math.min(450, above * 0.35);
     let fogNear = 900 + fogLift;
     let fogFar = 1600 + fogLift * 1.15;
     // M-map / top-down: ground sits ~`above` metres from the camera. Chase fog
     // (≤2.1 km) then paints the whole city as solid sky — pink at dusk. Push the
     // haze past the ground so the map underfoot stays readable.
-    if (cam.state.pitch < 25 && above > 900) {
+    if (mapView) {
       fogNear = above + 600;
       fogFar = above + 2200;
     }
     this.uniforms.uFogNear.value = fogNear;
     this.uniforms.uFogFar.value = fogFar;
-    this.world.cullBeyond(cam.state.center, fogFar + 80);
+    if (screen) this.world.cullOutside(screen.west, screen.south, screen.east, screen.north);
+    else this.world.cullBeyond(cam.state.center, fogFar + 80);
 
-    const clip = new THREE.Matrix4().copy(cam.mainMatrix).multiply(this.sceneToMercator);
+    const clip = this.clipScratch.copy(cam.mainMatrix).multiply(this.sceneToMercator);
     // The chain mirrors once (mercator y points south). Pick the face side once.
     const side = clip.determinant() > 0 ? THREE.BackSide : THREE.FrontSide;
     if (side !== this.side) { this.side = side; this.world.setMaterialSide(side); }
     this.sceneCamera.projectionMatrix.copy(clip);
     this.sceneCamera.projectionMatrixInverse.copy(clip).invert();
-    this.world.updateFallen(performance.now(), clip);
+    this.world.updateFallen(performance.now(), clip, this.focusCar?.at ?? cam.state.center);
 
     const perMeter = mercatorPerMeter(this.origin.lat);
     const eye = cam.cameraMercator;
     this.uniforms.uCameraPos.value.set((eye.x - this.origin.x01) / perMeter, eye.z / perMeter, (eye.y - this.origin.y01) / perMeter);
-    this.world.updateFloraDetail(this.uniforms.uCameraPos.value, above);
+    // M-map / high cam: flora LOD is invisible under the pitch — skip the tile walk
+    if (!mapView && above < 900) this.world.updateFloraDetail(this.uniforms.uCameraPos.value, above);
     this.placeLamps();
     this.updateLighting(eye, perMeter);
     this.updateFlare(eye, perMeter);

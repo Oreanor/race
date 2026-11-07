@@ -1,5 +1,5 @@
-import { METERS_PER_DEGREE, type Position } from './VehicleController';
-import { roofClearanceAt, type RoofProfile } from './buildings/RoofGenerator';
+import { METERS_PER_DEGREE, type Position } from './VehicleController.ts';
+import { roofClearanceAt, type RoofProfile } from './buildings/RoofGenerator.ts';
 
 
 type Point = [number, number];

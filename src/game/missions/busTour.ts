@@ -1,5 +1,5 @@
 import { formatNumber, t } from '@/i18n';
-import { metersBetween, type Position } from '../VehicleController';
+import { metersBetween, type Position } from '../VehicleController.ts';
 import {
   BUS_GROUP_MAX,
   BUS_GROUP_MIN,
@@ -9,9 +9,9 @@ import {
   BUS_TOUR_MIN_M,
   BUS_TOUR_REACH_M,
   busTourReward,
-} from '../tuning';
-import type { RideOffer } from '../offers';
-import type { Landmark, LandmarkKind } from '../poi';
+} from '../tuning.ts';
+import type { RideOffer } from '../offers.ts';
+import type { Landmark, LandmarkKind } from '../poi.ts';
 
 export type BusTourPending = {
   goal: [number, number];
@@ -117,7 +117,7 @@ export function updateBusTour(state: BusTourState, world: BusTourWorld) {
 }
 
 /** Arrive at the group: show the NPC modal; accept starts the tour. */
-export function offerBusTour(state: BusTourState, world: BusTourWorld) {
+function offerBusTour(state: BusTourState, world: BusTourWorld) {
   if (!state.pickup || state.active || state.pending) return;
   const from = state.pickup;
   const seed = Math.round(from[0] * 1e5) ^ Math.round(from[1] * 1e5) ^ (performance.now() | 0);
@@ -175,7 +175,7 @@ export function declineBusTour(state: BusTourState, world: BusTourWorld) {
   world.say(t('bus.declined'), true);
 }
 
-export function completeBusTour(state: BusTourState, world: BusTourWorld) {
+function completeBusTour(state: BusTourState, world: BusTourWorld) {
   if (!state.active || !state.goal || !state.kind) return;
   const passengers = state.passengers;
   const place = state.place || t(`poi.${state.kind}`);

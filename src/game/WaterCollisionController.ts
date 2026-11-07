@@ -65,10 +65,11 @@ function linesOf(geometry: MapFeature['geometry']): Position[][] {
 }
 
 function deckHalf(kind: string) {
-  if (kind === 'motorway' || kind === 'trunk') return 14;
-  if (kind === 'primary') return 11;
-  if (kind === 'secondary' || kind === 'tertiary') return 8;
-  return 6;
+  // a little generous — OSM centreline ribbons were narrower than the drawn deck
+  if (kind === 'motorway' || kind === 'trunk') return 18;
+  if (kind === 'primary') return 14;
+  if (kind === 'secondary' || kind === 'tertiary') return 11;
+  return 9;
 }
 
 function isBridge(properties: Record<string, unknown> | null | undefined) {
@@ -89,10 +90,14 @@ export class WaterCollisionController {
     return this.ready && metersBetween(this.anchor, position) < meters;
   }
 
-  /** True when `position` sits in water (bridge decks count as dry). */
-  covers(position: Position) {
+  /**
+   * True when `position` sits in water.
+   * `elevated`: car is on a bridge deck — only then the deck ribbon counts as dry.
+   * Under a bridge (same XY, river below) must stay wet.
+   */
+  covers(position: Position, elevated = false) {
     if (!this.ready) return false;
-    return this.wet(this.local(position), 1.1) != null;
+    return this.wet(this.local(position), 1.1, elevated) != null;
   }
 
   /**
@@ -101,7 +106,8 @@ export class WaterCollisionController {
    */
   inSea(position: Position, water: Iterable<MapFeature>) {
     if (this.ready && metersBetween(this.origin, position) < REACH) {
-      return this.wet(this.local(position), 0.8) != null;
+      // map queries: bridge ribbons stay dry (no altitude — same as before)
+      return this.wet(this.local(position), 0.8, true) != null;
     }
     const point = position as Point;
     for (const feature of water) {
@@ -162,17 +168,17 @@ export class WaterCollisionController {
     }
   }
 
-  resolve(from: Position, to: Position, heading: number, scale = 1) {
+  resolve(from: Position, to: Position, heading: number, scale = 1, elevated = false) {
     const start = this.local(from);
     const end = this.local(to);
     const size = Math.max(0.35, scale);
-    if (!this.hits(start, end, heading, size)) return { position: to, stopped: false };
-    const startDepth = this.depth(start, heading, size);
-    if (startDepth > 0 && this.depth(end, heading, size) < startDepth - 1e-6 && !this.deepens(start, end, heading, size)) return { position: to, stopped: false };
-    const slid = this.slide(start, end, heading, size);
-    if (slid && !this.hits(start, slid, heading, size)) return { position: this.world(slid), stopped: false };
-    if (slid && this.hits(start, start, heading, size) && !this.deepens(start, slid, heading, size)) return { position: this.world(slid), stopped: false };
-    const clamped = this.clamp(start, end, heading, size);
+    if (!this.hits(start, end, heading, size, elevated)) return { position: to, stopped: false };
+    const startDepth = this.depth(start, heading, size, elevated);
+    if (startDepth > 0 && this.depth(end, heading, size, elevated) < startDepth - 1e-6 && !this.deepens(start, end, heading, size, elevated)) return { position: to, stopped: false };
+    const slid = this.slide(start, end, heading, size, elevated);
+    if (slid && !this.hits(start, slid, heading, size, elevated)) return { position: this.world(slid), stopped: false };
+    if (slid && this.hits(start, start, heading, size, elevated) && !this.deepens(start, slid, heading, size, elevated)) return { position: this.world(slid), stopped: false };
+    const clamped = this.clamp(start, end, heading, size, elevated);
     const moved = Math.hypot(clamped[0] - start[0], clamped[1] - start[1]) > 0.05;
     return { position: moved ? this.world(clamped) : from, stopped: true };
   }
@@ -195,12 +201,14 @@ export class WaterCollisionController {
     return [-1.5, 0, 1.5].map((along): Point => [center[0] + Math.sin(heading) * along * scale, center[1] + Math.cos(heading) * along * scale]);
   }
 
-  private onBridge(point: Point) {
+  private onBridge(point: Point, elevated: boolean) {
+    // XY ribbon alone is not enough — under-river traffic shares that footprint
+    if (!elevated) return false;
     return this.bridges.some((bridge) => distanceToSegment(point, [bridge.ax, bridge.ay], [bridge.bx, bridge.by]) <= bridge.half);
   }
 
-  private wet(point: Point, radius: number) {
-    if (this.onBridge(point)) return null;
+  private wet(point: Point, radius: number, elevated = false) {
+    if (this.onBridge(point, elevated)) return null;
     for (const polygon of this.polygons) {
       const [x0, y0, x1, y1] = polygon.bounds;
       if (point[0] + radius < x0 || point[0] - radius > x1 || point[1] + radius < y0 || point[1] - radius > y1) continue;
@@ -209,21 +217,21 @@ export class WaterCollisionController {
     return null;
   }
 
-  private hits(from: Point, to: Point, heading: number, scale: number) {
+  private hits(from: Point, to: Point, heading: number, scale: number, elevated = false) {
     const count = this.steps(from, to);
     const radius = 1.1 * scale;
     for (let step = 0; step <= count; step++) {
       const t = step / count;
       const center: Point = [from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t];
-      for (const sample of this.footprint(center, heading, scale)) if (this.wet(sample, radius)) return true;
+      for (const sample of this.footprint(center, heading, scale)) if (this.wet(sample, radius, elevated)) return true;
     }
     return false;
   }
 
-  private depth(center: Point, heading: number, scale: number) {
+  private depth(center: Point, heading: number, scale: number, elevated = false) {
     let best = 0;
     for (const sample of this.footprint(center, heading, scale)) {
-      if (this.onBridge(sample)) continue;
+      if (this.onBridge(sample, elevated)) continue;
       for (const polygon of this.polygons) {
         const within = contained(sample, polygon.rings);
         let edge = Infinity;
@@ -234,13 +242,13 @@ export class WaterCollisionController {
     return best;
   }
 
-  private deepens(from: Point, to: Point, heading: number, scale: number) {
-    const start = this.depth(from, heading, scale);
+  private deepens(from: Point, to: Point, heading: number, scale: number, elevated = false) {
+    const start = this.depth(from, heading, scale, elevated);
     const count = this.steps(from, to);
     for (let step = 1; step <= count; step++) {
       const t = step / count;
       const point: Point = [from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t];
-      if (this.depth(point, heading, scale) > start + 1e-6) return true;
+      if (this.depth(point, heading, scale, elevated) > start + 1e-6) return true;
     }
     return false;
   }
@@ -291,7 +299,7 @@ export class WaterCollisionController {
     return [nx, ny];
   }
 
-  private slide(from: Point, to: Point, heading: number, scale: number) {
+  private slide(from: Point, to: Point, heading: number, scale: number, elevated = false) {
     const count = this.steps(from, to);
     const radius = 1.1 * scale;
     let normal: Point | null = null;
@@ -299,7 +307,7 @@ export class WaterCollisionController {
       const t = step / count;
       const center: Point = [from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t];
       for (const sample of this.footprint(center, heading, scale)) {
-        const polygon = this.wet(sample, radius);
+        const polygon = this.wet(sample, radius, elevated);
         if (!polygon) continue;
         normal = this.outward(sample, polygon);
         break;
@@ -315,13 +323,13 @@ export class WaterCollisionController {
     return [from[0] + sx, from[1] + sy] as Point;
   }
 
-  private clamp(from: Point, to: Point, heading: number, scale: number) {
+  private clamp(from: Point, to: Point, heading: number, scale: number, elevated = false) {
     let lo = 0;
     let hi = 1;
     for (let i = 0; i < 10; i++) {
       const mid = (lo + hi) / 2;
       const point: Point = [from[0] + (to[0] - from[0]) * mid, from[1] + (to[1] - from[1]) * mid];
-      if (this.hits(from, point, heading, scale)) hi = mid;
+      if (this.hits(from, point, heading, scale, elevated)) hi = mid;
       else lo = mid;
     }
     if (lo < 0.04) return from;

@@ -46,6 +46,11 @@ export type VegetationData = {
   /** bus shelters: the frame, roof and bench; the glass */
   shelters: InstanceSet;
   shelterGlass: InstanceSet;
+  /**
+   * Shelter glass panes gunfire can shatter, GLASS_STRIDE floats each:
+   * x, z (tile-local mercator), ground, yaw — instance index = i / stride.
+   */
+  glass: Float32Array;
   /** football goals */
   goals: InstanceSet;
   /** street clutter by the lamps: litter bins, big waste containers, bollards at the kerb */
@@ -59,8 +64,10 @@ export type VegetationData = {
   solids: Float32Array;
   /**
    * Things gunfire or a car can knock over, FELL_STRIDE floats each: kind
-   * (0 tree, 1 lamp), x, z (tile-local mercator), ground, top (m above ground),
-   * instance, flora shape index (-1 for lamps), unused.
+   * (0 tree, 1 lamp, 2 shelter, 3 figure, 4 rider, 5 bollard, 6 bin, 7 dumpster,
+   * 8 fence bay), x, z (tile-local mercator), ground, top (m above ground),
+   * instance (first rail / prop slot), flora shape / glass / 2nd rail (−1 none),
+   * solid index into `solids` (−1 if none).
    */
   fell: Float32Array;
   /**
@@ -74,6 +81,8 @@ export type VegetationData = {
 export const LAMP_MAP = 768;
 /** floats per solid (see VegetationData.solids) */
 export const SOLID_STRIDE = 7;
+/** floats per shelter glass entry (see VegetationData.glass) */
+export const GLASS_STRIDE = 4;
 
 /** where the bronze stands on a monument's pedestal (m above the ground) */
 export const MONUMENT_PLINTH_TOP = 2.7;
@@ -275,6 +284,7 @@ export function buildVegetation(
   }
 
   // Park fences: edges are in meters around the tile centre (x east, z south).
+  // Each bay (two rails between posts) is a fell kind=8 so a car or shot can break just that section.
   const posts = new Instances();
   const rails = new Instances();
   for (const edge of drain(planParkFences(input))) {
@@ -293,7 +303,11 @@ export function buildVegetation(
       posts.push(x, FENCE_POST_H * 0.5, z, yaw, toMerc, FENCE_POST_H, toMerc, g);
       if (i > 0) {
         const railM = lengthM / count;
-        for (const lift of [0.38, 0.82]) rails.push((px + x) / 2, lift, (pz + z) / 2, yaw, railM * toMerc, 1, toMerc, (pg + g) / 2);
+        const midX = (px + x) / 2, midZ = (pz + z) / 2;
+        const rail0 = rails.count;
+        for (const lift of [0.38, 0.82]) rails.push(midX, lift, midZ, yaw, railM * toMerc, 1, toMerc, (pg + g) / 2);
+        // one knockable bay: both rails; posts stay (shared with neighbours)
+        fell.push(8, midX, midZ, (pg + g) / 2, FENCE_POST_H, rail0, rail0 + 1, -1);
       }
       px = x; pz = z; pg = g;
     }
@@ -309,17 +323,22 @@ export function buildVegetation(
   const fountains = new Instances(), fountainWater = new Instances();
   const shelters = new Instances(), shelterGlass = new Instances(), goals = new Instances();
   const solids: number[] = [];
+  const glass: number[] = [];
   const at = (set: Instances, spot: { x: number; z: number; yaw: number }, y: number, ground: number, scale = 1) =>
     set.push(spot.x, y, spot.z, spot.yaw, toMerc * scale, scale, toMerc * scale, ground);
   for (const spot of furniture.monuments) {
     const ground = groundAt(spot.x, spot.z);
-    // about one in three on horseback
+    // about one in three on horseback — bronze can fall; the stone stays solid
     if (spot.seed % 3 === 0) {
       at(plinthsLong, spot, 0, ground); at(riders, spot, MONUMENT_PLINTH_LONG_TOP, ground);
+      const solid = solids.length / SOLID_STRIDE;
       solids.push(spot.x, spot.z, ground, 1.25, 2.1, spot.yaw, MONUMENT_PLINTH_LONG_TOP);
+      fell.push(4, spot.x, spot.z, ground, 3.2 + MONUMENT_PLINTH_LONG_TOP, riders.count - 1, -1, solid);
     } else {
       at(plinths, spot, 0, ground); at(figures, spot, MONUMENT_PLINTH_TOP, ground);
+      const solid = solids.length / SOLID_STRIDE;
       solids.push(spot.x, spot.z, ground, 1.1, 1.1, spot.yaw, MONUMENT_PLINTH_TOP);
+      fell.push(3, spot.x, spot.z, ground, 2.8 + MONUMENT_PLINTH_TOP, figures.count - 1, -1, solid);
     }
   }
   for (const spot of furniture.fountains) {
@@ -330,7 +349,11 @@ export function buildVegetation(
   for (const spot of furniture.shelters) {
     const ground = groundAt(spot.x, spot.z);
     at(shelters, spot, 0, ground); at(shelterGlass, spot, 0, ground);
+    const solid = solids.length / SOLID_STRIDE;
     solids.push(spot.x, spot.z, ground, 1.7, 0.75, spot.yaw, 2.6);
+    glass.push(spot.x, spot.z, ground, spot.yaw);
+    // glass slot in field 6 so a knock takes the panes with the frame
+    fell.push(2, spot.x, spot.z, ground, 2.6, shelters.count - 1, shelterGlass.count - 1, solid);
   }
   for (const goal of furniture.goals) at(goals, goal, 0, groundAt(goal.x, goal.z), goal.scale);
   // ---- street clutter, beside the lamps (they stand at the kerb, arm over the road) ----
@@ -344,20 +367,30 @@ export function buildVegetation(
     const spot = (along: number, out: number) => ({ x: lamp.x + (alongX * along + roadX * out) * toMerc, z: lamp.z + (alongZ * along + roadZ * out) * toMerc, yaw: lamp.yaw });
     if (h < 0.33) {
       const s = spot(1.3, 0.1);
-      if (inside(s.x, s.z)) at(bins, s, 0, groundAt(s.x, s.z));
+      if (inside(s.x, s.z)) {
+        const ground = groundAt(s.x, s.z);
+        at(bins, s, 0, ground);
+        fell.push(6, s.x, s.z, ground, 1.1, bins.count - 1, -1, -1);
+      }
     }
     if (h > 0.875) {
       const s = spot(-3.2, -0.3);
       if (inside(s.x, s.z)) {
         const ground = groundAt(s.x, s.z);
         at(dumpsters, s, 0, ground);
+        const solid = solids.length / SOLID_STRIDE;
         solids.push(s.x, s.z, ground, 0.85, 0.6, s.yaw + Math.PI / 2, 1.3);
+        fell.push(7, s.x, s.z, ground, 1.3, dumpsters.count - 1, -1, solid);
       }
     }
     if (h > 0.4 && h < 0.6) {
       for (const along of [-2.4, -1.2, 2.5, 3.7]) {
         const s = spot(along, 0.55);
-        if (inside(s.x, s.z)) at(bollards, s, 0, groundAt(s.x, s.z));
+        if (inside(s.x, s.z)) {
+          const ground = groundAt(s.x, s.z);
+          at(bollards, s, 0, ground);
+          fell.push(5, s.x, s.z, ground, 0.95, bollards.count - 1, -1, -1);
+        }
       }
     }
   }
@@ -367,6 +400,7 @@ export function buildVegetation(
     fountains: fountains.done(), fountainWater: fountainWater.done(), shelters: shelters.done(), shelterGlass: shelterGlass.done(), goals: goals.done(),
     bins: bins.done(), dumpsters: dumpsters.done(), bollards: bollards.done(),
     solids: new Float32Array(solids),
+    glass: new Float32Array(glass),
     fell: new Float32Array(fell), lampLight,
   };
 }
@@ -377,6 +411,6 @@ export function vegetationTransferables(v: VegetationData): ArrayBuffer[] {
     out.push(set.matrices.buffer as ArrayBuffer, set.ground.buffer as ArrayBuffer);
     for (const extra of [set.colors, set.bark, set.traits]) if (extra) out.push(extra.buffer as ArrayBuffer);
   }
-  out.push(v.fell.buffer as ArrayBuffer, v.lampLight.buffer as ArrayBuffer, v.solids.buffer as ArrayBuffer);
+  out.push(v.fell.buffer as ArrayBuffer, v.lampLight.buffer as ArrayBuffer, v.solids.buffer as ArrayBuffer, v.glass.buffer as ArrayBuffer);
   return out;
 }

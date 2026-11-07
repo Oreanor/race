@@ -1,12 +1,12 @@
-import { roadStart } from './roadStart';
-import { VehiclePose } from './VehiclePose';
-import { supportAltitude, type GroundSample } from './groundSupport';
-import { BuildingCollisions } from './BuildingCollisions';
-import { WaterCollisionController, type MapFeature } from './WaterCollisionController';
+import { roadStart } from './roadStart.ts';
+import { VehiclePose } from './VehiclePose.ts';
+import { supportAltitude, type GroundSample } from './groundSupport.ts';
+import { BuildingCollisions } from './BuildingCollisions.ts';
+import { WaterCollisionController, type MapFeature } from './WaterCollisionController.ts';
 import { mapConfig, cars as carsConfig, carPrice, GIFT_CARS, STARTING_CASH, type City, type Car, vehicleConfig } from '@/config/vehicle.config';
 import { cameraConfig, lookAheadFor, zoomForDistance } from '@/config/camera.config';
-import { VehicleController, bumpDamage, offsetPosition, resolveVehicleCollision, type Position } from './VehicleController';
-import { DROP_MS, vehicleLayer, type PickupVisual, type VehicleSceneLayer } from '@/rendering/VehicleLayer';
+import { VehicleController, bumpDamage, offsetPosition, resolveVehicleCollision, type Position } from './VehicleController.ts';
+import { DROP_MS, vehicleLayer, type PickupVisual, type TargetVehicle, type VehicleSceneLayer } from '@/rendering/VehicleLayer';
 import {
   completeFireCall,
   createFireCallState,
@@ -15,7 +15,8 @@ import {
   suspendFireCall,
   updateFireCall,
   type FireCallWorld,
-} from './missions/fireCall';
+} from './missions/fireCall.ts';
+import { facadeMarker } from '@/rendering/BurningHouse';
 import {
   acceptTaxiFare,
   createTaxiFareState,
@@ -23,12 +24,21 @@ import {
   suspendTaxiFare,
   updateTaxiFare,
   type TaxiFareWorld,
-} from './missions/taxiFare';
+} from './missions/taxiFare.ts';
+import {
+  acceptAmbulanceCall,
+  createAmbulanceCallState,
+  declineAmbulanceCall,
+  suspendAmbulanceCall,
+  updateAmbulanceCall,
+  type AmbulanceCallWorld,
+  type AmbulanceSite,
+} from './missions/ambulanceCall.ts';
 import {
   createBusStopState,
   updateBusStops,
   type BusStopWorld,
-} from './missions/busStop';
+} from './missions/busStop.ts';
 import {
   acceptBusTour,
   createBusTourState,
@@ -36,33 +46,33 @@ import {
   suspendBusTour,
   updateBusTour,
   type BusTourWorld,
-} from './missions/busTour';
+} from './missions/busTour.ts';
 import type { ChatLine, NetNotice } from '@/net/NetClient';
 import { distanceToTile } from '@/world3d/tiles/tilePlan';
 import { mercatorX, mercatorY } from '@/world3d/mercator';
 
 /** tiles this close to the car feed gameplay (the world's feature radius, plus slack) */
 const NEAR_TILE_METERS = 2600;
-import { NetPlayers, PLAYER_MARKER_COLOR, type OnlinePlayer } from './net/NetPlayers';
-import { SharedTraffic } from './net/SharedTraffic';
-import { HealthMeters, type Meter } from './hud/HealthMeters';
-import { TestTargets } from './TestTargets';
+import { NetPlayers, PLAYER_MARKER_COLOR, type OnlinePlayer } from './net/NetPlayers.ts';
+import { SharedTraffic } from './net/SharedTraffic.ts';
+import { HealthMeters, type Meter } from './hud/HealthMeters.ts';
+import { TestTargets } from './TestTargets.ts';
 import { HIT_DAMAGE, PLAYER_HP } from '@/net/protocol';
-  import { formatRange, MARKER_PIN_METERS, nameIndicator, placeIndicator } from './hud/indicators';
-import { advanceTrafficBot, createTrafficBot, TrafficRoadNetwork, type TrafficBot } from './TrafficBots';
+  import { formatRange, MARKER_PIN_METERS, nameIndicator, placeIndicator } from './hud/indicators.ts';
+import { advanceTrafficBot, createTrafficBot, TrafficRoadNetwork, type TrafficBot } from './TrafficBots.ts';
 import { formatNumber, onLangChange, t } from '@/i18n';
 import { ThreeMap, ThreeMarker } from '@/world3d/map/ThreeMap';
-import { EVACUATION_COST, FuelTank, FUEL_PRICE, REPAIR_PRICE } from './Fuel';
-import { atStation, banksFromFeatures, busStopsFromFeatures, courtsFromFeatures, dealershipsFromFeatures, hospitalsFromFeatures, landmarksFromFeatures, nearestStation, policeFromFeatures, prisonsFromFeatures, repairShopsFromFeatures, stationsFromFeatures, type CivicKind, type Landmark, type Station } from './poi';
-import { metersBetween } from './meters';
-import { defaultMapLabelFilters, type MapLabelFilters, type MapLabelKind } from './mapLabels';
+import { EVACUATION_COST, FuelTank, FUEL_PRICE, REPAIR_PRICE } from './Fuel.ts';
+import { atStation, banksFromFeatures, busStopsFromFeatures, courtsFromFeatures, dealershipsFromFeatures, hospitalsFromFeatures, landmarksFromFeatures, nearestStation, policeFromFeatures, prisonsFromFeatures, repairShopsFromFeatures, SERVICE_REACH, stationsFromFeatures, type CivicKind, type Landmark, type Station } from './poi.ts';
+import { metersBetween, offsetMeters } from './meters.ts';
+import { defaultMapLabelFilters, type MapLabelFilters, type MapLabelKind } from './mapLabels.ts';
 import { fuelStationsLayer } from '@/rendering/FuelStationsLayer';
 import { isVintageTrain, trainsLayer } from '@/rendering/TrainsLayer';
-import { RailNetwork, TrainTraffic } from './Trains';
-import { hubAt, hubsFromFeatures, kilometres, nearestHub, ticketPrice, type Hub, type HubKind } from './Travel';
-import { bearingTo, BOUNTY_RANGE_KM, loadBounty, makeBounty, saveBounty, type Bounty } from './Bounty';
-import type { GameSave } from './save';
-import { BOX_REACH_M, COLLECT_BOXES, COLLECT_REWARD, deliveryReward, DELIVERY_MAX_M, DELIVERY_MIN_M, DELIVERY_REACH_M, randomItem, scatterBoxes, type DeliveryItem, type Errand } from './Errands';
+import { RailNetwork, TrainTraffic } from './Trains.ts';
+import { hubAt, hubsFromFeatures, kilometres, nearestHub, ticketPrice, type Hub, type HubKind } from './Travel.ts';
+import { bearingTo, BOUNTY_RANGE_KM, loadBounty, makeBounty, saveBounty, type Bounty } from './Bounty.ts';
+import type { GameSave } from './save.ts';
+import { BOX_REACH_M, COLLECT_BOXES, COLLECT_REWARD, deliveryReward, DELIVERY_MAX_M, DELIVERY_MIN_M, DELIVERY_REACH_M, randomItem, scatterBoxes, type DeliveryItem, type Errand } from './Errands.ts';
 import type {
   BankOffer,
   BountyOffer,
@@ -73,10 +83,11 @@ import type {
   HudParticipant,
   MissionKind,
   PlayerCarry,
+  RideOffer as RideOfferType,
   ServiceOffer,
   Settings,
   TravelOffer,
-} from './offers';
+} from './offers.ts';
 import {
   ARENA_FEE,
   ARENA_PRIZE,
@@ -86,8 +97,14 @@ import {
   CASH_BUNDLE,
   CUSTOM_PIN_COLORS,
   ERRAND_BEACONS,
+  AMBULANCE_HOSPITAL_M,
+  AMBULANCE_ID,
+  ambulanceWreckId,
+  isAmbulanceWreckId,
   BUS_ID,
+  BATMOBILE_ID,
   FIRE_TRUCK_ID,
+  FAMILY_SEDAN_ID,
   TAXI_ID,
   carShootsGuns,
   GRAVITY,
@@ -119,6 +136,7 @@ import {
   MISSION_PICKUP_M,
   POLICE_GIVE_UP_M,
   POLICE_GIVE_UP_MS,
+  BOUNTY_CAR_IDS,
   POLICE_IDS,
   RACE_FEE,
   RACE_PRIZE,
@@ -127,35 +145,7 @@ import {
   TRAFFIC_MARKER_COLORS,
   WRECK_COSTS,
   randomDriverNames,
-} from './tuning';
-
-export type {
-  BankOffer,
-  BountyOffer,
-  DealerOffer,
-  EventOffer,
-  EventResult,
-  FuelHud,
-  HudParticipant,
-  MissionKind,
-  PlayerCarry,
-  Quality,
-  RideOffer,
-  ServiceOffer,
-  Settings,
-  Theme,
-  TravelOffer,
-} from './offers';
-import type { RideOffer as RideOfferType } from './offers';
-export {
-  ARENA_FEE,
-  ARENA_PRIZE,
-  LOAN_LIMIT,
-  LOAN_RATE,
-  RACE_FEE,
-  RACE_PRIZE,
-  RAMP,
-} from './tuning';
+} from './tuning.ts';
 
 /** An angle in degrees as −180 … 180 (the same turn, the short way). */
 const wrapDegrees = (deg: number) => ((deg + 180) % 360 + 360) % 360 - 180;
@@ -239,7 +229,14 @@ export class GameEngine {
   private groundHits = 0;
   private lastGround: number | null = null;
   private settleFrames = 0;
-  private approach = 0;
+  /** boot camera already parked on chase pose to finish GPU uploads before "ready" */
+  private bootChaseWarmed = false;
+  /** keep isotropic/fast uploads until this time (ms), then endStreamBurst */
+  private bootBurstUntil = 0;
+  /** wall-clock start of the fly-in — hitch spikes must not jerk the lerp via dt */
+  private approachAt = 0;
+  /** remaining intro→chase blend (ms); boot already parked mid-flight */
+  private approachMs = 1400;
   private approachFrom: { lng: number; lat: number; zoom: number; pitch: number; bearing: number } | null = null;
   onApproach: (active: boolean) => void = () => {};
   onBoot: (ready: boolean) => void = () => {};
@@ -258,6 +255,12 @@ export class GameEngine {
   private cachedRoads: MapFeature[] = [];
   private cachedLanduse: MapFeature[] = [];
   private tilesIngested = false;
+  /** tiles whose roads/water/poi are already in the gameplay caches / traffic graph */
+  private ingestedTiles = new Set<string>();
+  /** near-car tiles that arrived since the last ingest pass */
+  private pendingIngest = new Set<string>();
+  /** last full features() scoop — rare prune, not every tile upload */
+  private fullScoopAt = 0;
   private focusTime = 0;
   private overlayTime = 0;
   private wheelSampleTime = 0;
@@ -266,12 +269,16 @@ export class GameEngine {
   private climb = 0;
   private airborne = false;
   private wasOnRamp = false;
+  /** fell in the river: splash → sink → respawn on the nearest shore road */
+  private plunge: { at: number; waterAlt: number } | null = null;
   /** the ramp put down with J (one at a time; gone shortly after the jump) */
   private ramp: { start: [number, number]; heading: number; usedAt: number; length: number; height: number; width: number } | null = null;
   /** holding J: ramp preview grows until release */
   private rampCharge: { start: [number, number]; heading: number; ground: number; length: number } | null = null;
   private aimScreen: [number, number] | null = null;
   private trafficBots: TrafficBot[] = [];
+  /** reused by targetVehicles() so the chase tick doesn't allocate every frame */
+  private targetScratch: TargetVehicle[] = [];
   private trafficNetwork = new TrafficRoadNetwork();
   /** light traffic shared with the players around */
   private sharedTraffic!: SharedTraffic;
@@ -288,7 +295,8 @@ export class GameEngine {
   /** a delivery prepared for the offer on screen */
   private offeredDelivery: { item: DeliveryItem; goal: Position; reward: number } | null = null;
   private errandMarkers = new Map<string, MapMarker>();
-  private errandIndicator: { element: HTMLElement; arrow: HTMLElement; distance: HTMLElement; title?: HTMLElement } | null = null;
+  /** one offscreen tip per errand pin (delivery goal or each box) — same look, no “nearest” special case */
+  private errandIndicators = new Map<string, { element: HTMLElement; arrow: HTMLElement; title: HTMLElement; distance: HTMLElement }>();
   private missionFocus = 0;
   /** last Tab-cycle goal set; a newly added mission becomes the focused tip */
   private focusGoalsLatch: string | null = null;
@@ -321,6 +329,10 @@ export class GameEngine {
   private taxi = createTaxiFareState();
   private taxiIndicator: { element: HTMLElement; arrow: HTMLElement; title: HTMLElement; distance: HTMLElement } | null = null;
   private taxiMarker: MapMarker | null = null;
+  /** ambulance: crash or burned house → hospital, 1000 per victim */
+  private ambulance = createAmbulanceCallState();
+  private ambulanceIndicator: { element: HTMLElement; arrow: HTMLElement; title: HTMLElement; distance: HTMLElement } | null = null;
+  private ambulanceMarker: MapMarker | null = null;
   /** city bus: approach OSM bus stops → board/alight modal + coins */
   private bus = createBusStopState();
   private busStops = new Map<string, Station>();
@@ -410,6 +422,9 @@ export class GameEngine {
   /** Category chips + world plaques: only while the M map is open. */
   onMapView: (open: boolean) => void = () => {};
   private mapViewUi = false;
+  /** throttle M-map plaque rebuilds (were every frame → ~20 FPS) */
+  private mapLabelsAt = 0;
+  private mapLabelsAtPos: [number, number] | null = null;
   private fuelOut = false;
   private refuelling = false;
   /** ports, airports and railway stations: reaching one offers a ticket to any city */
@@ -460,15 +475,17 @@ export class GameEngine {
   private overviewTarget = 0;
   /** once overview is open: pan/zoom freely; blend back from here when closing */
   private overviewFree = false;
+  /** keep stream calm after M lands so the first free frames don't upload towers */
+  private mapCalmUntil = 0;
   private overviewLeave: { center: [number, number]; zoom: number } | null = null;
   /** the menu camera to return to after the view from above */
   private menuView: { center: [number, number]; zoom: number; pitch: number; bearing: number } | null = null;
 
-  /** ~2 km across the screen height, straight down */
+  /** ~1.4 km across the screen height — 2 km of Manhattan rooftops murdered the GPU */
   private overviewZoom(lat: number) {
     const height = this.map.getCanvas().clientHeight || 800;
     const mercPerMeter = 1 / (2 * Math.PI * 6371008.8 * Math.cos(lat * Math.PI / 180));
-    return Math.log2((height / 2000) / mercPerMeter / 512);
+    return Math.log2((height / 1400) / mercPerMeter / 512);
   }
 
   /** Driving map mode (M): inspect the city, no gun. */
@@ -479,6 +496,7 @@ export class GameEngine {
   private setOverviewMapNav(on: boolean) {
     if (on) this.map.setInteractive({ pan: true, rotate: false });
     else if (this.driving) this.map.setInteractive({ pan: false, rotate: false });
+    else if (!this.driving && this.mapShown) this.map.setInteractive({ pan: true, rotate: false });
   }
 
   private toggleOverview() {
@@ -490,6 +508,8 @@ export class GameEngine {
       this.overviewFree = false;
       this.setOverviewMapNav(false);
       this.setMapViewUi(false);
+      // calm through the descent — burst mid-blend was the 5–7 FPS stall
+      this.map.setStreamCalm(true);
     } else {
       this.overviewLeave = null;
       this.overviewTarget = 1;
@@ -500,6 +520,8 @@ export class GameEngine {
       this.lookDragging = false;
       this.dragging = false;
       this.setMapViewUi(true);
+      this.map.setScreenStream(true);
+      this.map.setStreamCalm(true);
     }
   }
   private hubMarkers = new Map<string, MapMarker>();
@@ -558,7 +580,7 @@ export class GameEngine {
       driving: () => this.driving,
       mapView: () => this.mapInspecting(),
       busy: () => this.mode !== 'roam' || this.bountyFight,
-      canMove: (from, to, heading) => !this.collisions.blocked(from, to, heading, 1, this.altitude) && !this.water.resolve(from, to, heading).stopped,
+      canMove: (from, to, heading) => !this.collisions.blocked(from, to, heading, 1, this.altitude) && !this.water.resolve(from, to, heading, 1, this.onBridgeDeck(to, this.altitude)).stopped,
       online: (list) => this.onOnline(list),
       chat: (line) => this.onChat(line),
       notice: (notice) => this.onNetNotice(notice),
@@ -584,7 +606,8 @@ export class GameEngine {
         .filter((bot) => bot.id.startsWith('police') && this.combatLayer?.isTargetAlive(bot.id) !== false)
         .map((bot) => ({ id: bot.id, car: bot.car.id, p: bot.position, h: bot.heading, s: bot.controller.speed, hp: Math.round(this.combatLayer?.targetHp(bot.id) ?? 1000) })) : [],
       hitExtra: (id) => { this.combatLayer?.damageTarget(id, HIT_DAMAGE); },
-      canPark: (at, heading) => !this.collisions.blocked(at, at, heading) && !this.water.covers(at),
+      provoke: (id) => this.provoke(id),
+      canPark: (at, heading) => !this.collisions.blocked(at, at, heading) && !this.water.covers(at, this.onBridgeDeck(at, this.altitude)),
       hitWalls: (from, to, heading) => this.collisions.resolve(from, to, heading),
       lots: () => [...this.parkingLots.values()].filter((lot) => metersBetween(lot, this.vehicle.position) < 600),
       take: (id) => this.players.takeTraffic(id),
@@ -606,7 +629,9 @@ export class GameEngine {
     this.map.on('tile', event => {
       // gameplay data (roads, water, stations…) is read around the car: a tile arriving far
       // away (the map view streams many) is no reason to read it all again
-      if (typeof event.tile === 'string' && !this.nearCar(event.tile)) return;
+      if (typeof event.tile !== 'string' || !this.nearCar(event.tile)) return;
+      // queue just this tile — full features() scoop on every upload was the hitch after M toggles
+      if (!this.ingestedTiles.has(event.tile)) this.pendingIngest.add(event.tile);
       this.collisionDirty = true;
     });
     this.map.on('error', () => this.say(t('status.mapError')));
@@ -651,8 +676,12 @@ export class GameEngine {
         (from, fromAlt, to, toAlt) => this.trainShot(from, fromAlt, to, toAlt),
       );
       this.combatLayer.onRemoteHit = (id) => this.players.shot(id);
-      this.combatLayer.onTargetHit = (id) => this.sharedTraffic.ourHit(id);
+      this.combatLayer.onTargetHit = (id) => {
+        this.provoke(id);
+        this.sharedTraffic.ourHit(id);
+      };
       this.combatLayer.onTrainCoin = (point, altitude) => this.trainCoin(point, altitude);
+      this.combatLayer.onShotCoins = (from, fromAlt, to, toAlt) => this.shotCollectCoins(from, fromAlt, to, toAlt);
       this.combatLayer.onFireWindowOut = (left) => this.onFireWindowOut(left);
       this.combatLayer.onTargetDestroyed = (id, position) => {
         this.dropCoins(position);
@@ -678,18 +707,8 @@ export class GameEngine {
       this.cleanups.push(() => target.removeEventListener(event, fn, options));
     };
     listen(window, 'keydown', ((e: KeyboardEvent) => {
-      // M in the menu: rise above the map too (and come back)
-      if (e.code === 'KeyM' && !e.repeat && !this.driving && this.mapShown
-        && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement)) {
-        if (!this.overviewTarget) {
-          const c = this.map.getCenter();
-          this.menuView = { center: [c.lng, c.lat], zoom: this.map.getZoom(), pitch: this.map.getPitch(), bearing: this.map.getBearing() };
-          this.overviewTarget = 1;
-          this.setMapViewUi(true);
-        } else {
-          this.overviewTarget = 0;
-          this.setMapViewUi(false);
-        }
+      // M-map only while driving — intro camera stays put
+      if (e.code === 'KeyM' && !e.repeat && !this.driving) {
         e.preventDefault();
         return;
       }
@@ -737,6 +756,17 @@ export class GameEngine {
       // M-map: leave the pointer to ThreeMap pan/zoom — no reticle, no orbit.
       if (this.mapInspecting()) return;
       if (e.button === 2) {
+        // Batmobile: right click throws the Howler cable (LMB stays guns). Others: orbit.
+        if (this.car.id === BATMOBILE_ID) {
+          const bounds = el.getBoundingClientRect();
+          const x = e.clientX - bounds.left;
+          const y = e.clientY - bounds.top;
+          this.aimScreen = [x, y];
+          this.updateAim();
+          this.haulClick();
+          this.aimHud(x, y, true, false);
+          return;
+        }
         this.dragging = true;
         el.setPointerCapture(e.pointerId);
         return;
@@ -839,8 +869,13 @@ export class GameEngine {
       this.combatLayer?.setAim(null);
       return;
     }
-    const target = this.map.unproject(this.aimScreen);
-    this.combatLayer?.setAim({ ground: [target.lng, target.lat], screen: this.aimScreen });
+    const pick = this.map.pickScreen(this.aimScreen[0], this.aimScreen[1]);
+    this.combatLayer?.setAim({
+      ground: pick.point,
+      screen: this.aimScreen,
+      altitude: pick.altitude,
+      wall: pick.wall,
+    });
   }
 
   private placeTargetIndicator(marker: { element: HTMLElement; arrow: HTMLElement; distance: HTMLElement }, target: [number, number], pinMeters = MARKER_PIN_METERS) {
@@ -849,7 +884,7 @@ export class GameEngine {
 
   setCar(car: Car) {
     if (this.car.id === car.id && this.car.path === car.path) return;
-    if (this.haul && car.id !== HAULER_ID) this.loseHaul();
+    if (this.haul && !this.canCable(car.id)) this.loseHaul();
     const prev = this.car.id;
     this.car = car;
     this.fuel.changeSpec(car.fuel);
@@ -857,10 +892,16 @@ export class GameEngine {
     this.onSpecialVehicleChange(prev, car.id);
   }
 
-  private isPoliceCar(id = this.car.id) { return POLICE_IDS.has(id); }
+  /** Police cruisers and the Batmobile — wanted hunts. */
+  private canHuntBounty(id = this.car.id) { return BOUNTY_CAR_IDS.has(id); }
   private isFireTruck(id = this.car.id) { return id === FIRE_TRUCK_ID; }
   private isHauler(id = this.car.id) { return id === HAULER_ID; }
+  /** Howler + Batmobile: throw / yank / release the cable. */
+  private canCable(id = this.car.id) { return id === HAULER_ID || id === BATMOBILE_ID; }
   private isTaxi(id = this.car.id) { return id === TAXI_ID; }
+  private isAmbulance(id = this.car.id) { return id === AMBULANCE_ID; }
+  /** Parked mission props (crash wreck / tow wait) — not racers, no roster / HP / chase arrow. */
+  private isPropBot(id: string) { return isAmbulanceWreckId(id) || id === TOW_CAR_ID; }
   private isBus(id = this.car.id) { return id === BUS_ID; }
   private carShoots(id = this.car.id) { return carShootsGuns(id); }
 
@@ -901,8 +942,9 @@ export class GameEngine {
     if (this.isFireTruck(prev) && !this.isFireTruck(next)) this.suspendFire();
     if (this.isHauler(prev) && !this.isHauler(next)) this.suspendImpound();
     if (this.isTaxi(prev) && !this.isTaxi(next)) this.suspendTaxi();
+    if (this.isAmbulance(prev) && !this.isAmbulance(next)) this.suspendAmbulance();
     if (this.isBus(prev) && !this.isBus(next)) this.suspendBusTour();
-    if (this.isPoliceCar(prev) && !this.isPoliceCar(next)) {
+    if (this.canHuntBounty(prev) && !this.canHuntBounty(next)) {
       // hide bounty offer UI; keep the saved hunt for when we're back in a cruiser
       if (this.bountyOfferShown) { this.bountyOfferShown = false; this.onBountyOffer(null); }
     }
@@ -915,10 +957,13 @@ export class GameEngine {
     if (this.isTaxi(next) && !this.taxi.active && !this.taxi.pickup) {
       this.taxi.offerAt = Math.min(this.taxi.offerAt, performance.now() + 4000);
     }
+    if (this.isAmbulance(next) && !this.ambulance.active && !this.ambulance.pickup) {
+      this.ambulance.offerAt = Math.min(this.ambulance.offerAt, performance.now() + 4000);
+    }
     if (this.isBus(next) && !this.busTour.active && !this.busTour.pickup) {
       this.busTour.offerAt = Math.min(this.busTour.offerAt, performance.now() + 4000);
     }
-    if (this.isPoliceCar(next) && !this.bounty && !this.bountyPending) {
+    if (this.canHuntBounty(next) && !this.bounty && !this.bountyPending) {
       this.bountyOfferAt = Math.min(this.bountyOfferAt, performance.now() + 4000);
     }
     this.syncArenaAvailability(prev, next);
@@ -934,7 +979,7 @@ export class GameEngine {
   private tryOpenDealer() {
     if (!this.runReady) return false;
     if (!this.driving || this.mode !== 'roam' || this.dealerOpen || this.serviceOpen || this.travelOpen || this.fuelOut) return false;
-    const lot = atStation(this.vehicle.position, [...this.dealerships.values()]);
+    const lot = atStation(this.vehicle.position, [...this.dealerships.values()], SERVICE_REACH.dealer);
     if (!lot) return false;
     this.offeredService = lot.id;
     this.dealerOpen = true;
@@ -993,13 +1038,42 @@ export class GameEngine {
 
   applySettings(settings: Settings) {
     const terrainChanged = settings.terrain !== this.settings.terrain;
+    const skinChanged = settings.skin !== this.settings.skin;
     this.settings = settings;
     this.map.setSkin(settings.skin);
+    // mid-fire skin swap: snap flames onto the new window grid, keep ~the same burn %
+    if (skinChanged && this.fire.active) this.remeshFireForSkin();
     if (!this.mapLoaded) return;
     this.map.setRelief(settings.terrain);
-    const ratio = settings.quality === 'low' ? 1 : settings.quality === 'medium' ? 1.25 : Math.min(window.devicePixelRatio || 1, 1.5);
+    // fill-rate first: high ≤1.25, medium 1, low 0.85 (was 1 / 1.25 / ≤1.5)
+    const dpr = window.devicePixelRatio || 1;
+    const ratio = settings.quality === 'low' ? 0.85 : settings.quality === 'medium' ? 1 : Math.min(dpr, 1.25);
     this.map.setPixelRatio(ratio);
     if (terrainChanged) { this.collisionDirty = true; this.syncedAt = null; }
+  }
+
+  /** After a skin change, rebuild burning panes on the façade rhythm that style draws. */
+  private remeshFireForSkin() {
+    if (!this.fire.active || !this.fire.spot || !this.combatLayer) return;
+    const facades = this.map.fireFacadesNear(this.fire.spot, 80);
+    if (!facades?.panes.length) return;
+    const specs = facades.panes.map((p) => ({
+      at: p.at as [number, number],
+      altitude: p.altitude,
+      oe: p.oe,
+      on: p.on,
+    }));
+    const seed = Math.round(this.fire.spot[0] * 1e5) ^ Math.round(this.fire.spot[1] * 1e5) ^ (performance.now() | 0);
+    this.combatLayer.remeshFireHouse(specs, seed);
+    const total = this.combatLayer.fireWindowsTotal();
+    if (total != null) this.fire.windowTotal = total;
+    const left = this.combatLayer.fireWindowsLeft();
+    if (left === 0) {
+      this.completeFire(this.fire.windowTotal);
+      return;
+    }
+    this.fire.spot = facadeMarker(specs, this.fire.spot) as [number, number];
+    this.syncMissionVisuals(true);
   }
 
   nudgeCamera(dt: number) {
@@ -1054,38 +1128,36 @@ export class GameEngine {
     this.eventOffer = null;
     this.eventCooldown = 0;
     this.raceGoal = null;
-    const carry = this.carry;
-    const resumeHp = carry?.at?.hp;
-    this.playerHp = resumeHp != null ? Math.max(1, Math.min(this.playerMaxHp, resumeHp)) : this.playerMaxHp;
     this.wins.clear();
     this.clearEventBots();
     this.pickups.clear();
     this.combatLayer?.setPickups([]);
-    this.collectedPickups = new Set(carry?.collected?.filter((id) => typeof id === 'string') ?? []);
     this.pickupFocus = null;
     this.pickupNetworkRevision = -1;
-    // Intro / reload keep the purse; a brand-new run buys the menu car out of STARTING_CASH.
-    // Switching cars on a kept purse only charges if that car is not already in the garage.
-    this.fuel.level = this.fuel.spec.tank * (carry?.fuel ?? 1);
-    this.loanDebt = Math.max(0, Math.round(carry?.loan ?? 0));
-    this.garage = new Set((carry?.garage ?? []).filter((id) => carsConfig.some((car) => car.id === id)));
-    for (const id of GIFT_CARS) {
-      if (carsConfig.some((car) => car.id === id)) this.garage.add(id);
-    }
-    if (carry) {
-      this.playerMoney = Math.max(0, Math.floor(carry.money));
-      if (!this.garage.has(this.car.id)) {
-        const price = carPrice(this.car);
-        this.playerMoney = Math.max(0, this.playerMoney - price);
+    // Purse / garage / collected only once per run. Spawn click / road retarget used to
+    // call this again with carry already spent → STARTING_CASH and wiped progress on save.
+    if (!this.runReady) {
+      const carry = this.carry;
+      const resumeHp = carry?.at?.hp;
+      this.playerHp = resumeHp != null ? Math.max(1, Math.min(this.playerMaxHp, resumeHp)) : this.playerMaxHp;
+      this.collectedPickups = new Set(carry?.collected?.filter((id) => typeof id === 'string') ?? []);
+      // Intro: empty garage + STARTING_CASH (prod). GIFT_CARS only in next.devs.
+      // The menu car is bought when setDriving(true) — not on boot spawn.
+      this.fuel.level = this.fuel.spec.tank * (carry?.fuel ?? 1);
+      this.loanDebt = Math.max(0, Math.round(carry?.loan ?? 0));
+      this.garage = new Set((carry?.garage ?? []).filter((id) => carsConfig.some((car) => car.id === id)));
+      for (const id of GIFT_CARS) {
+        if (carsConfig.some((car) => car.id === id)) this.garage.add(id);
       }
-    } else {
-      this.playerMoney = Math.max(0, STARTING_CASH - carPrice(this.car));
+      if (carry?.at) this.garage.add(this.car.id);
+      this.playerMoney = carry
+        ? Math.max(0, Math.floor(carry.money))
+        : STARTING_CASH;
+      this.carry = null;
+      this.runReady = true;
+      this.fuelOut = false;
+      this.onFuelOut(false);
     }
-    this.garage.add(this.car.id);
-    this.carry = null;
-    this.runReady = true;
-    this.fuelOut = false;
-    this.onFuelOut(false);
     const roads = this.map.features('transportation') as MapFeature[];
     this.trafficNetwork.addFeatures(roads);
     this.trafficNetwork.flushRebuild();
@@ -1193,7 +1265,10 @@ export class GameEngine {
     band: { min: number; max: number } = { min: 220, max: 1100 },
   ): [number, number] {
     const dry = (spot: [number, number]) => !this.water.inSea(spot, this.cachedWater);
-    for (let attempt = 0; attempt < 28; attempt++) {
+    const farEnough = (spot: [number, number], fromPlayer: number, fromOthers: number) =>
+      metersBetween(spot, position) >= fromPlayer
+      && !avoid.some(other => metersBetween(spot, other) < fromOthers);
+    for (let attempt = 0; attempt < 36; attempt++) {
       const min = band.min + (attempt % 4) * 40;
       const max = band.max + (attempt % 5) * 80;
       const node = this.trafficNetwork.randomAway(position, new Set(), min, max, seed + attempt * 97)
@@ -1201,16 +1276,26 @@ export class GameEngine {
       if (!node) continue;
       const spot = [...node.position] as [number, number];
       if (!dry(spot)) continue;
-      if (avoid.some(other => metersBetween(spot, other) < 280)) continue;
+      // later missions have a fuller avoid list — ease spacing after many misses
+      const gap = attempt < 20 ? 280 : attempt < 28 ? 160 : 90;
+      if (!farEnough(spot, band.min * 0.75, gap)) continue;
       return spot;
     }
     const ahead = this.trafficNetwork.destinationAhead(position, heading, seed);
     if (ahead) {
       const spot = [...ahead] as [number, number];
-      if (dry(spot) && !avoid.some(other => metersBetween(spot, other) < 220)) return spot;
+      if (dry(spot) && farEnough(spot, 160, 90)) return spot;
     }
-    // Never invent a point out at sea — stay on the road under us if nothing else is dry.
-    return [...position] as [number, number];
+    // Last road fallback: any dry node away from the player — never pin a mission on spawn.
+    for (let attempt = 0; attempt < 24; attempt++) {
+      const node = this.trafficNetwork.randomAway(position, new Set(), 300, 2000, seed ^ (0x51f3 + attempt * 41));
+      if (!node) continue;
+      const spot = [...node.position] as [number, number];
+      if (!dry(spot) || metersBetween(spot, position) < 200) continue;
+      return spot;
+    }
+    // Empty network (boot edge): push along heading so the pin is not under the car.
+    return offsetMeters(position, Math.sin(heading) * 420, Math.cos(heading) * 420);
   }
 
   private nextMissionLabel(kind: MissionKind) {
@@ -1242,7 +1327,7 @@ export class GameEngine {
     const beacons: {
       id: string;
       position: [number, number];
-      kind?: 'arena' | 'race' | 'bounty' | 'fire' | 'impound' | 'taxi' | 'bus';
+      kind?: 'arena' | 'race' | 'bounty' | 'fire' | 'impound' | 'taxi' | 'bus' | 'ambulance';
       colors?: { pole: string; glow: string; orb: string };
     }[] = visible.map(mission => ({
       id: mission.id,
@@ -1252,11 +1337,11 @@ export class GameEngine {
     }));
     const errand = this.errand;
     if (errand?.kind === 'delivery') beacons.push({ id: 'errand-goal', position: errand.goal, colors: ERRAND_BEACONS.delivery });
-    if (errand?.kind === 'collect') for (const box of errand.boxes) beacons.push({ id: `errand-${box.id}`, position: box.position, colors: ERRAND_BEACONS.collect });
+    // collect boxes: map/HUD markers with range only — no giant world pins on every box
     if (showWorld && !this.bountyFight && !errand) {
-      if (this.isPoliceCar() && this.bountyPending && this.bountyPickup && free) {
+      if (this.canHuntBounty() && this.bountyPending && this.bountyPickup && free) {
         beacons.push({ id: 'bounty-pickup', kind: 'bounty', position: this.bountyPickup });
-      } else if (this.isPoliceCar() && this.bounty?.spot) {
+      } else if (this.canHuntBounty() && this.bounty?.spot) {
         beacons.push({ id: 'bounty', kind: 'bounty', position: this.bounty.spot });
       }
       if (this.isFireTruck() && this.fire.active && this.fire.spot) {
@@ -1275,6 +1360,11 @@ export class GameEngine {
         beacons.push({ id: 'taxi-goal', kind: 'taxi', position: this.taxi.goal, colors: ERRAND_BEACONS.taxi });
       } else if (this.isTaxi() && this.taxi.pickup && free) {
         beacons.push({ id: 'taxi-pickup', kind: 'taxi', position: this.taxi.pickup, colors: ERRAND_BEACONS.taxi });
+      }
+      if (this.isAmbulance() && this.ambulance.active && this.ambulance.goal) {
+        beacons.push({ id: 'ambulance-goal', kind: 'ambulance', position: this.ambulance.goal, colors: ERRAND_BEACONS.ambulance });
+      } else if (this.isAmbulance() && this.ambulance.pickup && free) {
+        beacons.push({ id: 'ambulance-pickup', kind: 'ambulance', position: this.ambulance.pickup, colors: ERRAND_BEACONS.ambulance });
       }
       if (this.isBus() && this.busTour.active && this.busTour.goal) {
         beacons.push({ id: 'bus-goal', kind: 'bus', position: this.busTour.goal, colors: ERRAND_BEACONS.bus });
@@ -1325,7 +1415,7 @@ export class GameEngine {
     }
     if (this.bountyFight || this.errand) return goals;
     // role missions — current car only (garage ownership is not enough)
-    if (this.isPoliceCar()) {
+    if (this.canHuntBounty()) {
       if (this.bountyPending && this.bountyPickup && !this.onMission()) {
         goals.push({ id: 'role-bounty', color: 'bounty', label: t('bounty.goal'), position: this.bountyPickup, role: true });
       } else if (this.bounty) {
@@ -1364,6 +1454,14 @@ export class GameEngine {
         goals.push({ id: 'role-taxi', color: 'taxi', label: t('taxi.drop'), position: this.taxi.goal, role: true });
       } else if (this.taxi.pickup && !this.onMission()) {
         goals.push({ id: 'role-taxi', color: 'taxi', label: t('taxi.goal'), position: this.taxi.pickup, role: true });
+      }
+    }
+    if (this.isAmbulance()) {
+      if (this.ambulance.active && this.ambulance.goal) {
+        goals.push({ id: 'role-ambulance', color: 'ambulance', label: t('ambulance.drop'), position: this.ambulance.goal, role: true });
+      } else if (this.ambulance.pickup && !this.onMission()) {
+        const label = this.ambulance.site === 'burn' ? t('ambulance.goal.burn') : t('ambulance.goal.crash');
+        goals.push({ id: 'role-ambulance', color: 'ambulance', label, position: this.ambulance.pickup, role: true });
       }
     }
     if (this.isBus()) {
@@ -1450,7 +1548,7 @@ export class GameEngine {
 
   /** parked cars to shoot at (?testcars=N) */
   private testCars = new TestTargets((from, at, heading) => {
-    if (this.collisions.blocked(from, at, heading, 1, this.altitude) || this.water.resolve(from, at, heading).stopped) return false;
+    if (this.collisions.blocked(from, at, heading, 1, this.altitude) || this.water.resolve(from, at, heading, 1, this.onBridgeDeck(at, this.altitude)).stopped) return false;
     // on the same surface as us (not the river beside a bridge, not a roof)
     const ground = this.map.groundAt(at, this.altitude);
     return ground != null && Math.abs(ground - this.altitude) <= 2;
@@ -1465,66 +1563,91 @@ export class GameEngine {
   }
 
   private targetVehicles() {
-    return this.trafficBots.map(({ id, driver, car, position, heading }) => ({
-      id, driver, car, position, heading,
-    }));
+    // reuse objects — VehicleLayer only reads id/position/heading each frame
+    const out = this.targetScratch;
+    out.length = this.trafficBots.length;
+    for (let i = 0; i < this.trafficBots.length; i++) {
+      const bot = this.trafficBots[i];
+      const row = out[i] ?? (out[i] = { id: '', driver: '', car: bot.car, position: bot.position, heading: 0 });
+      row.id = bot.id;
+      row.driver = bot.driver;
+      row.car = bot.car;
+      row.position = bot.position;
+      row.heading = bot.heading;
+    }
+    return out;
   }
 
   private resolveVehicleContacts(now: number) {
-    const participants = [
+    // movers vs movers + movers vs parked — never parked×parked (O(n²) waste on kerb props)
+    type Body = { id: string; controller: VehicleController; car: Car };
+    const haulId = this.haul?.id;
+    const movers: Body[] = [
       { id: 'player', controller: this.vehicle, car: this.car },
-      ...this.sharedTraffic.bodies(),
+      ...this.sharedTraffic.drivenBodies(),
       ...this.trafficBots
         .filter(bot => !this.combatLayer || this.combatLayer.isTargetAlive(bot.id))
         .map(bot => ({ id: bot.id, controller: bot.controller, car: bot.car })),
-    ].filter(participant => participant.id !== this.haul?.id);
-    const applyPosition = (participant: typeof participants[number], next: [number, number]) => {
+    ].filter(participant => participant.id !== haulId);
+    const parked: Body[] = this.sharedTraffic.parkedBodies().filter(p => p.id !== haulId);
+
+    const applyPosition = (participant: Body, next: [number, number]) => {
       const { controller } = participant;
       if (next === controller.position
         || this.collisions.blocked(controller.position, next, controller.heading, 1, participant.id === 'player' ? this.altitude : -Infinity)) return;
-      const water = this.water.resolve(controller.position, next, controller.heading);
+      const alt = participant.id === 'player' ? this.altitude : (this.map.groundAt(controller.position) ?? this.altitude);
+      const water = this.water.resolve(controller.position, next, controller.heading, 1, this.onBridgeDeck(controller.position, alt));
       if (!water.stopped) controller.position = water.position;
     };
 
-    for (let first = 0; first < participants.length; first++) {
-      const a = participants[first];
-      for (let second = first + 1; second < participants.length; second++) {
-        const b = participants[second];
-        const collision = resolveVehicleCollision({
-          position: a.controller.position,
-          heading: a.controller.heading,
-          speed: a.controller.speed,
-          length: a.car.length,
-        }, {
-          position: b.controller.position,
-          heading: b.controller.heading,
-          speed: b.controller.speed,
-          length: b.car.length,
-        });
-        if (!collision) continue;
+    const pair = (a: Body, b: Body) => {
+      // cheap reject before SAT — most parked cars are hundreds of metres away
+      const reach = (a.car.length + b.car.length) * 0.85;
+      if (metersBetween(a.controller.position, b.controller.position) > reach) return;
+      const collision = resolveVehicleCollision({
+        position: a.controller.position,
+        heading: a.controller.heading,
+        speed: a.controller.speed,
+        length: a.car.length,
+      }, {
+        position: b.controller.position,
+        heading: b.controller.heading,
+        speed: b.controller.speed,
+        length: b.car.length,
+      });
+      if (!collision) return;
 
-        applyPosition(a, collision.a);
-        applyPosition(b, collision.b);
-        if (this.heist && ((a.id === 'player' && b.id.startsWith('police')) || (b.id === 'player' && a.id.startsWith('police')))) {
-          this.heist.caught = true;
-        }
-        const key = `${a.id}:${b.id}`;
-        if (now - (this.vehicleContactTimes.get(key) ?? 0) < 280) continue;
-        this.vehicleContactTimes.set(key, now);
-        // every knock that flashes a car red takes health off it: the slower side takes
-        // the knock, a hunting bot ramming at speed hurts whoever it rams, and harder
-        const impact = Math.abs(a.controller.speed) + Math.abs(b.controller.speed);
-        const ramming = (id: string) => impact > 6 && this.trafficBots.some(bot => bot.id === id && bot.mood === 'hunt');
-        const hurt = (victim: typeof a, attacker: typeof a, slower: boolean) => {
-          const rammed = ramming(attacker.id);
-          if (!slower && !rammed) return;
-          const amount = rammed ? Math.max(bumpDamage(impact), Math.min(55, 12 + impact * 2.2)) : bumpDamage(impact);
-          if (victim.id === 'player') this.damagePlayer(amount, 180);
-          else this.combatLayer?.damageTarget(victim.id, amount);
-        };
-        hurt(a, b, collision.slower === 'a' || collision.slower === 'both');
-        hurt(b, a, collision.slower === 'b' || collision.slower === 'both');
+      applyPosition(a, collision.a);
+      applyPosition(b, collision.b);
+      if (this.heist && ((a.id === 'player' && b.id.startsWith('police')) || (b.id === 'player' && a.id.startsWith('police')))) {
+        this.heist.caught = true;
       }
+      const key = `${a.id}:${b.id}`;
+      if (now - (this.vehicleContactTimes.get(key) ?? 0) < 280) return;
+      this.vehicleContactTimes.set(key, now);
+      // every knock that flashes a car red takes health off it: the slower side takes
+      // the knock, a hunting bot ramming at speed hurts whoever it rams, and harder
+      const impact = Math.abs(a.controller.speed) + Math.abs(b.controller.speed);
+      const hunting = (id: string) => this.findBot(id)?.mood === 'hunt';
+      const ramming = (id: string) => impact > 6 && hunting(id);
+      const hurt = (victim: Body, attacker: Body, slower: boolean) => {
+        const rammed = ramming(attacker.id);
+        if (!slower && !rammed) return;
+        const amount = rammed ? Math.max(bumpDamage(impact), Math.min(55, 12 + impact * 2.2)) : bumpDamage(impact);
+        if (victim.id === 'player') this.damagePlayer(amount, 180);
+        else {
+          this.combatLayer?.damageTarget(victim.id, amount);
+          // we hit them — they leave the route and come after us
+          if (attacker.id === 'player') this.provoke(victim.id);
+        }
+      };
+      hurt(a, b, collision.slower === 'a' || collision.slower === 'both');
+      hurt(b, a, collision.slower === 'b' || collision.slower === 'both');
+    };
+
+    for (let i = 0; i < movers.length; i++) {
+      for (let j = i + 1; j < movers.length; j++) pair(movers[i], movers[j]);
+      for (const curb of parked) pair(movers[i], curb);
     }
 
     for (const bot of this.trafficBots) {
@@ -1555,19 +1678,22 @@ export class GameEngine {
         money: Number.NaN,
         wins: Number.NaN,
       })),
-      ...this.trafficBots.map((bot, index) => {
-        const target = targetHealth.get(bot.id);
-        const dead = Boolean(target && target.hp <= 0);
-        return {
-          id: bot.id,
-          name: bot.driver,
-          color: dead ? '#8b9198' : TRAFFIC_MARKER_COLORS[index % TRAFFIC_MARKER_COLORS.length],
-          hp: target?.hp ?? 1000,
-          maxHp: target?.maxHp ?? 1000,
-          money: bot.money,
-          wins: this.wins.get(bot.id) ?? 0,
-        };
-      }),
+      ...this.trafficBots
+        // police chase / bounty bandit / parked mission props are not racers
+        .filter((bot) => !bot.id.startsWith('police') && bot.id !== 'wanted' && !this.isPropBot(bot.id))
+        .map((bot, index) => {
+          const target = targetHealth.get(bot.id);
+          const dead = Boolean(target && target.hp <= 0);
+          return {
+            id: bot.id,
+            name: bot.driver,
+            color: dead ? '#8b9198' : TRAFFIC_MARKER_COLORS[index % TRAFFIC_MARKER_COLORS.length],
+            hp: target?.hp ?? 1000,
+            maxHp: target?.maxHp ?? 1000,
+            money: bot.money,
+            wins: this.wins.get(bot.id) ?? 0,
+          };
+        }),
     ];
   }
 
@@ -1622,16 +1748,44 @@ export class GameEngine {
   private raceStartAt = 0;
   private raceCount = 0;
 
+  /** Mission props (tow wreck, ambulance pileup) never chase or shoot. */
+  private findBot(id: string): TrafficBot | undefined {
+    if (this.isPropBot(id)) return undefined;
+    return this.trafficBots.find((bot) => bot.id === id)
+      ?? this.sharedTraffic.bots().find((bot) => bot.id === id);
+  }
+
   /**
-   * Hunters (arena bots and the wanted car) shoot back: short bursts when we are within
-   * ~70 m, roughly ahead of them and not behind a building. Close and slow is easy to hit;
-   * far and fast mostly misses. The wanted car hits harder.
+   * Shot or rammed: leave the civilian route and hunt the player. Armed cars
+   * also open fire via `updateHunterGuns`.
+   */
+  private provoke(id: string) {
+    const bot = this.findBot(id);
+    if (!bot || bot.mood === 'hunt') return;
+    bot.mood = 'hunt';
+    bot.huntId = 'player';
+    bot.huntRange = metersBetween(bot.position, this.vehicle.position);
+    bot.goal = [...this.vehicle.position] as Position;
+    bot.route = [];
+    bot.routeIndex = 1;
+    bot.repathAt = 0;
+  }
+
+  /**
+   * Hunters (arena, police, bounty, and anyone we provoked) shoot back: short
+   * bursts when we are within ~70 m, roughly ahead of them and not behind a
+   * building. Close and slow is easy to hit; far and fast mostly misses.
    */
   private updateHunterGuns(now: number) {
-    if (this.mode !== 'arena' || this.playerHp <= 0 || !this.combatLayer) return;
+    if (this.playerHp <= 0 || !this.combatLayer || !this.driving) return;
     const me = this.vehicle.position;
-    for (const bot of this.trafficBots) {
-      if (bot.mood !== 'hunt' || !this.combatLayer.isTargetAlive(bot.id)) continue;
+    const hunters = [
+      ...this.trafficBots,
+      ...this.sharedTraffic.bots(),
+    ];
+    for (const bot of hunters) {
+      if (bot.mood !== 'hunt' || !this.carShoots(bot.car.id)) continue;
+      if (!this.combatLayer.isTargetAlive(bot.id)) continue;
       const d = metersBetween(bot.position, me);
       if (d > 70 || d < 3) continue;
       const toMe = Math.atan2((me[0] - bot.position[0]) * Math.cos(me[1] * Math.PI / 180), me[1] - bot.position[1]);
@@ -1749,6 +1903,61 @@ export class GameEngine {
     this.accumulator = 0;
     this.collisionDirty = true;
     this.syncedAt = null;
+    this.airborne = false;
+    this.climb = 0;
+    this.plunge = null;
+    if (this.settings.terrain) {
+      const ground = this.map.groundAt(this.vehicle.position);
+      if (ground != null) this.altitude = ground;
+    }
+  }
+
+  /**
+   * True when the car is riding an overpass deck (not the road / river under it).
+   * Bridge water exemptions only apply up here — must be true as soon as XY is on
+   * the deck ribbon at deck height, or the water edge walls off the on-ramp.
+   */
+  private onBridgeDeck(at: Position, altitude: number) {
+    if (this.map.isDeckAt(at, altitude)) return true;
+    // fallback: dual ground sample (older gap test) for odd cases
+    const low = this.map.groundAt(at);
+    if (low == null) return false;
+    const high = this.map.groundAt(at, altitude);
+    if (high == null) return false;
+    const gap = high - low;
+    return gap > 0.9 && altitude >= low + gap * 0.3 && Math.abs(altitude - high) < 2.5;
+  }
+
+  /** Splash, sink under the surface, then appear on the nearest dry road. */
+  private beginPlunge(waterAlt: number) {
+    if (this.plunge) return;
+    this.plunge = { at: performance.now(), waterAlt };
+    this.airborne = false;
+    this.climb = 0;
+    this.vehicle.speed = 0;
+    this.vehicle.throttle = 0;
+    this.combatLayer?.plungeSplash();
+    this.say(t('hint.sank'), true);
+  }
+
+  private tickPlunge(now: number) {
+    const plunge = this.plunge;
+    if (!plunge) return false;
+    const age = now - plunge.at;
+    // nose down and drop below the surface
+    const t = Math.min(1, age / 1600);
+    this.altitude = plunge.waterAlt - t * 3.2;
+    this.modelPitch = 0.55 * t;
+    this.modelRoll = 0.22 * Math.sin(t * Math.PI) * (t > 0.15 ? 1 : 0);
+    if (age < 1700) return true;
+    // wide rivers: search farther than a normal wreck drop
+    const start = this.findFreeRoad(this.vehicle.position, 280)
+      ?? roadStart(this.map, this.vehicle.position, () => false, 280);
+    if (start) this.placeCarAt(start.position);
+    else this.placeCarAt(this.vehicle.position);
+    this.modelPitch = 0;
+    this.modelRoll = 0;
+    return false;
   }
 
   acceptEvent() {
@@ -1862,7 +2071,7 @@ export class GameEngine {
     // a starting grid: beside us left and right, one behind, all facing our way
     const forward = [Math.sin(heading), Math.cos(heading)], right = [Math.cos(heading), -Math.sin(heading)];
     const at = (side: number, along: number) => offsetPosition(center, forward[0] * along + right[0] * side, forward[1] * along + right[1] * side);
-    const free = (p: [number, number]) => !this.collisions.blocked(center, p, heading) && !this.water.covers(p);
+    const free = (p: [number, number]) => !this.collisions.blocked(center, p, heading) && !this.water.covers(p, true);
     const slots: [number, number][] = [[3.4, 0], [-3.4, 0], [0, -7.5]];
     this.trafficBots.forEach((bot, index) => {
       let spot = at(...slots[index]);
@@ -1959,6 +2168,7 @@ export class GameEngine {
     for (const p of this.players.others()) out.push({ id: `net:${p.id}`, name: p.name, hp: p.hp, maxHp: PLAYER_HP, position: p.position, color: PLAYER_MARKER_COLOR });
     const health = new Map((layer?.targetHealth() ?? []).map((h) => [h.id, h]));
     this.trafficBots.forEach((bot, index) => {
+      if (this.isPropBot(bot.id)) return;
       if (layer && !layer.isTargetAlive(bot.id)) return;
       const h = health.get(bot.id);
       out.push({ id: bot.id, name: bot.driver, hp: h?.hp ?? 1000, maxHp: h?.maxHp ?? 1000, position: bot.position, color: TRAFFIC_MARKER_COLORS[index % TRAFFIC_MARKER_COLORS.length] });
@@ -2052,6 +2262,40 @@ export class GameEngine {
     return null;
   }
 
+  /**
+   * Family Sedan machine gun: any coin / cash near the bullet path is vacuumed
+   * into the purse (road coins stay gone after a reload).
+   */
+  private shotCollectCoins(from: Position, fromAlt: number, to: Position, toAlt: number) {
+    if (this.car.id !== FAMILY_SEDAN_ID) return;
+    const kx = METERS_PER_DEGREE * Math.cos(from[1] * Math.PI / 180), ky = METERS_PER_DEGREE;
+    const ex = (to[0] - from[0]) * kx, ey = (to[1] - from[1]) * ky, eu = toAlt - fromAlt;
+    const len = Math.hypot(ex, ey, eu);
+    if (len < 0.5) return;
+    const ux = ex / len, uy = ey / len, uu = eu / len;
+    const now = performance.now();
+    let money = 0;
+    for (const [id, pickup] of this.pickups) {
+      if (pickup.kind !== 'coin' && pickup.kind !== 'cash') continue;
+      if (pickup.drop && now < pickup.drop.at + DROP_MS) continue;
+      const dx = (pickup.position[0] - from[0]) * kx;
+      const dy = (pickup.position[1] - from[1]) * ky;
+      const ground = this.map.groundAt(pickup.position) ?? fromAlt;
+      const du = ground + 1 - fromAlt;
+      const t = Math.max(0, Math.min(len, dx * ux + dy * uy + du * uu));
+      if (Math.hypot(ux * t - dx, uy * t - dy, uu * t - du) > 2.8) continue;
+      this.pickups.delete(id);
+      if (!pickup.drop) this.collectedPickups.add(id);
+      if (pickup.kind === 'cash') {
+        money += CASH_BUNDLE;
+        if (this.heist) this.heist.cash += CASH_BUNDLE;
+      } else money += 10;
+    }
+    if (!money) return;
+    this.playerMoney += money;
+    this.combatLayer?.setPickups(this.pickupVisuals());
+  }
+
   /** Shooting a vintage train: a coin pops out where the bullet hit (four a second), endlessly. */
   private trainCoin(point: [number, number], altitude: number) {
     const now = performance.now();
@@ -2105,7 +2349,7 @@ export class GameEngine {
     let bank: Station | null = null;
     for (const candidate of this.banks.values()) {
       if (metersBetween(point, candidate.place ?? candidate.position) > 22) continue;
-      if (metersBetween(this.vehicle.position, candidate.position) > 80) continue;
+      if (metersBetween(this.vehicle.position, candidate.place ?? candidate.position) > 36) continue;
       if ((this.bankShut.get(candidate.id) ?? 0) > now) { this.say(t('heist.shut')); return; }
       bank = candidate;
       break;
@@ -2203,7 +2447,7 @@ export class GameEngine {
     if (!target || metersBetween(bot.position, target) > 350) return null;
     let sight = this.botSight.get(bot.id);
     if (!sight || now - sight.at > 300) {
-      sight = { at: now, clear: !this.collisions.sightBlocked(bot.position, target) && !this.water.covers(target) };
+      sight = { at: now, clear: !this.collisions.sightBlocked(bot.position, target) && !this.water.covers(target, true) };
       this.botSight.set(bot.id, sight);
     }
     return sight.clear ? target : null;
@@ -2410,13 +2654,17 @@ export class GameEngine {
       this.host.appendChild(this.trafficMarkerLayer);
     }
     const markerLayer = this.trafficMarkerLayer;
-    const active = new Set(this.trafficBots.map(bot => bot.id));
+    const active = new Set(
+      this.trafficBots.filter((bot) => bot.id !== 'wanted' && !this.isPropBot(bot.id)).map((bot) => bot.id),
+    );
     for (const [id, marker] of this.trafficMarkers) {
       if (active.has(id)) continue;
       marker.element.remove();
       this.trafficMarkers.delete(id);
     }
     this.trafficBots.forEach((bot, index) => {
+      // bounty bandit: chase arrow is bounty-indicator only (no second name tag)
+      if (bot.id === 'wanted' || this.isPropBot(bot.id)) return;
       if (this.trafficMarkers.has(bot.id)) return;
       const marker = nameIndicator('traffic-indicator', TRAFFIC_MARKER_COLORS[index % TRAFFIC_MARKER_COLORS.length]);
       marker.name.textContent = bot.driver;
@@ -2427,11 +2675,12 @@ export class GameEngine {
 
   private updateTrafficMarkers() {
     for (const marker of this.trafficMarkers.values()) marker.element.style.display = 'none';
-    // Named mission bots (arena / race / bounty / …) — on the HUD and on the M map.
-    // Ambient shared traffic stays unmarked.
+    // Named mission bots (arena / race / …) — on the HUD and on the M map.
+    // Wanted uses bounty-indicator; ambient shared traffic stays unmarked.
     if (!this.driving || !this.trafficBots.length) return;
     this.ensureTrafficMarkers();
     this.trafficBots.forEach((bot, index) => {
+      if (bot.id === 'wanted' || this.isPropBot(bot.id)) return;
       const marker = this.trafficMarkers.get(bot.id);
       if (!marker) return;
       const dead = !(this.combatLayer?.isTargetAlive(bot.id) ?? true);
@@ -2452,6 +2701,7 @@ export class GameEngine {
     this.updateFire();
     this.updateImpound();
     this.updateTaxi();
+    this.updateAmbulance();
     this.updateBus();
     if (this.bountyFight) {
       if (this.playerHp <= 0) this.endBounty(false);
@@ -2506,11 +2756,12 @@ export class GameEngine {
     return this.mode !== 'roam'
       || Boolean(this.heist)
       || this.bountyFight
-      || (Boolean(this.bounty) && this.isPoliceCar())
+      || (Boolean(this.bounty) && this.canHuntBounty())
       || Boolean(this.errand)
       || this.fire.active
       || this.impoundActive
       || this.taxi.active
+      || this.ambulance.active
       || this.busTour.active;
   }
 
@@ -2594,20 +2845,19 @@ export class GameEngine {
     this.errand = null;
     this.offeredDelivery = null;
     this.syncErrandMarkers();
-    if (this.errandIndicator) this.errandIndicator.element.style.display = 'none';
     this.combatLayer?.setPickups(this.pickupVisuals());
   }
 
-  /** Map labels of the errand: the address, or a box over each box. */
+  /** Map labels + matching offscreen tips: the address, or one identical tip per box. */
   private syncErrandMarkers() {
     const errand = this.errand;
-    const wanted = new Map<string, { position: [number, number]; className: string; text: string; colors: { main: string; soft: string } }>();
+    const wanted = new Map<string, { position: [number, number]; className: string; text: string; kind: 'delivery' | 'collect'; colors: { main: string; soft: string } }>();
     if (errand?.kind === 'delivery') {
-      wanted.set('goal', { position: errand.goal, className: 'delivery-goal-marker', text: t('delivery.goal'), colors: MISSION_COLORS.delivery });
+      wanted.set('goal', { position: errand.goal, className: 'delivery-goal-marker', text: t('delivery.goal'), kind: 'delivery', colors: MISSION_COLORS.delivery });
     }
     if (errand?.kind === 'collect') {
       for (const box of errand.boxes) {
-        wanted.set(box.id, { position: box.position, className: 'collect-box-marker', text: t('collect.box'), colors: MISSION_COLORS.collect });
+        wanted.set(box.id, { position: box.position, className: 'collect-box-marker', text: t('collect.box'), kind: 'collect', colors: MISSION_COLORS.collect });
       }
     }
     for (const [id, marker] of this.errandMarkers) {
@@ -2615,28 +2865,43 @@ export class GameEngine {
       marker.remove();
       this.errandMarkers.delete(id);
     }
+    for (const [id, tip] of this.errandIndicators) {
+      if (wanted.has(id)) continue;
+      tip.element.remove();
+      this.errandIndicators.delete(id);
+    }
+    if (wanted.size && !this.eventIndicatorLayer) {
+      this.eventIndicatorLayer = document.createElement('div');
+      this.eventIndicatorLayer.className = 'mission-indicators';
+      this.host.appendChild(this.eventIndicatorLayer);
+    }
     for (const [id, spec] of wanted) {
-      if (this.errandMarkers.has(id)) continue;
-      this.errandMarkers.set(id, this.marker({
-        element: this.makeMapLabel(spec.className, spec.text, spec.text, spec.colors),
-        anchor: 'bottom',
-      }).setLngLat(spec.position).addTo(this.map));
+      if (!this.errandMarkers.has(id)) {
+        this.errandMarkers.set(id, this.marker({
+          element: this.makeMapLabel(spec.className, spec.text, spec.text, spec.colors),
+          anchor: 'bottom',
+        }).setLngLat(spec.position).addTo(this.map));
+      }
+      if (!this.errandIndicators.has(id) && this.eventIndicatorLayer) {
+        const tip = this.makeOffscreenIndicator('focus', spec.text);
+        this.paintMissionIndicator(tip.element, spec.kind);
+        this.eventIndicatorLayer.appendChild(tip.element);
+        this.errandIndicators.set(id, tip);
+      }
     }
   }
 
-  /** Where the errand points now: the address, or the nearest box left. */
-  private errandTarget(): { position: [number, number]; label: string; kind: 'delivery' | 'collect' } | null {
+  /** Active errand pins with the same label (delivery address, or every box left). */
+  private errandPins(): Array<{ id: string; position: [number, number]; label: string; kind: 'delivery' | 'collect' }> {
     const errand = this.errand;
-    if (!errand) return null;
-    if (errand.kind === 'delivery') return { position: errand.goal, label: t('delivery.goal'), kind: 'delivery' };
-    const here = this.vehicle.position;
-    let best: { position: Position; distance: number } | null = null;
-    for (const box of errand.boxes) {
-      const distance = metersBetween(here, box.position);
-      if (!best || distance < best.distance) best = { position: box.position, distance };
-    }
-    const done = errand.total - errand.boxes.length;
-    return best ? { position: best.position as [number, number], label: t('collect.goal', { n: done, total: errand.total }), kind: 'collect' } : null;
+    if (!errand) return [];
+    if (errand.kind === 'delivery') return [{ id: 'goal', position: errand.goal, label: t('delivery.goal'), kind: 'delivery' }];
+    return errand.boxes.map((box) => ({
+      id: box.id,
+      position: box.position as [number, number],
+      label: t('collect.box'),
+      kind: 'collect' as const,
+    }));
   }
 
   /** Where we are on the M map — same pin as the intro spawn marker. */
@@ -2678,8 +2943,9 @@ export class GameEngine {
     return this.haulCandidates().find((c) => c.id === id) ?? null;
   }
 
-  /** A click in the Howler: throw the cable; yank what it holds; let go. Works mid-jump too. */
+  /** Howler (LMB) / Batmobile (RMB): throw the cable; yank what it holds; let go. Works mid-jump too. */
   private haulClick() {
+    if (!this.canCable()) return;
     const now = performance.now();
     const haul = this.haul;
     if (haul) {
@@ -3118,6 +3384,8 @@ export class GameEngine {
     for (const mission of this.missions) mission.label = t(`mission.${mission.kind}`, { n: mission.n });
     for (const marker of this.errandMarkers.values()) marker.remove();
     this.errandMarkers.clear();
+    for (const tip of this.errandIndicators.values()) tip.element.remove();
+    this.errandIndicators.clear();
     this.syncErrandMarkers();
     this.bountyMarker?.remove();
     this.bountyMarker = null;
@@ -3428,7 +3696,7 @@ export class GameEngine {
 
   /** Spawn a local wanted pin now and then; take the job and hunt within 10 km. Police cars only. */
   private updateBounty() {
-    if (!this.isPoliceCar()) return;
+    if (!this.canHuntBounty()) return;
     const now = performance.now();
     const here = this.vehicle.position;
     if (this.bountyPending && !this.bounty) {
@@ -3653,12 +3921,162 @@ export class GameEngine {
 
   acceptRide() {
     if (this.taxi.pending) acceptTaxiFare(this.taxi, this.taxiWorld());
+    else if (this.ambulance.pending) acceptAmbulanceCall(this.ambulance, this.ambulanceWorld());
     else if (this.busTour.pending) acceptBusTour(this.busTour, this.busTourWorld());
   }
 
   declineRide() {
     if (this.taxi.pending) declineTaxiFare(this.taxi, this.taxiWorld());
+    else if (this.ambulance.pending) declineAmbulanceCall(this.ambulance, this.ambulanceWorld());
     else if (this.busTour.pending) declineBusTour(this.busTour, this.busTourWorld());
+  }
+
+  private ambulanceWorld(): AmbulanceCallWorld {
+    const avoid = this.missions.map((mission) => mission.position);
+    if (this.bountyPickup) avoid.push(this.bountyPickup);
+    if (this.fire.pickup) avoid.push(this.fire.pickup);
+    if (this.impoundPickup) avoid.push(this.impoundPickup);
+    if (this.taxi.pickup) avoid.push(this.taxi.pickup);
+    return {
+      position: this.vehicle.position,
+      heading: this.vehicle.heading,
+      mode: this.mode,
+      busy: Boolean(this.eventOffer || this.travelOpen || this.serviceOpen || this.dealerOpen || this.fuelOut || this.taxi.pending || this.busTour.pending || this.ambulance.pending),
+      bountyFight: this.bountyFight,
+      errand: Boolean(this.errand),
+      onMission: this.onMission(),
+      avoid,
+      pickBeaconSpot: (here, heading, seed, spots) => this.pickBeaconSpot(here, heading, seed, spots),
+      nearestHospital: (from) => {
+        // Victim calls need a hospital within 10 km. Prefer a 2–8 km drive when
+        // one exists; otherwise the nearest inside 10 km (even if closer).
+        const PREFER_MIN = 2000;
+        const PREFER_MAX = 8000;
+        const REACH = 10000;
+        const list = [...this.civics.values()].filter((s) => s.kind === 'hospital');
+        if (!list.length) return null;
+        let band: Position | null = null;
+        let bandD = Infinity;
+        let near: Position | null = null;
+        let nearD = Infinity;
+        for (const s of list) {
+          const at = (s.place ?? s.position) as Position;
+          const d = metersBetween(from, at);
+          if (d > REACH) continue;
+          if (d < nearD) { nearD = d; near = at; }
+          if (d >= PREFER_MIN && d <= PREFER_MAX && d < bandD) { bandD = d; band = at; }
+        }
+        return band ?? near;
+      },
+      setScene: (kind, at) => this.setAmbulanceScene(kind, at),
+      syncMissionVisuals: (show) => this.syncMissionVisuals(show),
+      say: (text, toast) => this.say(text, toast),
+      addMoney: (amount) => { this.playerMoney += amount; },
+      onOffer: (offer) => this.onRideOffer(offer),
+      onResult: (cash, victims) => this.onEventResult({ kind: 'ambulance', won: true, cash, name: String(victims) }),
+    };
+  }
+
+  /**
+   * `burn` — house windows on fire only (separate call type).
+   * `crash` — 1–2 wrecks: roadside (often overturned), or nosed into a house with the
+   * car on fire (house itself is not burning). Clear with null.
+   */
+  private setAmbulanceScene(kind: AmbulanceSite | null, at: Position | null): { site: AmbulanceSite; cars: number } | null {
+    this.trafficBots = this.trafficBots.filter((b) => !isAmbulanceWreckId(b.id));
+    // clear smolder unless the fire truck owns a live call
+    if (!this.fire.active) this.combatLayer?.setFireHouse(null);
+    if (!kind || !at) {
+      this.combatLayer?.setTargets(this.targetVehicles());
+      return null;
+    }
+    if (kind === 'burn') {
+      // cap pane scan — London blocks otherwise build thousands of windows in one hitch
+      const facades = this.map.fireFacadesNear(at, 55, 24);
+      if (facades?.panes.length && !this.fire.active) {
+        const n = Math.min(facades.panes.length, 4 + (Math.abs(Math.round(at[0] * 1e4)) % 5));
+        const panes = facades.panes.slice(0, n).map((p) => ({
+          at: p.at as [number, number],
+          altitude: p.altitude,
+          oe: p.oe,
+          on: p.on,
+        }));
+        this.combatLayer?.setFireHouse({ panes, available: Math.max(facades.panes.length, n) });
+        this.combatLayer?.setTargets(this.targetVehicles());
+        return { site: 'burn', cars: 0 };
+      }
+      // no façade nearby — fall back to a roadside crash at the same pin
+      return this.setAmbulanceScene('crash', at);
+    }
+    const seed = (Math.round(at[0] * 1e5) ^ Math.round(at[1] * 1e5) ^ (performance.now() | 0)) >>> 0;
+    const roll = (salt: number) => ((Math.imul(seed ^ salt, 2654435761) >>> 0) / 4294967296);
+    // ~30% two-car pile-up; singles are the common roadside call
+    const cars = roll(0xc1) < 0.3 ? 2 : 1;
+    const facades = this.map.fireFacadesNear(at, 55, 24);
+    const canHouse = Boolean(facades?.panes.length);
+    // single car nosed into a house (car burns — house does not)
+    const intoHouse = cars === 1 && canHouse && roll(0xc2) < 0.4;
+    const choices = carsConfig.filter((car) =>
+      car.id !== HAULER_ID && car.id !== FIRE_TRUCK_ID && car.id !== BUS_ID && car.id !== AMBULANCE_ID && !POLICE_IDS.has(car.id));
+    const baseHeading = this.vehicle.heading + ((seed & 1) ? Math.PI / 2 : -Math.PI / 2);
+    const bots: { bot: TrafficBot; overturned: boolean; burning: boolean }[] = [];
+    for (let i = 0; i < cars; i++) {
+      const car = choices[Math.abs(seed + i * 97) % choices.length] ?? carsConfig[0];
+      const heading = baseHeading + (i ? (roll(0xd0 + i) - 0.5) * 1.1 : 0);
+      let pin: Position = [...at] as Position;
+      if (i === 1) {
+        const side = roll(0xe0) < 0.5 ? -1 : 1;
+        const gap = 4.2 + roll(0xe1) * 2.2;
+        pin = offsetPosition(at, Math.cos(baseHeading) * side * gap, -Math.sin(baseHeading) * side * gap);
+      } else if (intoHouse && facades) {
+        const pane = facades.panes[0];
+        pin = offsetPosition(at, pane.oe * 2.4, pane.on * 2.4);
+      }
+      const id = ambulanceWreckId(i);
+      const bot = createTrafficBot(id, t('ambulance.marker.crash'), car, this.trafficNetwork, pin, heading, new Set(), 'explore', seed + i, { min: 0, max: 40 });
+      bot.controller.position = [...pin] as Position;
+      bot.controller.heading = heading;
+      bot.controller.speed = 0;
+      bot.position = [...pin] as Position;
+      bot.heading = heading;
+      bot.route = [];
+      bot.goal = null;
+      bot.repathAt = Number.POSITIVE_INFINITY;
+      // into house: car on fire, usually upright; roadside: often overturned, sometimes burning
+      const overturned = intoHouse ? roll(0xf0 + i) < 0.25 : roll(0xf0 + i) < 0.7;
+      const burning = intoHouse || roll(0xf8 + i) < 0.45;
+      bots.push({ bot, overturned, burning });
+    }
+    this.trafficBots = [...this.trafficBots, ...bots.map((b) => b.bot)];
+    this.combatLayer?.setTargets(this.targetVehicles());
+    for (const { bot, overturned, burning } of bots) {
+      this.combatLayer?.plantPropWreck(bot.id, { overturned, burning });
+    }
+    return { site: 'crash', cars };
+  }
+
+  private updateAmbulance() {
+    if (!this.isAmbulance()) return;
+    // keep crash wrecks planted (same as the impound wait car)
+    if (this.ambulance.pickup && this.ambulance.cars > 0) {
+      for (const wreck of this.trafficBots) {
+        if (!isAmbulanceWreckId(wreck.id)) continue;
+        wreck.controller.speed = 0;
+        wreck.route = [];
+        wreck.goal = null;
+        // leave each wreck on its own planted spot (controller.position)
+        wreck.position = [...wreck.controller.position] as Position;
+      }
+    }
+    // hospital drop only when nearly stopped
+    if (this.ambulance.active && this.ambulance.goal
+      && metersBetween(this.vehicle.position, this.ambulance.goal) <= AMBULANCE_HOSPITAL_M
+      && Math.abs(this.vehicle.speed) > 7) return;
+    updateAmbulanceCall(this.ambulance, this.ambulanceWorld());
+  }
+
+  private suspendAmbulance() {
+    suspendAmbulanceCall(this.ambulance, this.ambulanceWorld());
   }
 
   private busWorld(): BusStopWorld {
@@ -3746,7 +4164,7 @@ export class GameEngine {
       }
       // only when the car is on the bed (or hooked/pulling) — empty visits to police do nothing
       if (this.carryingImpound() && now > this.impoundDeliveredAt) {
-        const police = atStation(here, [...this.civics.values()].filter((s) => s.kind === 'police'));
+        const police = atStation(here, [...this.civics.values()].filter((s) => s.kind === 'police'), SERVICE_REACH.civic);
         if (police && Math.abs(this.vehicle.speed) < 7) this.completeImpound();
       }
       return;
@@ -3837,7 +4255,7 @@ export class GameEngine {
   private updateBountyMarkers() {
     const pending = Boolean(this.bountyPending && this.bountyPickup && !this.bounty);
     const bounty = this.bountyFight ? null : (this.bounty ?? this.bountyPending);
-    if (!this.isPoliceCar() || !bounty || !this.driving || this.errand || (pending && !this.bountyPickup)) {
+    if (!this.canHuntBounty() || !bounty || !this.driving || this.errand || (pending && !this.bountyPickup)) {
       if (!this.bountyFight && this.bountyIndicator) this.bountyIndicator.element.style.display = 'none';
       if (this.bountyMarker) { this.bountyMarker.remove(); this.bountyMarker = null; }
       if (!this.bountyFight) return;
@@ -3969,6 +4387,29 @@ export class GameEngine {
     }
   }
 
+  /** Map label for the ambulance call; HUD tip comes from the focus cycle. */
+  private updateAmbulanceMarkers() {
+    if (this.ambulanceIndicator) this.ambulanceIndicator.element.style.display = 'none';
+    const pin = this.ambulance.active ? this.ambulance.goal : this.ambulance.pickup;
+    if (!this.isAmbulance() || !this.driving || !pin || this.errand || this.bountyFight) {
+      if (this.ambulanceMarker) { this.ambulanceMarker.remove(); this.ambulanceMarker = null; }
+      return;
+    }
+    const title = this.ambulance.active
+      ? t('ambulance.marker.drop')
+      : this.ambulance.site === 'burn' ? t('ambulance.marker.burn') : t('ambulance.marker.crash');
+    if (!this.ambulanceMarker) {
+      this.ambulanceMarker = this.marker({ element: this.makeMapLabel('ambulance-map-marker', title, title, MISSION_COLORS.ambulance), anchor: 'bottom' }).setLngLat(pin).addTo(this.map);
+    } else {
+      this.ambulanceMarker.setLngLat(pin);
+      const el = this.ambulanceMarker.getElement();
+      const label = el?.querySelector('.map-pin-label');
+      if (label) label.textContent = title;
+      el?.style.setProperty('--mission-color', MISSION_COLORS.ambulance.main);
+      el?.style.setProperty('--mission-soft', MISSION_COLORS.ambulance.soft);
+    }
+  }
+
   /** Map label for the bus tour; HUD tip comes from the focus cycle. */
   private updateBusTourMarkers() {
     if (this.busTourIndicator) this.busTourIndicator.element.style.display = 'none';
@@ -3997,6 +4438,7 @@ export class GameEngine {
     this.updateFireMarkers();
     this.updateImpoundMarkers();
     this.updateTaxiMarkers();
+    this.updateAmbulanceMarkers();
     this.updateBusTourMarkers();
     const roaming = this.driving && this.mode === 'roam';
     const goals = this.focusGoals();
@@ -4029,13 +4471,15 @@ export class GameEngine {
       focused?.label,
     );
     this.updateOffscreenMarker(this.raceGoalIndicator, this.raceGoal, this.driving && this.mode === 'race');
-    const errand = this.errandTarget();
-    if (errand && !this.errandIndicator && this.eventIndicatorLayer) {
-      this.errandIndicator = this.makeOffscreenIndicator('focus', errand.label);
-      this.eventIndicatorLayer.appendChild(this.errandIndicator.element);
+    const errandPins = this.errandPins();
+    for (const pin of errandPins) {
+      const tip = this.errandIndicators.get(pin.id);
+      if (tip) this.paintMissionIndicator(tip.element, pin.kind);
+      this.updateOffscreenMarker(tip ?? null, pin.position, this.driving, pin.label);
     }
-    if (errand && this.errandIndicator) this.paintMissionIndicator(this.errandIndicator.element, errand.kind);
-    this.updateOffscreenMarker(this.errandIndicator, errand?.position ?? null, this.driving && Boolean(errand), errand?.label);
+    for (const [id, tip] of this.errandIndicators) {
+      if (!errandPins.some((pin) => pin.id === id)) tip.element.style.display = 'none';
+    }
     this.syncCustomPinPointers();
     for (const pin of this.customPins) {
       this.updateOffscreenMarker(pin.indicator, pin.position, this.driving, t('marker.pin'));
@@ -4047,7 +4491,7 @@ export class GameEngine {
       this.setMapPinRange(this.missionMarkers.get(mission.id), mission.position, pinRange);
     }
     this.setMapPinRange(this.raceGoalMarker, this.raceGoal, pinRange && this.mode === 'race');
-    this.setMapPinRange(this.bountyMarker, this.bountyPickup ?? this.bounty?.spot ?? null, pinRange && this.isPoliceCar());
+    this.setMapPinRange(this.bountyMarker, this.bountyPickup ?? this.bounty?.spot ?? null, pinRange && this.canHuntBounty());
     this.setMapPinRange(this.fireMarker, this.fire.active ? this.fire.spot : this.fire.pickup, pinRange && this.isFireTruck());
     this.setMapPinRange(
       this.impoundMarker,
@@ -4055,14 +4499,14 @@ export class GameEngine {
       pinRange && this.isHauler(),
     );
     this.setMapPinRange(this.taxiMarker, this.taxi.active ? this.taxi.goal : this.taxi.pickup, pinRange && this.isTaxi());
+    this.setMapPinRange(this.ambulanceMarker, this.ambulance.active ? this.ambulance.goal : this.ambulance.pickup, pinRange && this.isAmbulance());
     this.setMapPinRange(
       this.busTourMarker,
       this.busTour.active ? this.busTour.goal : this.busTour.pickup,
       pinRange && this.isBus(),
     );
-    if (this.errand?.kind === 'delivery') this.setMapPinRange(this.errandMarkers.get('goal'), this.errand.goal, pinRange);
-    if (this.errand?.kind === 'collect') {
-      for (const box of this.errand.boxes) this.setMapPinRange(this.errandMarkers.get(box.id), box.position, pinRange);
+    for (const pin of errandPins) {
+      this.setMapPinRange(this.errandMarkers.get(pin.id), pin.position, pinRange);
     }
   }
 
@@ -4098,7 +4542,7 @@ export class GameEngine {
       this.collisionTime = 0;
       this.placeSpawnMarker(this.defaultSpawn.position);
       this.setTargetVehicles(this.defaultSpawn.position, this.defaultSpawn.heading);
-      if (this.mapShown) this.map.jumpTo(this.introView());
+      if (this.mapShown && !this.driving) this.showIntroMap();
     } else {
       this.placeSpawnMarker(null);
     }
@@ -4125,10 +4569,16 @@ export class GameEngine {
       (position, heading) => this.collisions.blocked(position, position, heading),
       60,
     );
-    // the label over the house the shop is in (the nearest one will do); drive up on the road in front
+    // the label over the house the shop is in; dialog reach = footprint radius + a few metres
     const house = this.map.houseAt(station.position);
     const place = house?.middle ?? station.position;
-    return { id: station.id, position: start ? [...start.position] : station.position, place, top: house?.top };
+    return {
+      id: station.id,
+      position: start ? [...start.position] : station.position,
+      place,
+      top: house?.top,
+      radius: house?.radius,
+    };
   }
 
   /** Category chips + world plaques: only while the M map is open. */
@@ -4138,20 +4588,33 @@ export class GameEngine {
 
   private setMapViewUi(open: boolean) {
     if (this.mapViewUi === open) {
-      if (open) {
-        this.labelServices();
-        this.refreshHubMarkers();
-      }
+      this.refreshMapLabels(true);
       return;
     }
     this.mapViewUi = open;
     this.onMapView(open);
-    if (open) {
-      this.labelServices();
-      this.refreshHubMarkers();
+    // plaques stay in the 3D world while driving — only the chip strip is map-only
+    this.refreshMapLabels(true);
+  }
+
+  /** Rebuild fuel/hub plaques; on the M map at most a few times a second (or after a pan). */
+  private refreshMapLabels(force = false) {
+    const now = performance.now();
+    if (this.mapViewOpen()) {
+      const c = this.map.getCenter();
+      const here: [number, number] = [c.lng, c.lat];
+      const moved = !this.mapLabelsAtPos || metersBetween(this.mapLabelsAtPos, here) > 150;
+      if (!force && !moved && now - this.mapLabelsAt < 450) return;
+      this.mapLabelsAt = now;
+      this.mapLabelsAtPos = here;
+    } else if (!force && now - this.mapLabelsAt < 450) {
+      return;
     } else {
-      this.clearMapLabelMarkers();
+      this.mapLabelsAt = now;
+      this.mapLabelsAtPos = null;
     }
+    this.labelServices();
+    this.refreshHubMarkers();
   }
 
   private clearMapLabelMarkers() {
@@ -4166,8 +4629,7 @@ export class GameEngine {
   }
 
   /** Real petrol stations from the POI layer; remembered as the player drives on. */
-  private collectStations() {
-    const pois = this.readSourceLayer('poi');
+  private collectStations(pois = this.readSourceLayer('poi')) {
     this.collectHubs(pois);
     for (const feature of pois) {
       const p = feature.properties ?? {};
@@ -4235,23 +4697,28 @@ export class GameEngine {
       const keep = [...this.landmarks.values()].sort((a, b) => metersBetween(a.position, this.vehicle.position) - metersBetween(b.position, this.vehicle.position)).slice(0, 250);
       this.landmarks = new Map(keep.map(spot => [spot.id, spot]));
     }
-    const visible = [...this.stations.values()].filter(station => metersBetween(station.position, this.vehicle.position) < 2500);
-    this.fuelLayer?.setStations(visible, this.settings.terrain);
-    this.labelServices();
   }
 
-  /** Map labels for the nearest fuel stations, car services and dealerships (M map only). */
+  private paintFuelStations() {
+    const visible = [...this.stations.values()].filter(station => metersBetween(station.position, this.vehicle.position) < 2500);
+    this.fuelLayer?.setStations(visible, this.settings.terrain);
+  }
+
+  /** Map / world plaques for nearby fuel, service, banks… — on the M map and over houses while driving. */
   private labelServices() {
-    if (!this.mapViewOpen()) {
+    if (!this.driving && !this.mapViewOpen()) {
       this.clearMapLabelMarkers();
       return;
     }
-    const c = this.map.getCenter();
-    const here: [number, number] = [c.lng, c.lat];
+    // M map: around the view centre; driving: around the car so you can read the building
+    const c = this.mapViewOpen() ? this.map.getCenter() : null;
+    const here: [number, number] = c ? [c.lng, c.lat] : [...this.vehicle.position];
+    const reach = this.mapViewOpen() ? 3000 : 1200;
+    const cap = this.mapViewOpen() ? 10 : 6;
     type ServiceKind = 'fuel' | 'repair' | 'dealer' | 'bank' | CivicKind | 'hotel' | 'museum';
-    const nearest = (list: Station[], limit = 10) => list
+    const nearest = (list: Station[], limit = cap) => list
       .map(station => ({ station, d: metersBetween(station.position, here) }))
-      .filter(item => item.d < 3000)
+      .filter(item => item.d < reach)
       .sort((a, b) => a.d - b.d)
       .slice(0, limit)
       .map(item => item.station);
@@ -4285,11 +4752,12 @@ export class GameEngine {
     };
     for (const [id, { station, kind, title }] of wanted) {
       // the houses come in after the roads: find the shop's house when they do
-      if (station.top == null) {
+      if (station.top == null || station.radius == null) {
         const house = this.map.houseAt(station.place ?? station.position);
         if (house) {
           station.place = house.middle;
           station.top = house.top;
+          station.radius = house.radius;
           this.serviceMarkers.get(id)?.setLngLat(house.middle).setAltitude(house.top);
         }
       }
@@ -4308,15 +4776,16 @@ export class GameEngine {
   }
 
   private refreshHubMarkers() {
-    if (!this.mapViewOpen()) {
+    if (!this.driving && !this.mapViewOpen()) {
       for (const [id, marker] of this.hubMarkers) {
         marker.remove();
         this.hubMarkers.delete(id);
       }
       return;
     }
-    const c = this.map.getCenter();
-    const here: [number, number] = [c.lng, c.lat];
+    const c = this.mapViewOpen() ? this.map.getCenter() : null;
+    const here: [number, number] = c ? [c.lng, c.lat] : [...this.vehicle.position];
+    const hubReach = this.mapViewOpen() ? 14000 : 2500;
     const hubLabel: Record<HubKind, string> = { airport: t('hub.airport'), port: t('hub.port'), station: t('hub.station') };
     const hubColor: Record<HubKind, { main: string; soft: string }> = {
       airport: { main: '#9bb56a', soft: '#d4e878' },
@@ -4324,8 +4793,8 @@ export class GameEngine {
       station: { main: '#8a5a2b', soft: '#c49a60' },
     };
     for (const hub of this.hubs.values()) {
-      // Wide enough that a zoomed-out M map still shows nearby travel hubs.
-      const near = metersBetween(hub.position, here) < 14000;
+      // M map: wide; driving: nearby hubs only so the street stays readable
+      const near = metersBetween(hub.position, here) < hubReach;
       const show = near && this.mapLabelOn(hub.kind);
       const marker = this.hubMarkers.get(hub.id);
       if (show && !marker) {
@@ -4373,11 +4842,12 @@ export class GameEngine {
   }
 
   private updateFuel(_dt: number) {
-    const station = atStation(this.vehicle.position, [...this.stations.values()]);
-    const shop = atStation(this.vehicle.position, [...this.repairShops.values()]);
-    const dealer = atStation(this.vehicle.position, [...this.dealerships.values()]);
+    const herePos = this.vehicle.position;
+    const station = atStation(herePos, [...this.stations.values()], SERVICE_REACH.fuel);
+    const shop = atStation(herePos, [...this.repairShops.values()], SERVICE_REACH.repair);
+    const dealer = atStation(herePos, [...this.dealerships.values()], SERVICE_REACH.dealer);
     const now = performance.now();
-    const bank = atStation(this.vehicle.position, [...this.banks.values()].filter((b) => (this.bankShut.get(b.id) ?? 0) <= now));
+    const bank = atStation(herePos, [...this.banks.values()].filter((b) => (this.bankShut.get(b.id) ?? 0) <= now), SERVICE_REACH.bank);
     this.refuelling = false;
     // arriving (slowly) at a station, service, showroom or bank opens its dialog once per visit
     const here = station ?? shop ?? dealer ?? bank;
@@ -4498,7 +4968,7 @@ export class GameEngine {
     return new ThreeMarker(options) as unknown as MapMarker;
   }
 
-  /** Our own world under the game. */
+  /** Pitched chase-style framing (fly-in / resume), not the intro menu. */
   introView() {
     return {
       center: this.vehicle.position as [number, number],
@@ -4509,17 +4979,45 @@ export class GameEngine {
     };
   }
 
+  /** Intro menu: top-down city map (same as M while driving) — pan/zoom, click to place spawn. */
+  private showIntroMap() {
+    const center = this.vehicle.position as [number, number];
+    this.overview = 1;
+    this.overviewTarget = 1;
+    this.overviewFree = true;
+    this.overviewLeave = null;
+    this.menuView = null;
+    this.map.setScreenStream(true);
+    this.map.setStreamCalm(false);
+    this.map.jumpTo({
+      center,
+      zoom: this.overviewZoom(center[1]),
+      pitch: 0,
+      bearing: 0,
+      elevation: this.altitude,
+    });
+    this.map.setInteractive({ pan: true, rotate: false });
+    this.setMapViewUi(true);
+    queueMicrotask(() => { if (!this.driving && this.overviewFree) this.refreshMapLabels(true); });
+  }
+
   revealMap() {
     if (this.mapShown || this.disposed) return;
     this.mapShown = true;
-    this.map.endStreamBurst();
-    this.map.jumpTo(this.introView());
+    // Short burst after reveal, then drop — leaving it on forever tanks FPS after a few M toggles.
+    this.map.beginStreamBurst();
+    this.bootBurstUntil = performance.now() + 2500;
+    this.showIntroMap();
     this.host.style.transition = 'opacity .7s ease';
     this.host.style.opacity = '1';
     this.onBoot(true);
     this.say(t('status.ready'));
-    // Enable map navigation for the intro screen (pan, zoom, right-drag rotate).
-    this.map.setInteractive({ pan: true, rotate: true });
+  }
+
+  private tickStreamBurst(now = performance.now()) {
+    if (!this.bootBurstUntil || now < this.bootBurstUntil) return;
+    this.bootBurstUntil = 0;
+    this.map.endStreamBurst();
   }
 
   private settleBoot() {
@@ -4563,8 +5061,32 @@ export class GameEngine {
     } else {
       this.altitude = 0;
     }
-    // wait for the fog ring to finish uploading — save resume used to skip this and hitch the first lap
-    if (!this.map.areTilesLoaded() && waited < 20000) {
+    // Chase zoom/pitch, centred on the car (still invisible): burst loads the full
+    // loadRadius ring — looking left/right on start must not hitch on cold tiles.
+    if (!this.bootChaseWarmed) {
+      this.map.beginStreamBurst();
+      const bearing = this.vehicle.heading * 180 / Math.PI;
+      const zoom = zoomForDistance(this.distance, this.vehicle.position[1]);
+      this.map.jumpTo({
+        center: [...this.vehicle.position] as [number, number],
+        zoom,
+        pitch: cameraConfig.pitch,
+        bearing,
+        elevation: this.altitude,
+      });
+      this.bootChaseWarmed = true;
+      this.settleFrames = 0;
+      this.say(t('status.streets'));
+      return;
+    }
+    // Full isotropic loadRadius ring must be fetched + uploaded before "ready"
+    const ring = this.map.loadRadius;
+    const warmCap = 55000;
+    if (!this.map.areTilesLoaded(ring) && waited < warmCap) {
+      this.say(t('status.streets'));
+      return;
+    }
+    if (!this.map.areTilesLoadedAround(this.vehicle.position as [number, number], ring) && waited < warmCap) {
       this.say(t('status.streets'));
       return;
     }
@@ -4603,10 +5125,12 @@ export class GameEngine {
     this.overviewTarget = 0;
     this.overviewFree = false;
     this.overviewLeave = null;
+    this.map.setScreenStream(false);
     this.menuView = null;
-    this.setMapViewUi(false);
     const starting = value && !this.driving;
     this.driving = value;
+    // after driving flips: keep / drop world plaques with the new mode
+    this.setMapViewUi(false);
     this.paused = false;
     if (!value) {
       this.eventOffer = null;
@@ -4641,18 +5165,9 @@ export class GameEngine {
         if (el) el.style.display = '';
       }
       const moving = this.approachFrom != null;
-      this.approach = 0;
       this.approachFrom = null;
       if (moving) this.onApproach(false);
-      if (this.mapShown) {
-        const view = this.introView();
-        const center = this.map.getCenter();
-        if (Math.abs(center.lng - view.center[0]) > 1e-8 || Math.abs(center.lat - view.center[1]) > 1e-8 || Math.abs(this.map.getCenterElevation() - view.elevation) > 0.25 || Math.abs(this.map.getZoom() - view.zoom) > 0.001) {
-          this.map.jumpTo(view);
-        }
-        // Re-enable map navigation for intro
-        this.map.setInteractive({ pan: true, rotate: true });
-      }
+      if (this.mapShown) this.showIntroMap();
       return;
     }
     if (this.spawnMarker) {
@@ -4668,17 +5183,35 @@ export class GameEngine {
       this.renderVehicle.reset(this.vehicle);
       this.accumulator = 0;
     }
+    // First pull-out: buy the intro car if it isn't already in the garage
+    if (starting && !this.garage.has(this.car.id)) {
+      const price = carPrice(this.car);
+      if (price > this.playerMoney) {
+        this.driving = false;
+        this.say(t('event.broke', { fee: formatNumber(price) }), true);
+        return;
+      }
+      this.playerMoney -= price;
+      this.garage.add(this.car.id);
+    }
     // Disable map interactivity while driving
     this.map.setInteractive({ pan: false, rotate: false });
     if (starting && approach) {
+      // boot already warmed the ring — starve uploads during the fly-in so it stays smooth.
+      // start partway through: the long pull-in was the hitchy half in London/Manhattan.
+      this.map.endStreamBurst();
+      this.map.setStreamCalm(true);
+      this.bootBurstUntil = 0;
       const center = this.map.getCenter();
       this.approachFrom = { lng: center.lng, lat: center.lat, zoom: this.map.getZoom(), pitch: this.map.getPitch(), bearing: this.map.getBearing() };
-      this.approach = 1;
+      this.approachAt = performance.now();
       this.onApproach(true);
       return;
     }
-    // Save resume (and any no-fly start): sit in chase cam on the first frame
+    // Save resume / arrive: sit in chase cam on the first frame (no intro fly-in)
     if (starting && this.mapShown) {
+      this.map.setStreamCalm(false);
+      this.map.beginStreamBurst();
       this.orbit = 0;
       this.distance = cameraConfig.distance;
       this.pitch = cameraConfig.pitch;
@@ -4694,6 +5227,7 @@ export class GameEngine {
         bearing: this.bearing,
         elevation: this.altitude,
       });
+      this.bootBurstUntil = performance.now() + 2500;
     }
   }
 
@@ -4794,7 +5328,8 @@ export class GameEngine {
       // terrain and roofs both support the car; clear a building only above its skin
       const sample = (along: number, side: number) => {
         const at = offsetPosition(this.renderVehicle.position, forwardEast * along + rightEast * side, forwardNorth * along + rightNorth * side);
-        const terrain = this.map.groundAt(at);
+        // pass altitude so overpass seams keep the deck (bare groundAt drops to the road below)
+        const terrain = this.map.groundAt(at, this.altitude);
         // a roof carries the car only if it came from above (a jump, a landing): one far above
         // its wheels is a wall it is touching — long cars' bumpers reach past the wall
         // test, and taking that roof as ground used to lift them onto houses like a ramp
@@ -4841,8 +5376,14 @@ export class GameEngine {
     if (!this.wheelTargets.ready) return;
     const clamp = (value: number) => Math.max(-0.5, Math.min(0.5, value));
     const lift = this.driving ? this.rampLift(this.renderVehicle.position) : null;
-    const ground = this.wheelTargets.altitude + (lift ?? 0);
+    let ground = this.wheelTargets.altitude + (lift ?? 0);
     const speed = Math.abs(this.vehicle.speed);
+    // a deck seam can report the road/river under the bridge for one sample — don't dive
+    if (!this.airborne && this.altitude - ground > 2.4 && Math.abs(this.climb) < 5) {
+      const held = this.map.groundAt(this.vehicle.position, this.altitude);
+      if (held != null && this.altitude - held < 1.6) ground = held;
+      else if (this.onBridgeDeck(this.vehicle.position, this.altitude)) ground = this.altitude;
+    }
     if (this.hangAltitude != null) {
       // on the cable: held up there, no gravity
       this.altitude = this.hangAltitude;
@@ -4852,6 +5393,7 @@ export class GameEngine {
       this.modelRoll = settle(this.modelRoll, 0);
       return;
     }
+    if (this.plunge) return;
     if (this.airborne) {
       // flying: gravity only; the nose follows the flight path
       this.climb -= GRAVITY * dt;
@@ -4862,12 +5404,15 @@ export class GameEngine {
         this.altitude = ground;
         this.airborne = false;
         this.climb = 0;
+        // landed in the river (not on a bridge deck) → splash and pull out on shore
+        const elevated = this.onBridgeDeck(this.vehicle.position, this.altitude);
+        if (this.water.covers(this.vehicle.position, elevated)) this.beginPlunge(ground);
       }
       return;
     }
     // the ground falls away faster than gravity can pull the car down: it flies
     const predicted = this.altitude + this.climb * dt - 0.5 * GRAVITY * dt * dt;
-    if (speed > 5 && ground < predicted - 0.3) {
+    if (speed > 5 && ground < predicted - 0.3 && this.altitude - ground < 2.4) {
       this.airborne = true;
       this.altitude = predicted;
       this.climb -= GRAVITY * dt;
@@ -4919,7 +5464,7 @@ export class GameEngine {
   /** True when a car pose sits in a building or in water. */
   private spawnSpotTaken(position: Position, heading: number) {
     return this.collisions.blocked(position, position, heading)
-      || this.water.resolve(position, position, heading).stopped;
+      || this.water.resolve(position, position, heading, 1, false).stopped;
   }
 
   private loadSpawnCollisions(at: Position, radius: number) {
@@ -5027,26 +5572,89 @@ export class GameEngine {
     yield* this.collectWorldThree(refreshTiles);
   }
 
+  /** Pull one resident tile into gameplay caches / traffic / rails / POIs. */
+  private absorbTile(key: string) {
+    // features are ready at onTile; GPU waiting queue is unrelated
+    if (this.ingestedTiles.has(key) || !this.map.world.hasTile(key)) return;
+    const world = this.map.world;
+    const water = world.featuresOf(key, 'water') as MapFeature[];
+    const roads = world.featuresOf(key, 'transportation') as MapFeature[];
+    const landuse = world.featuresOf(key, 'landuse') as MapFeature[];
+    const poi = world.featuresOf(key, 'poi') as MapFeature[];
+    if (water.length) this.cachedWater.push(...water);
+    if (roads.length) {
+      this.cachedRoads.push(...roads);
+      this.rails.addFeatures(roads);
+      this.trafficNetwork.addFeatures(roads);
+    }
+    if (landuse.length) this.cachedLanduse.push(...landuse);
+    if (poi.length) this.collectStations(poi);
+    this.ingestedTiles.add(key);
+  }
+
+  /** After a full scoop: mark every tile in feature range so we don't re-absorb it. */
+  private rememberIngested(focus: [number, number]) {
+    this.ingestedTiles.clear();
+    const mx = mercatorX(focus[0]), my = mercatorY(focus[1]);
+    const scale = Math.cos(focus[1] * Math.PI / 180);
+    const reach = this.map.world.options.featureRadius;
+    for (const key of this.map.world.tileKeys()) {
+      const [z, x, y] = key.split('/').map(Number);
+      if (![z, x, y].every(Number.isFinite)) continue;
+      if (distanceToTile(mx, my, { z, x, y }, scale) > reach) continue;
+      this.ingestedTiles.add(key);
+    }
+  }
+
   /** Roads, water, green areas and stations for collisions and gameplay. */
   private *collectGround(refreshTiles: boolean, focus: [number, number]): Generator<null, void> {
     if (refreshTiles) {
-      this.cachedWater = this.readSourceLayer('water');
-      yield null;
-      this.cachedRoads = this.readSourceLayer('transportation');
-      this.rails.addFeatures(this.cachedRoads);
-      this.rails.prune(focus, 6000);
-      this.trafficNetwork.addFeatures(this.cachedRoads);
-      yield null;
-      this.trafficNetwork.flushRebuild();
-      yield null;
-      this.syncRoadPickups();
-      this.cachedLanduse = this.readSourceLayer('landuse');
-      this.collectStations();
-      if (this.mapViewOpen()) {
+      const now = performance.now();
+      const batch = [...this.pendingIngest];
+      this.pendingIngest.clear();
+      // Full features() only on boot / rare prune / cache bloat — not on every dirty bit.
+      const forceFull = !this.tilesIngested
+        || now - this.fullScoopAt > 60000
+        || this.cachedRoads.length > 8000
+        || this.cachedWater.length > 4000;
+
+      if (forceFull) {
+        this.cachedWater = this.readSourceLayer('water');
+        yield null;
+        this.cachedRoads = this.readSourceLayer('transportation');
+        this.rails.addFeatures(this.cachedRoads);
+        this.rails.prune(focus, 6000);
+        this.trafficNetwork.addFeatures(this.cachedRoads);
+        yield null;
+        this.trafficNetwork.flushRebuild();
+        yield null;
+        this.syncRoadPickups();
+        this.cachedLanduse = this.readSourceLayer('landuse');
+        this.collectStations();
+        this.paintFuelStations();
         this.labelServices();
         this.refreshHubMarkers();
+        this.fullScoopAt = now;
+        this.rememberIngested(focus);
+        yield null;
+      } else if (batch.length) {
+        let n = 0;
+        for (const key of batch) {
+          this.absorbTile(key);
+          if (++n % 3 === 0) yield null;
+        }
+        this.rails.prune(focus, 6000);
+        yield null;
+        if (this.trafficNetwork.flushRebuild()) {
+          this.syncRoadPickups();
+          yield null;
+        }
+        this.paintFuelStations();
+        this.labelServices();
+        this.refreshHubMarkers();
+        yield null;
       }
-      yield null;
+      // else: collisionDirty only (buildings) — collectWorldThree already refreshed solids
     } else if (this.trafficNetwork.flushRebuild()) {
       this.syncRoadPickups();
       yield null;
@@ -5073,8 +5681,14 @@ export class GameEngine {
     const checkPoint: [number, number] = this.driving ? this.vehicle.position : [center.lng, center.lat];
     const moved = origin ? Math.hypot((checkPoint[0] - origin[0]) * METERS_PER_DEGREE * cos, (checkPoint[1] - origin[1]) * METERS_PER_DEGREE) : Infinity;
     const needsCoverage = !this.water.near(this.vehicle.position);
-    const tileDebounce = this.driving ? 1200 : (this.mapShown ? 1800 : 250);
-    const refreshTiles = (!this.tilesIngested || this.collisionDirty) && now - this.collisionTime >= tileDebounce;
+    // Pending tile ingest is cheap — run soon. Full scoop stays rare/slow.
+    const pending = this.pendingIngest.size > 0;
+    const tileDebounce = pending
+      ? (this.overview > 0.2 ? 700 : 350)
+      : this.overview > 0.2 ? 2800
+        : this.driving ? 1600
+          : (this.mapShown ? 1800 : 250);
+    const refreshTiles = (!this.tilesIngested || this.collisionDirty || pending) && now - this.collisionTime >= tileDebounce;
     const needFocus = needsCoverage || moved >= movedLimit;
 
     if (!this.worldWork && this.mapLoaded) {
@@ -5104,11 +5718,45 @@ export class GameEngine {
     this.last = now;
     this.noteFrame(now);
     if (!this.ready) return;
-    this.pumpWorld(now);
-    if (this.driving && !this.paused && !document.hidden) {
+    // fly-in: no world scoops / traffic / physics — those were the 17 fps хрясть
+    if (!this.approachFrom) this.pumpWorld(now);
+    if (this.driving && !this.paused && !document.hidden && this.approachFrom) {
+      this.accumulator = 0;
+      this.renderVehicle.reset(this.vehicle);
+      this.orbit = 0;
+      this.distance = cameraConfig.distance;
+      this.pitch = cameraConfig.pitch;
+      this.bearing = this.vehicle.heading * 180 / Math.PI;
+      const bearingRad = this.bearing * Math.PI / 180;
+      const zoom = zoomForDistance(this.distance, this.renderVehicle.position[1]);
+      const ahead = lookAheadFor(zoom, this.renderVehicle.position[1]);
+      const look = offsetPosition(this.renderVehicle.position, Math.sin(bearingRad) * ahead, Math.cos(bearingRad) * ahead);
+      const from = this.approachFrom;
+      const startT = 0.45;
+      const raw = Math.min(1, (now - this.approachAt) / this.approachMs);
+      const t = startT + (1 - startT) * raw;
+      const eased = t * t * (3 - 2 * t);
+      const turn = ((this.bearing - from.bearing + 540) % 360) - 180;
+      const center: [number, number] = [from.lng + (look[0] - from.lng) * eased, from.lat + (look[1] - from.lat) * eased];
+      const zoomNow = from.zoom + (zoom - from.zoom) * eased;
+      const pitchNow = from.pitch + (this.pitch - from.pitch) * eased;
+      const bearingNow = from.bearing + turn * eased;
+      this.map.setStreamCalm(true);
+      this.map.setScreenStream(false);
+      this.map.jumpTo({ center, zoom: zoomNow, pitch: pitchNow, bearing: bearingNow, elevation: this.altitude });
+      this.map.setFocusCar(this.renderVehicle.position, this.altitude, this.renderVehicle.heading, this.modelPitch);
+      if (raw >= 1) {
+        this.approachFrom = null;
+        this.onApproach(false);
+        this.map.setStreamCalm(false);
+        this.map.beginStreamBurst();
+        this.bootBurstUntil = performance.now() + 2000;
+      }
+    } else if (this.driving && !this.paused && !document.hidden) {
       this.accumulator += dt;
       let blocked = false;
       let shore = false;
+      this.tickPlunge(now);
       const gridded = this.raceCountdown(now);
       while (this.accumulator >= 1 / 60) {
         this.renderVehicle.capture(this.vehicle);
@@ -5119,7 +5767,7 @@ export class GameEngine {
         const driveKeys = this.fuel.empty ? new Set([...held].filter(key => !NO_FUEL_KEYS.has(key))) : held;
         const travelled = this.vehicle.distance;
         this.vehicle.step(1 / 60, driveKeys, { ...vehicleConfig, acceleration: this.car.acceleration, maxSpeed: this.car.maxSpeed });
-        if (gridded || this.hangAltitude != null || this.towed) {
+        if (gridded || this.hangAltitude != null || this.towed || this.plunge) {
           // on the grid: revs may build (clutch launch), the car stays put; on the cable it hangs
           this.vehicle.position = previous;
           this.vehicle.heading = oldHeading;
@@ -5127,7 +5775,35 @@ export class GameEngine {
         }
         // consumption follows the car's own distance (scale-independent)
         this.fuel.burn((this.vehicle.distance - travelled), 1 / 60, driveKeys.has('Space'));
-        {
+        // knock trees/lamps on the bumper sweep — before walls/water rewrite the segment.
+        // At ~250 km/h the centre point tunnels past trunks / skips while airborne over bumps;
+        // stretch nose→tail and keep testing while still near the ground.
+        const intended: [number, number] = [...this.vehicle.position];
+        if (!this.plunge && !gridded && Math.abs(this.vehicle.speed) > 1.5) {
+          const ground = this.map.groundAt(intended, this.altitude) ?? this.altitude;
+          const nearGround = !this.airborne || this.altitude - ground < 3.5;
+          if (nearGround) {
+            const len = this.car.length;
+            const se = Math.sin(this.vehicle.heading), ne = Math.cos(this.vehicle.heading);
+            const from = offsetPosition(previous, -se * len * 0.2, -ne * len * 0.2) as [number, number];
+            const to = offsetPosition(intended, se * len * 0.55, ne * len * 0.55) as [number, number];
+            const knocked = this.map.knockDown(from, to, this.altitude, 1.7, Math.abs(this.vehicle.speed));
+            if (knocked.clearedSolid) {
+              // shelter / dumpster footprint gone — refresh walls this frame so we don't stick
+              this.collisions.update(
+                this.vehicle.position,
+                this.map.world.buildingsNear(this.vehicle.position, 260, this.map.exaggeration),
+              );
+            }
+            if (knocked.slowKmh > 0 && this.car.id !== BATMOBILE_ID) {
+              // tree/shelter −50, bollard/bin/dumpster −10 — Batmobile shrugs it off
+              const hit = knocked.slowKmh / 3.6;
+              this.vehicle.speed = Math.sign(this.vehicle.speed) * Math.max(0, Math.abs(this.vehicle.speed) - hit);
+            }
+          }
+        }
+        // airborne: let the car fly into the river; water only stops surface driving
+        if (!this.plunge && !this.airborne) {
           const building = this.collisions.resolve(previous, this.vehicle.position, this.vehicle.heading, 1, this.altitude);
           if (building.stopped) {
             this.vehicle.position = building.position;
@@ -5139,14 +5815,17 @@ export class GameEngine {
             // light skim only — heavy damping made corners feel sticky
             this.vehicle.speed *= 0.97;
           } else {
-            const hit = this.water.resolve(previous, this.vehicle.position, this.vehicle.heading);
+            // either end of the step on the deck → water must not wall or drown us
+            const elevated = this.onBridgeDeck(this.vehicle.position, this.altitude)
+              || this.onBridgeDeck(previous, this.altitude);
+            const hit = this.water.resolve(previous, this.vehicle.position, this.vehicle.heading, 1, elevated);
             this.vehicle.position = hit.position;
             if (hit.stopped) {
               this.vehicle.speed = 0;
               shore = true;
-            } else if (Math.abs(this.vehicle.speed) > 1.5 && this.map.knockDown(previous, this.vehicle.position, this.altitude)) {
-              // a tree or lamp post goes down under the bumper; the car loses some pace
-              this.vehicle.speed *= 0.72;
+            } else if (this.water.covers(this.vehicle.position, elevated)) {
+              // under a bridge / already in the bath — splash and pull out on shore
+              this.beginPlunge(this.altitude);
             }
           }
         }
@@ -5162,6 +5841,8 @@ export class GameEngine {
           if (gridded || bot.id === this.haul?.id) continue;
           // impound car waits still on the pin until hooked
           if (bot.id === TOW_CAR_ID && this.impoundActive && this.haul?.id !== TOW_CAR_ID) continue;
+          // ambulance crash wreck stays planted — exploring would Dijkstra across London and hitch
+          if (isAmbulanceWreckId(bot.id)) continue;
           if (this.combatLayer && !this.combatLayer.isTargetAlive(bot.id)) continue;
           const previous: [number, number] = [...bot.position];
           const oldHeading = bot.heading;
@@ -5197,13 +5878,17 @@ export class GameEngine {
               bot.retryFrames = 0;
               bot.controller.heading += side * 0.9;
             }
-          } else if (this.water.covers(previous)) {
-            const hit = this.water.resolve(previous, bot.position, bot.heading);
-            bot.controller.position = hit.position;
-            if (hit.stopped) bot.controller.speed = 0;
-            bot.retryFrames = Math.max(0, bot.retryFrames - 2);
           } else {
-            bot.retryFrames = Math.max(0, bot.retryFrames - 3);
+            const botAlt = this.map.groundAt(previous) ?? this.altitude;
+            const elev = this.onBridgeDeck(previous, botAlt);
+            if (this.water.covers(previous, elev)) {
+              const hit = this.water.resolve(previous, bot.position, bot.heading, 1, elev);
+              bot.controller.position = hit.position;
+              if (hit.stopped) bot.controller.speed = 0;
+              bot.retryFrames = Math.max(0, bot.retryFrames - 2);
+            } else {
+              bot.retryFrames = Math.max(0, bot.retryFrames - 3);
+            }
           }
           bot.position = [...bot.controller.position];
           bot.heading = bot.controller.heading;
@@ -5250,39 +5935,31 @@ export class GameEngine {
       let zoomNow = zoom;
       let pitchNow = this.pitch;
       let bearingNow = this.bearing;
-      if (this.approachFrom) {
-        this.approach = Math.max(0, this.approach - dt / 1.75);
-        const t = 1 - this.approach;
-        const eased = t * t * (3 - 2 * t);
-        const from = this.approachFrom;
-        const turn = ((this.bearing - from.bearing + 540) % 360) - 180;
-        center = [from.lng + (look[0] - from.lng) * eased, from.lat + (look[1] - from.lat) * eased];
-        zoomNow = from.zoom + (zoom - from.zoom) * eased;
-        pitchNow = from.pitch + (this.pitch - from.pitch) * eased;
-        bearingNow = from.bearing + turn * eased;
-        if (this.approach === 0) {
-          this.approachFrom = null;
-          this.onApproach(false);
-        }
-      }
       // map view from above: blend in, then free pan/zoom; blend out from where you were looking
       const step = dt / 1.2;
       this.overview = this.overviewTarget > this.overview ? Math.min(this.overviewTarget, this.overview + step) : Math.max(this.overviewTarget, this.overview - step);
+      // open/hold: screen rectangle. closing: only while still mostly top-down —
+      // mid-pitch unproject would inflate bounds; softKeep covers the rest of the blend
+      this.map.setScreenStream(this.overviewTarget > 0 || this.overview > 0.65);
+      // hold calm a bit after the blend lands — first free frames were still uploading towers
+      const mapBlending = this.overviewTarget > 0 ? this.overview < 0.98 : this.overview > 0.02;
+      const mapHoldCalm = this.overviewFree && this.overviewTarget > 0 && performance.now() < this.mapCalmUntil;
+      this.map.setStreamCalm(mapBlending || mapHoldCalm);
       if (this.overviewTarget > 0 && this.overview > 0.98) {
         if (!this.overviewFree) {
           this.overviewFree = true;
+          this.mapCalmUntil = performance.now() + 1800;
           this.setOverviewMapNav(true);
           this.stopGun();
-          this.labelServices();
-          this.refreshHubMarkers();
+          // labels next tick — same frame as leaving calm was hitching the open
+          queueMicrotask(() => { if (this.overviewFree) this.refreshMapLabels(true); });
         }
         const c = this.map.getCenter();
         center = [c.lng, c.lat];
         zoomNow = this.map.getZoom();
         pitchNow = 0;
         bearingNow = 0;
-        this.labelServices();
-        this.refreshHubMarkers();
+        this.refreshMapLabels();
       } else if (this.overview > 0) {
         const e = this.overview * this.overview * (3 - 2 * this.overview);
         const topZoom = this.overviewZoom(this.renderVehicle.position[1]);
@@ -5306,6 +5983,7 @@ export class GameEngine {
         }
       } else if (this.overviewLeave) {
         this.overviewLeave = null;
+        this.map.setScreenStream(false);
       }
       if (this.overview <= 0.4 && this.overviewTarget <= 0 && this.mapViewUi) this.setMapViewUi(false);
       this.map.jumpTo({ center, zoom: zoomNow, pitch: pitchNow, bearing: bearingNow, elevation: this.altitude });
@@ -5313,23 +5991,10 @@ export class GameEngine {
       this.updateAim();
     } else if (!this.driving) {
       this.map.setFocusCar(null);
-      // menu: view from above toggled with M
-      if (this.menuView && (this.overview > 0 || this.overviewTarget > 0)) {
-        const step = dt / 1.2;
-        this.overview = this.overviewTarget > this.overview ? Math.min(1, this.overview + step) : Math.max(0, this.overview - step);
-        if (this.overviewTarget > 0 && this.overview > 0.5) {
-          this.labelServices();
-          this.refreshHubMarkers();
-        } else if (this.overviewTarget <= 0 && this.overview <= 0.4 && this.mapViewUi) this.setMapViewUi(false);
-        const e = this.overview * this.overview * (3 - 2 * this.overview);
-        const v = this.menuView;
-        this.map.jumpTo({
-          center: v.center,
-          zoom: v.zoom + (this.overviewZoom(v.center[1]) - v.zoom) * e,
-          pitch: v.pitch * (1 - e),
-          bearing: v.bearing - (((v.bearing + 540) % 360) - 180) * e,
-        });
-        if (this.overview === 0) this.menuView = null;
+      // intro / menu: already top-down — keep labels fresh while panning
+      if (this.mapShown && this.overviewTarget > 0) {
+        this.map.setScreenStream(true);
+        this.refreshMapLabels();
       }
       this.renderVehicle.reset(this.vehicle);
       if (!this.mapShown) {
@@ -5342,28 +6007,36 @@ export class GameEngine {
         if (Math.abs(center.lng - view.center[0]) > 1e-8 || Math.abs(center.lat - view.center[1]) > 1e-8 || Math.abs(this.map.getCenterElevation() - view.elevation) > 0.25 || Math.abs(this.map.getZoom() - view.zoom) > 0.001) this.map.jumpTo(view);
       }
     }
-    this.updateTrains(dt);
-    // players first: the bars must sit where their cars are drawn this frame, not the last one
-    this.players.update();
-    this.updateHealthMarkers(now - this.overlayTime > 100);
-    this.updateTrafficMarkers();
-    this.updateEventMarkers();
-    this.updateSelfMarker();
-    if (now - this.overlayTime > 100) this.overlayTime = now;
+    if (!this.approachFrom) {
+      this.updateTrains(dt);
+      // players first: the bars must sit where their cars are drawn this frame, not the last one
+      this.players.update();
+      // Offscreen arrows must track every frame — 10 Hz made them stutter on turn
+      this.updateHealthMarkers(now - this.overlayTime > 100);
+      this.updateTrafficMarkers();
+      this.updateEventMarkers();
+      if (now - this.overlayTime > 100) {
+        this.overlayTime = now;
+        this.updateSelfMarker();
+      }
+    }
     if (now - this.hudTime > 100) {
       this.hudTime = now;
-      this.saveCamera(now);
+      if (!this.approachFrom) this.saveCamera(now);
       this.hud(this.vehicle.speed * 3.6, this.vehicle.distance, this.fps, this.hudParticipants());
-      const near = nearestStation(this.vehicle.position, [...this.stations.values()]);
-      const hub = nearestHub(this.vehicle.position, [...this.hubs.values()]);
-      // only hint the hub when you're close enough that it matters (not from across town)
-      const hubHint = hub?.hub.kind === 'airport' ? 800 : hub?.hub.kind === 'station' ? 220 : 120;
-      const hubHud = hub && hub.distance < hubHint
-        ? { kind: hub.hub.kind, distance: hub.distance }
-        : null;
-      this.onFuel({ level: this.fuel.level, tank: this.fuel.spec.tank, rpm: this.vehicle.revs, refuelling: this.refuelling, station: near ? near.distance : null, money: Math.floor(this.playerMoney), hub: hubHud });
+      if (!this.approachFrom) {
+        const near = nearestStation(this.vehicle.position, [...this.stations.values()]);
+        const hub = nearestHub(this.vehicle.position, [...this.hubs.values()]);
+        // only hint the hub when you're close enough that it matters (not from across town)
+        const hubHint = hub?.hub.kind === 'airport' ? 800 : hub?.hub.kind === 'station' ? 220 : 120;
+        const hubHud = hub && hub.distance < hubHint
+          ? { kind: hub.hub.kind, distance: hub.distance }
+          : null;
+        this.onFuel({ level: this.fuel.level, tank: this.fuel.spec.tank, rpm: this.vehicle.revs, refuelling: this.refuelling, station: near ? near.distance : null, money: Math.floor(this.playerMoney), hub: hubHud });
+      }
     }
     if (!this.mapShown) this.settleBoot();
+    if (!this.approachFrom) this.tickStreamBurst(now);
     this.map.triggerRepaint();
   };
 
@@ -5382,8 +6055,10 @@ export class GameEngine {
     this.fireMarker?.remove();
     this.impoundMarker?.remove();
     this.taxiMarker?.remove();
+    this.ambulanceMarker?.remove();
     this.busTourMarker?.remove();
     this.combatLayer?.setFireHouse(null);
+    this.trafficBots = this.trafficBots.filter((b) => !isAmbulanceWreckId(b.id));
     this.eventIndicatorLayer?.remove();
     for (const marker of this.hubMarkers.values()) marker.remove();
     this.hubMarkers.clear();
