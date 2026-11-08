@@ -12,6 +12,8 @@ export const WATER_TRUCK_ID = '18';
 const POLICE_LIGHTS: Record<string, ('red' | 'blue')[]> = {
   '09': ['red'],
   '16': ['blue', 'red', 'blue'],
+  /** Gallardo patrol: single blue beacon */
+  '21': ['blue'],
   /** Cadillac ambulance: one red flasher aft of the roof middle */
   '20': ['red'],
 };
@@ -23,6 +25,8 @@ const POLICE_LIGHTS: Record<string, ('red' | 'blue')[]> = {
 const BEACON_FIT: Record<string, { forward: number; drop: number }> = {
   '09': { forward: 0.15, drop: 0.16 },
   '16': { forward: 0.35, drop: 0.2 },
+  /** Gallardo: centered, shallow drop */
+  '21': { forward: 0, drop: 0.2 },
   // past mid toward the tail — on the ambulance roof beacon
   '20': { forward: -0.7, drop: 0.14 },
 };
