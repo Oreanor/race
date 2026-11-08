@@ -409,7 +409,7 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
     // the same or overlapping footprints. Identical footprints keep only the
     // tallest copy; buildings that contain or sit
     // inside another one get no pitched roof, so roofs never cut through walls.
-    type Candidate = { id: string; fp: string; height: number; ring: { x: number; y: number }[]; cx: number; cy: number; box: number[] };
+    type Candidate = { id: string; fp: string; height: number; base: number; ring: { x: number; y: number }[]; cx: number; cy: number; box: number[] };
     const parsed: (ReturnType<typeof classifyRings> | null)[] = [];
     const best = new Map<string, Candidate>();
     for (let f = 0; f < layer.length; f++) {
@@ -427,7 +427,7 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
         const fp = [...new Set(ring.map((p) => `${p.x},${p.y}`))].sort().join(';');
         let sx = 0, sy = 0, x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
         for (const p of ring) { sx += p.x; sy += p.y; x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
-        const candidate: Candidate = { id: `${f}:${pi}`, fp, height: height0, ring, cx: sx / ring.length, cy: sy / ring.length, box: [x0, y0, x1, y1] };
+        const candidate: Candidate = { id: `${f}:${pi}`, fp, height: height0, base: base0, ring, cx: sx / ring.length, cy: sy / ring.length, box: [x0, y0, x1, y1] };
         const prior = best.get(fp);
         if (!prior || height0 > prior.height + 0.05) best.set(fp, candidate);
       });
@@ -461,6 +461,10 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
               crowded.add(b.id);
               // a part inside another building and not taller is buried in it
               if (b.height <= a.height + 0.05) buried.add(b.id);
+              // contradictory: a tall ground-level part inside a short outline (mistagged
+              // full-height part) would draw 10-floor walls over a 1-floor roof; bury it,
+              // but keep legit towers-on-podiums (they start above ground: base > 1m)
+              if (b.height > a.height + 4 && b.base < 1 && a.height < 12) buried.add(b.id);
             }
           }
         }
