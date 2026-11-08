@@ -1,6 +1,7 @@
 node_modules/
 .next/
 out/
+docs/
 src-tauri/target/
 src/app/_api.desktop-stash/
 *.tsbuildinfo
