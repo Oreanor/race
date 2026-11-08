@@ -115,6 +115,12 @@ export type BuildOptions = {
   windows: boolean;
   /** decoded terrarium heights of the same tile, or null for flat ground */
   dem?: Float32Array | null;
+  /**
+   * Processed terrain grid (same as the ground mesh: water-carved, road-flattened).
+   * When set, building feet sample this instead of raw DEM — otherwise houses float
+   * above plazas/roads where the mesh was lowered under the DEM.
+   */
+  terrain?: { heights: Float32Array; grid: number };
   /** shrink footprints and roofs by this many meters, so a detailed copy drawn
    *  on top hides this one completely (no z-fighting) */
   inset?: number;
@@ -126,7 +132,25 @@ export type BuildOptions = {
    * Value is the region (country) that biases architecture styles.
    */
   detailed?: { region: string };
+  /**
+   * True when this building would punch through an elevated deck (tile-local x/z, crest/foot/top m).
+   * Skipped so overpasses keep a clear carriageway and their piers.
+   */
+  onElevatedBridge?: (x: number, z: number, crest: number, foot: number, top: number) => boolean;
 };
+
+/** Bilinear sample of the terrain height grid at tile fraction (u, v). */
+function sampleTerrainGrid(heights: Float32Array, grid: number, u: number, v: number) {
+  const n = grid + 1;
+  const x = Math.min(grid, Math.max(0, u * grid)), y = Math.min(grid, Math.max(0, v * grid));
+  const i = Math.min(grid - 1, Math.floor(x)), j = Math.min(grid - 1, Math.floor(y));
+  const fu = x - i, fv = y - j;
+  const ha = heights[j * n + i], hb = heights[j * n + i + 1], hc = heights[(j + 1) * n + i], hd = heights[(j + 1) * n + i + 1];
+  return fu + fv <= 1 ? ha + (hb - ha) * fu + (hc - ha) * fv : hd + (hc - hd) * (1 - fu) + (hb - hd) * (1 - fv);
+}
+
+/** reach below sampled crest so walls still meet DEM on slopes / tile seams */
+const WALL_SKIRT = 3.5;
 
 type Pt = [number, number];
 
@@ -398,11 +422,16 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
   const vt = buffer instanceof VectorTile ? buffer : new VectorTile(new PbfReader(buffer));
   const layer = vt.layers.building;
   const dem = options.dem ?? null;
+  const terrain = options.terrain ?? null;
   if (layer) {
     const extent = layer.extent;
     const k = span / extent; // tile pixels → mercator meters
     const demScale = DEM_SIZE / extent;
-    const groundAt = (p: Pt) => dem ? sampleDem(dem, p[0] * demScale, p[1] * demScale) : 0;
+    // Prefer the same height field the ground mesh uses (carved/flattened); raw DEM
+    // sits above plazas and road beds and leaves houses hanging in the air.
+    const groundAt = (p: Pt) => terrain
+      ? sampleTerrainGrid(terrain.heights, terrain.grid, p[0] / extent, p[1] / extent)
+      : dem ? sampleDem(dem, p[0] * demScale, p[1] * demScale) : 0;
     const inset = (options.inset ?? 0) * toMerc / k; // meters → tile pixels
 
     // Pass 1. OSM often has a building outline plus its parts (building:part) with
@@ -517,6 +546,19 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
         const cut = outer.filter(onEdge);
         let crest = 0;
         for (const p of cut.length >= 2 ? cut : outer) crest = Math.max(crest, groundAt(p));
+        // overpass through this volume → no house (keeps the deck / piers clear)
+        if (options.onElevatedBridge) {
+          let sx = 0, sz = 0;
+          for (const p of outer) { sx += p[0] * k; sz += p[1] * k; }
+          const samples: Pt[] = [[sx / outer.length, sz / outer.length]];
+          for (const p of outer) samples.push([p[0] * k, p[1] * k]);
+          for (let i = 0; i < outer.length; i++) {
+            const a = outer[i], b = outer[(i + 1) % outer.length];
+            samples.push([(a[0] + b[0]) * 0.5 * k, (a[1] + b[1]) * 0.5 * k]);
+          }
+          const foot = crest + base, topC = crest + height;
+          if (samples.some(([x, z]) => options.onElevatedBridge!(x, z, crest, foot, topC))) continue;
+        }
         chunk.buildings++;
         const recipe = options.detailed
           ? createRecipe({ id: 0, key, height: measured, base }, HOUSE_PALETTE, 'auto', options.detailed.region)
@@ -590,12 +632,12 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
             }
             const textured = hasWindows && length >= 1.55;
             if (!textured) {
-              chunk.quad(ax, az, bx, bz, base - 1, top, nx, nz, wall, 0, 0, 0, glassIndex, false, g);
+              chunk.quad(ax, az, bx, bz, base - WALL_SKIRT, top, nx, nz, wall, 0, 0, 0, glassIndex, false, g);
               continue;
             }
             const bays = length >= 3.4 ? Math.max(1, Math.round(length / BAY)) : 0;
             // walls hang from the crest; the lower band reaches down to the sloped ground
-            chunk.quad(ax, az, bx, bz, base - 1, body0, nx, nz, wall, 0, 0, 0, glassIndex, false, g);
+            chunk.quad(ax, az, bx, bz, base - WALL_SKIRT, body0, nx, nz, wall, 0, 0, 0, glassIndex, false, g);
             chunk.quad(ax, az, bx, bz, body0, body1, nx, nz, wall, bays, 0, floors, glassIndex, bays > 0, [crest, crest, crest, crest]);
             chunk.quad(ax, az, bx, bz, body1, top, nx, nz, wall, 0, 0, 0, glassIndex, false, [crest, crest, crest, crest]);
             if (options.windows && length >= 2.5) {
@@ -770,9 +812,9 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
       const bx = face.ax + (face.bx - face.ax) * t1, bz = face.az + (face.bz - face.az) * t1;
       const ga = face.ground[0] + (face.ground[1] - face.ground[0]) * t0;
       const gb = face.ground[0] + (face.ground[1] - face.ground[0]) * t1;
-      // a wall on the ground hangs a metre into it (no gap on a slope); a raised part starts at its
-      // base, else that metre lies over the wall of the part below it and the two flicker
-      const y0 = face.base > 0.3 ? face.base : face.base - 1;
+      // a wall on the ground hangs into it (no gap on a slope / DEM mismatch); a raised part
+      // starts at its base, else the skirt would cover the wall of the part below and flicker
+      const y0 = face.base > 0.3 ? face.base : face.base - WALL_SKIRT;
       // under a raised part the wall stops where that part begins (no roof lip up there)
       const capped = cap != null && cap - face.crest < face.top - 0.05;
       const wallTop = capped ? Math.max(y0 + 0.1, cap - face.crest) : face.top;
