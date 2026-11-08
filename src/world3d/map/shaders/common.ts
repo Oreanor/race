@@ -6,6 +6,13 @@ export const MAX_SHOTS = 128;
 export const MAX_FIRES = 24;
 
 export const COMMON = /* glsl */ `
+#ifdef GL_FRAGMENT_PRECISION_HIGH
+precision highp float;
+precision highp int;
+#else
+precision mediump float;
+precision mediump int;
+#endif
 uniform vec3 uSun;
 uniform vec3 uSunColor;
 uniform vec3 uAmbient;
@@ -36,7 +43,12 @@ vec3 headlight(vec3 world, vec3 n) {
 
 uniform float uClock;
 uniform float uClouds;
-float hash2(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+// precision-stable hash (avoids sin()*large patterns that break on some GPUs/drivers)
+float hash2(vec2 p) {
+  vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+  p3 += dot(p3, p3.yzx + 33.33);
+  return fract((p3.x + p3.y) * p3.z);
+}
 // smooth value noise, 0..1
 float vnoise(vec2 p) {
   vec2 i = floor(p), f = fract(p);
