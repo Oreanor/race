@@ -103,7 +103,7 @@ export function simpleLit(color: THREE.ColorRepresentation, uniforms: SimpleLitU
         vec3 local = position;
         vHash = 0.0;
         #ifdef USE_INSTANCING
-          vHash = fract(sin(dot(instanceMatrix[3].xz, vec2(12.9898, 78.233))) * 43758.5453);
+          { float _h = dot(instanceMatrix[3].xz, vec2(0.1031, 0.11369)); _h = fract(_h * (_h + 33.33)); vHash = fract(_h); }
         #endif
         #ifdef BROADLEAF
           // winter: the crown shrinks away (each tree a little apart), leaving bare branches
@@ -268,7 +268,7 @@ export function floraLit(uniforms: SimpleLitUniforms) {
       varying float vLeaf;
       varying float vShade;
       void main() {
-        float hash = fract(sin(dot(instanceMatrix[3].xz, vec2(12.9898, 78.233))) * 43758.5453);
+        float hash = dot(instanceMatrix[3].xz, vec2(0.1031, 0.11369)); hash = fract(hash * (hash + 33.33));
         float habit = iTraits.x;
         vec3 summer = instanceColor;
         vec3 autumn = iTraits.yzw * mix(0.82, 1.15, fract(hash * 7.31));
