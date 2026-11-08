@@ -102,7 +102,7 @@ const CALLOUTS: Callout[] = [
   { keys: ['Tab'], rows: [['keys.tab', 'keys.tab.what']] },
   { keys: ['KeyW', 'KeyS'], rows: [['keys.gas', 'keys.gas.what']] },
   { keys: ['KeyA', 'KeyD'], rows: [['keys.steer', 'keys.steer.what']] },
-  { keys: ['ShiftLeft'], rows: [['keys.clutch', 'keys.clutch.what']] },
+  { keys: ['ShiftLeft'], rows: [['keys.handbrake', 'keys.handbrake.what']] },
   { keys: ['Space'], rows: [['keys.boost', 'keys.boost.what']] },
   { keys: ['KeyE'], rows: [['keys.tow', 'keys.tow.what']] },
   { keys: ['KeyR'], rows: [['keys.camera', 'keys.camera.what']] },
