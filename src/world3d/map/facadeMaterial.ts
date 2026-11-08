@@ -48,8 +48,6 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
       uFrame: { value: hex(portuguesePastel.frameColor) },
     },
     vertexShader: /* glsl */ `
-      precision highp float;
-      precision highp int;
       uniform float uExag;
       attribute vec3 aColor;
       attribute vec3 aFacade;
@@ -99,12 +97,7 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
       uniform vec4 uSkinOpt[3];
       uniform vec3 uSkinRoofRange;
       int skinBank;
-      // precision-stable hash (avoids sin()*large patterns that break on some GPUs/drivers)
-      float seeded(vec3 c, float salt) {
-        vec3 p = fract(c * 0.1031 + salt * 0.013);
-        p += dot(p, p.yzx + 33.33);
-        return fract((p.x + p.y) * p.z);
-      }
+      float seeded(vec3 c, float salt) { return fract(sin(dot(c, vec3(12.9898, 78.233, 37.719)) + salt) * 43758.5453); }
       vec3 pickWall(float r) {
         int o = skinBank * 5;
         for (int i = 0; i < 5; i++) if (r <= uSkinWall[o + i].w) return uSkinWall[o + i].rgb;
@@ -328,7 +321,7 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
           if (floor(suv) != cell) continue;
           vec2 sp = (fract(suv) - 0.5) * cellM - paneOff;
           if (abs(sp.x) > pane.x * 1.15 || abs(sp.y) > pane.y * 1.15) continue;
-          float flick = 0.55 + 0.45 * seeded(vec3(cell, uClock * 3.1), 91.0);
+          float flick = 0.55 + 0.45 * fract(sin(dot(cell, vec2(12.9898, 78.233)) + uClock * 3.1) * 43758.5453);
           heat = max(heat, flick);
         }
         return heat;
@@ -384,7 +377,7 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
           float edge = 1.0 - smoothstep(halfW * 0.4, halfW, along);
           float heightFade = (1.0 - smoothstep(0.15, 1.6, up)) * smoothstep(0.06, 0.22, up);
           float dens = edge * heightFade;
-          dens *= 0.5 + 0.5 * seeded(vec3(vWorld.xz + float(i), 0.0), 92.0);
+          dens *= 0.5 + 0.5 * fract(sin(dot(vWorld.xz + float(i), vec2(12.9898, 78.233))) * 43758.5453);
           // denser blotches near the lintel
           dens *= 0.65 + 0.35 * (1.0 - smoothstep(0.15, 0.55, up));
           soot = max(soot, dens);
@@ -749,7 +742,7 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
                 if (uFires[i].w < 0.5) continue;
                 vec3 d = uFires[i].xyz - vWorld;
                 if (dot(d, d) > 10.0 || abs(dot(d, nrm)) > 0.7) continue;
-                float flick = 0.55 + 0.45 * seeded(vec3(vWorld.xz, uClock * 3.1 + float(i)), 93.0);
+                float flick = 0.55 + 0.45 * fract(sin(dot(vWorld.xz, vec2(12.9898, 78.233)) + uClock * 3.1 + float(i)) * 43758.5453);
                 heat = max(heat, flick);
               }
               if (heat > 0.01 && broken < 0.5) {
@@ -792,7 +785,7 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
           vec2 uv = vFacade.xy;
           if (uv.x >= 0.0 && uv.x < vWin.x && uv.y >= 0.0 && uv.y < vWin.y) {
             vec2 cell = floor(uv);
-            float h = seeded(vec3(cell + vColor.rg * 37.0, 0.0), 94.0);
+            float h = fract(sin(dot(cell + vColor.rg * 37.0, vec2(12.9898, 78.233))) * 43758.5453);
             float litShare = skin > 0.5 ? skinOpt.x : 0.38;
             float lit = step(1.0 - litShare, h) * uNight * (1.0 - broken);
             if (lit > 0.01) {
