@@ -839,7 +839,7 @@ export default function Game() {
                             engine.current?.joinNetwork(value.trim() || defaultName);
                           }}
                         />
-                        <CarCarousel index={car} onIndex={setCar}>
+                        <CarCarousel index={car} onIndex={setCar} cars={introCars}>
                           <div className="car-deal">
                             <span>{t('dealer.price')}</span>
                             <strong className={canBuyStarter ? undefined : 'is-broke'}><Price value={starterPrice} /></strong>

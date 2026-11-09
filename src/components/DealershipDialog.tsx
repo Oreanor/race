@@ -43,7 +43,7 @@ export default function DealershipDialog({ offer, onBuy, onLeave }: {
       </>}
     >
       <div className="ui-row ui-wallet is-reward"><span>{t('dealer.garage', { n: offer.owned.length })}</span><Price value={offer.money} /></div>
-      <CarCarousel index={index} onIndex={setIndex}>
+      <CarCarousel index={index} onIndex={setIndex} cars={dealerCars}>
         <div className="car-deal">
           <span>{t('dealer.price')}</span>
           {status ? <strong>{status}</strong> : <strong className={affordable ? undefined : 'is-broke'}><Price value={price} /></strong>}
