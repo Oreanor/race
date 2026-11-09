@@ -24,9 +24,12 @@ import { useLang } from '@/i18n/react';
 
 function cheapestCarIndex() {
   let best = 0;
-  for (let i = 1; i < cars.length; i++) if (carPrice(cars[i]) < carPrice(cars[best])) best = i;
+  for (let i = 1; i < introCars.length; i++) if (carPrice(introCars[i]) < carPrice(introCars[best])) best = i;
   return best;
 }
+
+/** showroom order for the intro carousel: cheapest → most expensive */
+const introCars = [...cars].sort((a, b) => carPrice(a) - carPrice(b));
 
 /** Saved mid-drive progress, ignored when the URL pins a test spot. */
 /** settings other than theme and language (they keep their own keys) */
@@ -226,7 +229,7 @@ export default function Game() {
   const [car, setCar] = useState(() => {
     const save = bootSave();
     if (save) {
-      const index = cars.findIndex((entry) => entry.id === save.carId);
+      const index = introCars.findIndex((entry) => entry.id === save.carId);
       if (index >= 0) return index;
     }
     return cheapestCarIndex();
@@ -413,7 +416,7 @@ export default function Game() {
       game = new GameEngine(
         host.current!,
         place,
-        cars[car],
+        introCars[car],
         settings,
         (s, _d, frames, drivers) => {
           const shown = Math.round(Math.abs(s));
@@ -536,7 +539,7 @@ export default function Game() {
   }, [place]);
 
   useEffect(() => {
-    engine.current?.setCar(cars[car]);
+    engine.current?.setCar(introCars[car]);
   }, [car]);
 
   // City search
@@ -640,7 +643,7 @@ export default function Game() {
       }
       if (e.code !== 'KeyW' || e.repeat) return;
       if (drivingRef.current || !booted) return;
-      if (!(garageIds.includes(cars[car].id) || carPrice(cars[car]) <= purse)) return;
+      if (!(garageIds.includes(introCars[car].id) || carPrice(introCars[car]) <= purse)) return;
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement) return;
       e.preventDefault();
       setApproaching(true);
@@ -735,8 +738,8 @@ export default function Game() {
   }, [driving, place]);
 
   const query = search.trim().toLowerCase();
-  const starterPrice = carPrice(cars[car]);
-  const ownsStarter = garageIds.includes(cars[car].id);
+  const starterPrice = carPrice(introCars[car]);
+  const ownsStarter = garageIds.includes(introCars[car].id);
   const canBuyStarter = ownsStarter || starterPrice <= purse;
   const chosen = (c: City) => c.name === place.name && Math.abs(c.coords[0] - place.coords[0]) < 1e-4 && Math.abs(c.coords[1] - place.coords[1]) < 1e-4;
   const option = (c: City) => (
