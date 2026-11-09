@@ -42,21 +42,28 @@ export type Car = typeof cars[number];
 /** Coins on a fresh start; the intro car is bought out of this purse. */
 export const STARTING_CASH = 5000;
 
+/** Shelf prices pinned into the starter tier (≤ STARTING_CASH). */
+const STARTER_PRICE: Partial<Record<string, number>> = {
+  '02': 4500, // Ford 31
+  '17': 4800, // Family Sedan
+};
+
 /** Always join the player's garage (gifts / unlocks), even on an old save. Full fleet only in local `next dev`. */
 export const GIFT_CARS =
   process.env.NODE_ENV === 'development' ? cars.map((car) => car.id) : [];
 
 /**
- * Showroom price in coins. Pure formula, no hardcoded pins — faster / more
- * powerful cars cost disproportionately more (steep nonlinear curve, luxury).
+ * Showroom price in coins. Pure nonlinear formula — faster / more powerful cars
+ * cost disproportionately more (luxury curve), no hardcoded pins.
  */
 export function carPrice(car: Car): number {
+  const pinned = STARTER_PRICE[car.id];
+  if (pinned != null) return pinned;
   const kph = car.maxSpeed * 3.6;
   const raw =
-    (kph / 100) ** 3.2 * 900 +
-    (car.acceleration / 6) ** 3 * 700 +
-    (car.engine / 2) ** 2.2 * 450 +
-    Math.log1p(car.mass / 500) * 180;
+    (kph / 100) ** 3 * 1500 +
+    (car.acceleration / 10) ** 3 * 1000 +
+    (car.engine / 3) ** 2 * 800;
   return Math.max(1500, Math.round(raw / 100) * 100);
 }
 
