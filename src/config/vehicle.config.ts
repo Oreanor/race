@@ -58,7 +58,8 @@ export function carPrice(car: Car): number {
   const raw =
     (kph / 100) ** 3 * 1500 +
     (car.acceleration / 10) ** 3 * 1000 +
-    (car.engine / 3) ** 2 * 800;
+    (car.engine / 3) ** 2 * 800 +
+    Math.max(0, car.length - 6) * 1300;
   return Math.max(1500, Math.round(raw / 100) * 100);
 }
 
