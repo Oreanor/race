@@ -54,6 +54,7 @@ export const GIFT_CARS =
 
 /** Dealership sticker for gifted / special cars outside the speed curve. */
 const PINNED_PRICE: Partial<Record<string, number>> = {
+  '01': 55000, // Ferrari Diaboro — выше F40
   '18': 7200, // Fire Truck №5
   '19': 6500, // Double Decker
   '20': 6800, // Cadillac Ambulance
