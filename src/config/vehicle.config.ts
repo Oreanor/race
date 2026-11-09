@@ -23,6 +23,9 @@ export const cars = [
   { id: '05', name: 'Ford GT40', label: 'Победитель Ле-Мана', path: '/models/gt40.glb', length: 4.1, yaw: Math.PI/2, color: '#4a78c2', acceleration: 15, maxSpeed: 300 / 3.6, mass: 1000, engine: 4.7, fuel: { tank: 70, perKm: 2.6 } },
   { id: '06', name: 'Batmobile', label: 'Ночной защитник', path: '/models/batmobile.glb', length: 5.2, yaw: Math.PI/2, color: '#30333a', acceleration: 17, maxSpeed: 320 / 3.6, mass: 2300, engine: 7.0, fuel: { tank: 80, perKm: 3.4 } },
   { id: '11', name: 'McLaren F1 GTR', label: 'Король Ле-Мана 95', path: '/models/mclaren-f1-gtr.glb', length: 4.4, yaw: Math.PI/2, color: '#e8e4da', acceleration: 16.5, maxSpeed: 330 / 3.6, mass: 1050, engine: 6.1, fuel: { tank: 90, perKm: 2.8 } },
+  { id: '22', name: 'Ferrari F40', label: 'Легенда девяностых', path: '/models/ferrari-f40.glb', length: 4.8, yaw: Math.PI/2, color: '#dc143c', acceleration: 15, maxSpeed: 324 / 3.6, mass: 1250, engine: 2.9, fuel: { tank: 70, perKm: 2.5 } },
+  { id: '23', name: 'Ferrari LaFerrari', label: 'Гибридный король', path: '/models/laferrari.glb', length: 4.7, yaw: Math.PI/2, color: '#dc143c', acceleration: 18, maxSpeed: 350 / 3.6, mass: 1565, engine: 6.3, fuel: { tank: 80, perKm: 2.8 } },
+  { id: '24', name: 'Lada Niva', label: 'Свои тропы', path: '/models/lada-niva.glb', length: 3.9, yaw: Math.PI/2, color: '#8f9d8f', acceleration: 6.5, maxSpeed: 137 / 3.6, mass: 1210, engine: 1.7, fuel: { tank: 43, perKm: 1.1 } },
 ];
 export const cities = [
   { name:'Coimbra', country:'Portugal', coords:[-8.42922,40.20805] as [number,number], heading:145, road:'Avenida Emídio Navarro', note:'У реки, среди холмов' },
