@@ -29,6 +29,8 @@ export const cars = [
   { id: '22', name: 'Ferrari F40', label: 'Легенда девяностых', path: '/models/ferrari-f40.glb', length: 4.8, yaw: Math.PI/2, color: '#dc143c', acceleration: 15, maxSpeed: 324 / 3.6, mass: 1250, engine: 2.9, fuel: { tank: 70, perKm: 2.5 } },
   { id: '23', name: 'Ferrari LaFerrari', label: 'Гибридный король', path: '/models/laferrari.glb', length: 4.7, yaw: Math.PI/2, color: '#dc143c', acceleration: 18, maxSpeed: 350 / 3.6, mass: 1565, engine: 6.3, fuel: { tank: 80, perKm: 2.8 } },
   { id: '24', name: 'Lada Niva', label: 'Свои тропы', path: '/models/lada-niva.glb', length: 3.9, yaw: Math.PI/2, color: '#8f9d8f', acceleration: 6.5, maxSpeed: 137 / 3.6, mass: 1210, engine: 1.7, fuel: { tank: 43, perKm: 1.1 } },
+  { id: '28', name: 'BMW M3 E30', label: 'Бэха тридцатка', path: '/models/bmw-m3-e30.glb', length: 4.4, yaw: Math.PI/2, color: '#dc143c', acceleration: 4.8, maxSpeed: 280 / 3.6, mass: 960, engine: 2.3, fuel: { tank: 60, perKm: 2.0 } },
+  { id: '29', name: 'VW Passat B3', label: 'Пассат третья', path: '/models/vw-passat-b3.glb', length: 4.5, yaw: Math.PI/2, color: '#1a3a6b', acceleration: 4.5, maxSpeed: 240 / 3.6, mass: 1050, engine: 2.0, fuel: { tank: 65, perKm: 1.8 } },
 ];
 export const cities = [
   { name:'Coimbra', country:'Portugal', coords:[-8.42922,40.20805] as [number,number], heading:145, road:'Avenida Emídio Navarro', note:'У реки, среди холмов' },
