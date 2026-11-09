@@ -19,9 +19,11 @@ export default function DealershipDialog({ offer, onBuy, onLeave }: {
   onLeave: () => void;
 }) {
   useLang();
+  /** showroom order: cheapest → most expensive */
+  const dealerCars = [...cars].sort((a, b) => carPrice(a) - carPrice(b));
   // open on the car you came in
-  const [index, setIndex] = useState(() => Math.max(0, cars.findIndex((car) => car.id === offer.currentId)));
-  const car = cars[index];
+  const [index, setIndex] = useState(() => Math.max(0, dealerCars.findIndex((car) => car.id === offer.currentId)));
+  const car = dealerCars[index];
   const price = carPrice(car);
   const current = car.id === offer.currentId;
   const owned = offer.owned.includes(car.id);
