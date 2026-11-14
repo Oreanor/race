@@ -413,8 +413,8 @@
 .car-pick-name span{font-size:11px;color:var(--ui-muted);padding:2px 8px;border:1.5px solid var(--ui-line);border-radius:999px;background:var(--ui-bg)}
 @media (max-height:850px){.car-pick .car-preview{height:270px}.car-arrow{top:140px}.intro .car-pick .car-preview{height:210px}.intro .car-arrow{top:105px}.intro{top:105px}}
 /* short windows: the intro card must end above the map-label chips at the bottom */
-@media (max-height:800px){.intro .car-pick .car-preview{height:120px}.intro .car-arrow{top:42px}.intro .car-specs div{padding:2px 0}}
-@media (max-height:680px){.intro .car-pick .car-preview{height:90px}.intro .car-arrow{top:27px}}
+@media (max-height:800px){.intro .car-pick .car-preview{height:145px}.intro .car-arrow{top:54px}.intro .car-specs div{padding:2px 0}}
+@media (max-height:680px){.intro .car-pick .car-preview{height:110px}.intro .car-arrow{top:37px}}
 .car-specs{margin:0;padding:2px 12px 10px}
 .car-specs div{display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:5px 0;border-top:1px solid var(--ui-line)}
 .car-specs dt{font:12px var(--ui-font);color:var(--ui-muted)}
