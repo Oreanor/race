@@ -2505,18 +2505,14 @@ export class GameEngine {
   }
 
   /**
-   * The police keep up: a little quicker than our car without the boost, and the farther
-   * behind, the harder they push — from ~100 m up to our full boost and a bit over.
+   * The police drive their own cars honestly: that car's pickup and top speed, no rubber band
+   * to ours and no boost. They got the call and pull away from a standstill.
    */
   private policePace(bot: { position: [number, number] | Position; car: Car }) {
-    const d = metersBetween(bot.position, this.vehicle.position);
-    const ours = this.car.maxSpeed;
-    const base = Math.max(bot.car.maxSpeed, ours * 1.05);
-    const chase = Math.max(0, Math.min(1, (d - 100) / 350));
     return {
       ...vehicleConfig,
-      acceleration: Math.max(bot.car.acceleration, this.car.acceleration) * (1.05 + 0.25 * chase),
-      maxSpeed: base + (ours * 1.6 - base) * chase,
+      acceleration: bot.car.acceleration,
+      maxSpeed: bot.car.maxSpeed,
     };
   }
 

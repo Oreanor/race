@@ -665,7 +665,8 @@ export function trafficBotKeys(bot: TrafficBot, network: TrafficRoadNetwork, hun
   if (bot.routeIndex === bot.route.length - 1 && !hunting) targetSpeed = Math.min(targetSpeed, Math.max(3, metersBetween(bot.position, target) * 0.45));
   if (bot.controller.speed < targetSpeed) keys.add('KeyW');
   else if (bot.controller.speed > targetSpeed + 1.4) keys.add('KeyS');
-  if (closing && bot.huntRange < 45) keys.add('Space');
+  // town hunters lunge with the boost up close; a paced pursuer (the police) has none
+  if (closing && bot.huntRange < 45 && huntTop == null) keys.add('Space');
   if (error > 0.04) keys.add('KeyD');
   else if (error < -0.04) keys.add('KeyA');
   return keys;
