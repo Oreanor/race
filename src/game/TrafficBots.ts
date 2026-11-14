@@ -586,7 +586,8 @@ function cruiseKeys(bot: TrafficBot) {
   return keys;
 }
 
-export function trafficBotKeys(bot: TrafficBot, network: TrafficRoadNetwork) {
+/** `huntTop` (m/s): a pursuer's speed on the straights (the police); without it hunters keep the old town pace */
+export function trafficBotKeys(bot: TrafficBot, network: TrafficRoadNetwork, huntTop: number | null = null) {
   // Keep following the current path when the road graph grows (tile loads).
   // Repathing all bots on every revision was the race FPS killer.
   const routeDone = bot.route.length < 2 || bot.routeIndex >= bot.route.length;
@@ -648,7 +649,9 @@ export function trafficBotKeys(bot: TrafficBot, network: TrafficRoadNetwork) {
   const closing = hunting && bot.huntRange < 70;
   const farHunt = hunting && bot.huntRange > 250;
   let targetSpeed = hunting
-    ? (closing ? 15 : farHunt ? 20 : turnAngle > 0.55 ? 10 : 16)
+    ? (huntTop != null
+      ? (turnAngle > 0.55 ? 12 : huntTop)
+      : (closing ? 15 : farHunt ? 20 : turnAngle > 0.55 ? 10 : 16))
     : (turnAngle > 0.5 ? 8 : 15);
   // facing well away from the next point: slow down to turn onto it (at speed the
   // turning circle is wider than the street and the bot orbits the point)
@@ -675,6 +678,8 @@ export function advanceTrafficBot(
   obstacles: Position[] = [],
   /** in plain sight: drive straight here across lawns, squares and yards, not round by the roads */
   direct: Position | null = null,
+  /** pursuit speed on the straights (m/s), see trafficBotKeys */
+  huntTop: number | null = null,
 ) {
   steerTrafficBot(bot, network, peers);
   if (direct) {
@@ -688,7 +693,7 @@ export function advanceTrafficBot(
     bot.route = [];
     bot.routeIndex = 1;
   }
-  let keys = trafficBotKeys(bot, network);
+  let keys = trafficBotKeys(bot, network, huntTop);
   let step = config;
   const block = bot.mood === 'hunt' ? null : inTheWay(bot, obstacles);
   if (block) {

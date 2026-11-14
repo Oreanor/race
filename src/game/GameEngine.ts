@@ -2469,7 +2469,26 @@ export class GameEngine {
     };
   }
 
-  /** Police cars ~200 m out on the roads, spread round us, coming in. */
+  /**
+   * Free ground 100–200 m from us, roughly toward `angle`: no road needed (they cut across
+   * yards and squares anyway), just not inside a house or in the water. The old road pick
+   * (sampled randomAway) missed and fell back to any node, often ~1 km off.
+   */
+  private policeSpawn(me: [number, number], angle: number, taken: [number, number][]): [number, number] | null {
+    for (const r of [150, 120, 180, 105, 195]) {
+      for (const turn of [0, 0.35, -0.35, 0.7, -0.7, 1.05, -1.05]) {
+        const a = angle + turn;
+        const spot = offsetPosition(me, Math.sin(a) * r, Math.cos(a) * r) as [number, number];
+        if (this.collisions.blocked(spot, spot, a + Math.PI) || this.water.covers(spot, true)) continue;
+        if (taken.some((other) => metersBetween(other, spot) < 12)) continue;
+        taken.push(spot);
+        return spot;
+      }
+    }
+    return null;
+  }
+
+  /** Police cars 100–200 m out on the roads, spread round us, coming in. */
   private sendPolice(count: number) {
     const heist = this.heist;
     if (!heist) return;
@@ -2477,11 +2496,28 @@ export class GameEngine {
     const used = new Set<string>();
     const base = Math.random() * Math.PI * 2;
     const police = carsConfig.filter((car) => car.id === '09' || car.id === '16');
+    const spots: [number, number][] = [];
     for (let k = 0; k < count && heist.sent < 14; k++) {
       const angle = base + (k / count) * Math.PI * 2;
-      const around = offsetPosition(me, Math.sin(angle) * 200, Math.cos(angle) * 200) as [number, number];
+      const spot = this.policeSpawn(me, angle, spots);
+      const around = spot ?? offsetPosition(me, Math.sin(angle) * 150, Math.cos(angle) * 150) as [number, number];
       const car = police[(heist.sent + k) % police.length] ?? carsConfig[0];
       const bot = createTrafficBot(`police-${heist.sent}`, t('heist.police'), car, this.trafficNetwork, around, angle + Math.PI, used, 'hunt', (heist.sent + 1) * 7919, { min: 0, max: 70 });
+      if (spot) {
+        // stand exactly there, facing us; the first path is found from here
+        const heading = Math.atan2(
+          (me[0] - spot[0]) * Math.cos(spot[1] * Math.PI / 180),
+          me[1] - spot[1],
+        );
+        bot.controller.position = [...spot];
+        bot.controller.heading = heading;
+        bot.controller.speed = 0;
+        bot.position = [...spot];
+        bot.heading = heading;
+        bot.route = [];
+        bot.routeIndex = 1;
+        bot.repathAt = 0;
+      }
       heist.sent++;
       this.trafficBots.push(bot);
     }
@@ -5860,11 +5896,13 @@ export class GameEngine {
           const previous: [number, number] = [...bot.position];
           const oldHeading = bot.heading;
           const police = bot.id.startsWith('police');
-          advanceTrafficBot(bot, 1 / 60, this.trafficNetwork, police ? this.policePace(bot) : {
+          const pace = police ? this.policePace(bot) : {
             ...vehicleConfig,
             acceleration: bot.car.acceleration,
             maxSpeed: bot.car.maxSpeed,
-          }, police ? peers.slice(0, 1) : peers, [], this.botShortcut(bot, now));
+          };
+          // the police really drive at their pace (it was capped by the town pace, ~70 km/h)
+          advanceTrafficBot(bot, 1 / 60, this.trafficNetwork, pace, police ? peers.slice(0, 1) : peers, [], this.botShortcut(bot, now), police ? pace.maxSpeed : null);
           const building = this.collisions.resolve(previous, bot.position, bot.heading);
           if (building.stopped || building.slid) {
             bot.controller.position = building.position;
