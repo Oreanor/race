@@ -824,7 +824,15 @@ export class ThreeMap {
     if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) { el.style.visibility = 'hidden'; return; }
     el.style.visibility = '';
     const shift = el.dataset.anchor === 'bottom' ? 'translate(-50%,-100%)' : 'translate(-50%,-50%)';
-    el.style.transform = `translate(${p.x.toFixed(1)}px,${p.y.toFixed(1)}px) ${shift}`;
+    let { x, y } = p;
+    // a goal pin whose point is in frame keeps its whole label on screen: the edge arrow
+    // has already yielded to it, so a label hanging off the top would leave nothing to see
+    const { width, height } = this.camera.state;
+    if (el.classList.contains('map-pin') && x >= 0 && x <= width && y >= 0 && y <= height) {
+      x = Math.min(Math.max(x, 70), width - 70);
+      y = Math.max(y, 62);
+    }
+    el.style.transform = `translate(${x.toFixed(1)}px,${y.toFixed(1)}px) ${shift}`;
   }
 
   // ---- rendering ----------------------------------------------------------

@@ -70,9 +70,9 @@ export function placeIndicator(view: IndicatorView, marker: Indicator, from: Pos
   const inSafe = projected
     && point.x >= sideMargin && point.x <= width - sideMargin
     && point.y >= topMargin && point.y <= height - bottomMargin;
-  // Mission HUD yields to the map pin once the target is well inside the viewport; at the very
-  // edge the pin's label would hang off-screen, so the edge arrow stays (never nothing on screen)
-  if ((onMap ? inFrame : inSafe) && (onMap || meters < pinMeters) && marker.element.classList.contains('mission-indicator')) {
+  // Mission HUD yields to the map pin as soon as the target is anywhere in the viewport —
+  // one marker, never two (the pin keeps itself inside the screen, see ThreeMap.placeMarker)
+  if (inFrame && (onMap || meters < pinMeters) && marker.element.classList.contains('mission-indicator')) {
     marker.element.classList.add('is-onscreen');
     marker.element.classList.remove('is-edge');
     marker.element.style.display = 'none';
