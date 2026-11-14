@@ -450,6 +450,10 @@ export class GameEngine {
   private heist: { cash: number; reinforce: number; sent: number; caught: boolean; stolen?: { carId: string; previousId: string; owned: boolean } } | null = null;
   /** each chasing bot's last look at its target: is the way clear of houses (checked every 300 ms) */
   private botSight = new Map<string, { at: number; clear: boolean }>();
+  /** hunters that got stuck: no cutting across until then (ms) */
+  private botNoCut = new Map<string, number>();
+  /** where each hunter last made headway (for spotting a stuck one) */
+  private botProgress = new Map<string, { at: number; position: Position }>();
   /** when each police car fell that far behind (it gives up after POLICE_GIVE_UP_MS) */
   private policeFar = new Map<string, number>();
   /** parking lots from the POI layer */
@@ -2445,12 +2449,45 @@ export class GameEngine {
       target = offsetPosition(this.vehicle.position, Math.sin(this.vehicle.heading) * v, Math.cos(this.vehicle.heading) * v) as Position;
     }
     if (!target || metersBetween(bot.position, target) > 350) return null;
+    // stuck lately (a river bank, a fence): keep to the roads for a while
+    if ((this.botNoCut.get(bot.id) ?? 0) > now) return null;
     let sight = this.botSight.get(bot.id);
     if (!sight || now - sight.at > 300) {
-      sight = { at: now, clear: !this.collisions.sightBlocked(bot.position, target) && !this.water.covers(target, true) };
+      sight = { at: now, clear: !this.collisions.sightBlocked(bot.position, target) && !this.waterBetween(bot.position, target) };
       this.botSight.set(bot.id, sight);
     }
     return sight.clear ? target : null;
+  }
+
+  /** Water anywhere on the straight line (bridges count as dry): no cutting across a river. */
+  private waterBetween(from: Position, to: Position) {
+    const steps = Math.max(1, Math.ceil(metersBetween(from, to) / 10));
+    for (let i = 1; i <= steps; i++) {
+      const k = i / steps;
+      if (this.water.covers([from[0] + (to[0] - from[0]) * k, from[1] + (to[1] - from[1]) * k], true)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * A hunter that has hardly moved for 2.5 s (not while it is on top of us) is stuck:
+   * no cutting across for 6 s, and a fresh road route round the obstacle.
+   */
+  private unstickHunter(bot: TrafficBot, now: number) {
+    const seen = this.botProgress.get(bot.id);
+    const close = metersBetween(bot.position, this.vehicle.position) < 15;
+    if (!seen || close || metersBetween(seen.position, bot.position) > 4) {
+      this.botProgress.set(bot.id, { at: now, position: [...bot.position] as Position });
+      return;
+    }
+    if (now - seen.at < 2500) return;
+    this.botNoCut.set(bot.id, now + 6000);
+    bot.cutting = false;
+    bot.route = [];
+    bot.routeIndex = 1;
+    bot.repathAt = 0;
+    bot.routeSeed = (bot.routeSeed * 48271 + 1) % 2147483647;
+    this.botProgress.set(bot.id, { at: now, position: [...bot.position] as Position });
   }
 
   /**
@@ -5903,6 +5940,7 @@ export class GameEngine {
           };
           // the police really drive at their pace (it was capped by the town pace, ~70 km/h)
           advanceTrafficBot(bot, 1 / 60, this.trafficNetwork, pace, police ? peers.slice(0, 1) : peers, [], this.botShortcut(bot, now), police ? pace.maxSpeed : null);
+          if (bot.mood === 'hunt') this.unstickHunter(bot, now);
           const building = this.collisions.resolve(previous, bot.position, bot.heading);
           if (building.stopped || building.slid) {
             bot.controller.position = building.position;
