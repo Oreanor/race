@@ -858,17 +858,10 @@ export default function Game() {
                             engine.current?.joinNetwork(value.trim() || defaultName);
                           }}
                         />
-                        <CarCarousel index={car} onIndex={setCar} cars={introCars}>
-                          {/* owned: no charge on the start — say so instead of a price */}
-                          <div className={`car-deal${ownsStarter ? ' is-owned' : ''}`}>
-                            {ownsStarter ? (
-                              <span>{t('intro.owned')}</span>
-                            ) : (
-                              <>
-                                <span>{t('dealer.price')}</span>
-                                <strong className={canBuyStarter ? undefined : 'is-broke'}><Price value={starterPrice} /></strong>
-                              </>
-                            )}
+                        <CarCarousel index={car} onIndex={setCar} cars={introCars} badge={ownsStarter ? t('intro.owned') : ''}>
+                          <div className="car-deal">
+                            <span>{t('dealer.price')}</span>
+                            <strong className={canBuyStarter ? undefined : 'is-broke'}><Price value={starterPrice} /></strong>
                           </div>
                         </CarCarousel>
                         <div className="city-search">

@@ -10,11 +10,16 @@ import CarPreview from './CarPreview';
  * showroom sells one; `children` go under the numbers (a price, a button).
  * `cars` is the (possibly sorted) line-up to walk through; `index` addresses it.
  */
-export default function CarCarousel({ index, onIndex, children, cars: items }: { index: number; onIndex: (index: number) => void; children?: ReactNode; cars: Car[] }) {
+export default function CarCarousel({ index, onIndex, children, cars: items, badge }: {
+  index: number; onIndex: (index: number) => void; children?: ReactNode; cars: Car[];
+  /** a line centred under the car (e.g. "in your garage"); '' keeps its room so nothing jumps */
+  badge?: string;
+}) {
   const car = items[index];
   return (
     <div className="car-pick">
       <CarPreview car={car} />
+      {badge !== undefined && <div className="car-badge" aria-live="polite">{badge}</div>}
       <button type="button" className="car-arrow is-prev" aria-label="←" onClick={() => onIndex((index + items.length - 1) % items.length)}>‹</button>
       <button type="button" className="car-arrow is-next" aria-label="→" onClick={() => onIndex((index + 1) % items.length)}>›</button>
       <div className="car-pick-name">
