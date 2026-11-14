@@ -494,7 +494,8 @@ export default function Game() {
       game.onBankOffer = (offer) => setBankOffer(offer);
       game.onDealerOffer = (offer) => setDealerOffer(offer);
       game.onCarBought = (bought) => {
-        const index = cars.findIndex((entry) => entry.id === bought.id);
+        // `car` indexes the price-sorted carousel (introCars), not the config order
+        const index = introCars.findIndex((entry) => entry.id === bought.id);
         if (index >= 0) setCar(index);
       };
       game.onBountyOffer = (offer) => setBountyOffer(offer);
