@@ -65,6 +65,17 @@ export function resolveVehicleCollision(a: VehicleBody, b: VehicleBody, scale = 
 
 export { metersBetween, METERS_PER_DEGREE } from './meters.ts';
 
+/** handbrake spin: from this speed (m/s) the tail comes round */
+const SPIN_MIN_SPEED = 5;
+/** handbrake spin: top yaw rate (rad/s) — a half turn in about 1.2 s */
+const SPIN_YAW_MAX = 2.6;
+/** handbrake spin: how much of the yaw goes into the slide (the rest turns the travel direction) */
+const SPIN_SLIDE = 0.85;
+/** handbrake: share of its force that slows the car going straight (~6.6 m/s², the brake is 12) */
+const HANDBRAKE_SCRUB = 0.3;
+/** handbrake spin: share of its force that slows the car while sliding sideways */
+const SPIN_SCRUB = 0.3;
+
 export class VehicleController {
   position: Position; heading: number; speed=0;   distance=0; throttle=0; slip=0;
   /** Engine revs 0..1 (idle ≈ 0.08, redline = 1). */
@@ -81,7 +92,13 @@ export class VehicleController {
     if(gas && !handbrake) this.speed+=(this.speed<0?braking:acceleration)*dt;
     if(gas && handbrake && this.speed < 1) this.speed=Math.min(this.speed, 0.5);
     if(brake) this.speed-=(this.speed>0?braking:acceleration)*dt;
-    if(handbrake && Math.abs(this.speed) > 0.1) this.speed-=Math.sign(this.speed)*Math.max(braking, handbrakeForce)*dt;
+    const steerKey=Number(keys.has('KeyD'))-Number(keys.has('KeyA'));
+    // handbrake + steering at speed: the tail comes round — the body spins (up to a full 180°)
+    // while the car keeps sliding the way it was going
+    const spinning=handbrake && steerKey!==0 && this.speed/scale>SPIN_MIN_SPEED;
+    // sliding sideways scrubs speed less hard than locked wheels going straight
+    // only the rear wheels lock: it slows gently and mostly breaks the tail loose (the brake stops)
+    if(handbrake && Math.abs(this.speed) > 0.1) this.speed-=Math.sign(this.speed)*handbrakeForce*(spinning?SPIN_SCRUB:HANDBRAKE_SCRUB)*dt;
     if(handbrake && Math.abs(this.speed) <= 0.1 && !gas) this.speed=0;
     if(this.launch>0){
       this.speed+=this.launch*acceleration*3.8*dt;
@@ -95,13 +112,29 @@ export class VehicleController {
     if(this.launch>0.05) this.revs=Math.max(this.revs, this.launch*0.85);
     this.throttle=((gas&&!handbrake)&&this.speed>0.35)||Math.abs(this.slip)>0.35?1:0;
 
-    const steer=Number(keys.has('KeyD'))-Number(keys.has('KeyA'));
+    const steer=steerKey;
     const pace=this.speed/scale;
-    const gripBase=steer*this.speed/config.wheelbase*0.38/(1+Math.abs(pace)*0.09);
-    const grip=gripBase*(handbrake ? 1.35 : 1);
-    this.heading+=grip*dt;
-    const wantedSlip=steer*Math.min(handbrake?0.62:0.42, Math.max(0, pace)*(handbrake?0.022:0.014));
-    this.slip+=(wantedSlip-this.slip)*(1-Math.exp(-dt*7));
+    if(spinning){
+      // yaw quicker the faster we slide; the travel direction lags (it turns only a little)
+      // facing fully backwards: stop there and slide on tail-first (a 180, not a 360)
+      const room=Math.PI-Math.abs(this.slip)*(Math.sign(this.slip)===steer?1:-1);
+      const yaw=steer*Math.min(Math.min(SPIN_YAW_MAX, 1.1+pace*0.05)*dt, Math.max(0, room)/SPIN_SLIDE);
+      this.heading+=yaw;
+      this.slip=Math.max(-Math.PI, Math.min(Math.PI, this.slip+yaw*SPIN_SLIDE));
+    } else {
+      if(Math.abs(this.slip)>Math.PI/2){
+        // let go facing backwards: roll on tail-first the way we were sliding
+        this.speed=-Math.min(Math.abs(this.speed), reverseSpeed);
+        this.slip-=Math.sign(this.slip)*Math.PI;
+      }
+      const gripBase=steer*this.speed/config.wheelbase*0.38/(1+Math.abs(pace)*0.09);
+      const grip=gripBase*(handbrake ? 1.35 : 1);
+      this.heading+=grip*dt;
+      const wantedSlip=steer*Math.min(handbrake?0.62:0.42, Math.max(0, pace)*(handbrake?0.022:0.014));
+      // a big slide (after a spin) settles slower than the everyday drift angle
+      const settle=Math.abs(this.slip)>0.7?3:7;
+      this.slip+=(wantedSlip-this.slip)*(1-Math.exp(-dt*settle));
+    }
     if(Math.abs(this.speed)<0.4) this.slip=0;
     const travel=this.heading-this.slip;
     const move=this.speed*dt; this.distance+=Math.abs(move); this.position=offsetPosition(this.position,Math.sin(travel)*move,Math.cos(travel)*move);
