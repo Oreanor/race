@@ -7,6 +7,7 @@
 import { PbfReader } from 'pbf';
 import { VectorTile } from '@mapbox/vector-tile';
 import { buildTile, transferables as buildingTransferables, type TileData } from './buildTile.ts';
+import type { BuildingAssembly } from './buildingAssembly.ts';
 import { buildGround, clipHalf, groundTransferables, type GroundData } from './groundVector.ts';
 
 type Pt = [number, number];
@@ -55,6 +56,7 @@ export type WorldTileData = {
 };
 
 export type WorldBuildOptions = {
+  buildingAssemblies?: Map<string, BuildingAssembly>;
   dem: Float32Array | null;
   chunks: number;
   inset: number;
@@ -1466,6 +1468,7 @@ export function buildWorldTile(buffer: ArrayBuffer, tile: TileId, options: World
     roads,
     streams,
     buildings: buildTile(vt, tile, {
+      buildingAssemblies: options.buildingAssemblies,
       chunks: options.chunks,
       windows: false,
       dem,

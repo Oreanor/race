@@ -668,7 +668,12 @@ export default function Game() {
     if (!gl) return;
     perfGl.current = gl;
     const monitor = new PerfMonitor(gl, setPerf);
-    return () => { monitor.dispose(); perfGl.current = null; setPerf(null); setBench(null); };
+    const map = engine.current?.map;
+    if (map) map.perfMonitor = monitor;
+    return () => {
+      if (map?.perfMonitor === monitor) map.perfMonitor = null;
+      monitor.dispose(); perfGl.current = null; setPerf(null); setBench(null);
+    };
   }, [perfOn, booted, place]);
 
   const runBench = () => {

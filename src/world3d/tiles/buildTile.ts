@@ -15,6 +15,8 @@ import { buildRoof, canPitch, simplifyRing, type RoofKind as PitchedKind, type R
 import { PIECES, ROOF_LIP } from '../../game/buildings/pieces.ts';
 import type { InstanceSet } from './vegetationTile.ts';
 import { buildingStyleKey, primaryTileSeam } from '../../game/buildings/wallOverlap.ts';
+import { clusterBuildingStyleKeys, ringArea } from '../../game/buildings/buildingStyleCluster.ts';
+import { assembledWall, type BuildingAssembly } from './buildingAssembly.ts';
 import { cutCoveredWalls } from './wallCut.ts';
 import { tileCorner, tileSpan, latFromMercator, type TileId } from '../mercator.ts';
 import { DEM_SIZE, sampleDem } from './dem.ts';
@@ -56,6 +58,8 @@ export type ChunkData = {
   ground: Float32Array;
   /** building centre per vertex (tile-local x, z) */
   center: Float32Array;
+  /** Stable per-building district rolls and total height, independent of scene origin. */
+  style: Float32Array;
   /** window grid per wall vertex: columns, rows, column step (m), row step (m); 0 columns = no windows */
   win: Float32Array;
   /** window frame width and height (m) */
@@ -109,6 +113,7 @@ export type TileData = {
 };
 
 export type BuildOptions = {
+  buildingAssemblies?: Map<string, BuildingAssembly>;
   /** chunks per tile edge; total chunks = n*n */
   chunks: number;
   /** emit instanced window placements */
@@ -161,6 +166,8 @@ class ChunkBuilder {
   facade: number[] = [];
   ground: number[] = [];
   center: number[] = [];
+  style: number[] = [];
+  styleValues: [number, number, number] = [0, 0, 0];
   win: number[] = [];
   winSize: number[] = [];
   index: number[] = [];
@@ -178,6 +185,7 @@ class ChunkBuilder {
     this.positions.push(x, y, z);
     this.ground.push(ground);
     this.center.push(this.cx, this.cz);
+    this.style.push(...this.styleValues);
     const g = this.grid;
     this.win.push(g[0], g[1], g[2], g[3]);
     this.winSize.push(g[4], g[5]);
@@ -409,8 +417,9 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
   // walls are collected and resolved per tile, then emitted (see pass 2)
   type Face = {
     owner: string; ax: number; az: number; bx: number; bz: number; y0: number; y1: number; order: number;
-    chunk: ChunkBuilder; cx: number; cz: number; nx: number; nz: number; length: number; ground: [number, number];
+    chunk: ChunkBuilder; cx: number; cz: number; styleValues: [number, number, number]; nx: number; nz: number; length: number; ground: [number, number];
     crest: number; base: number; top: number; wall: Pt3; roof: Pt3; glass: number; recipe: BuildingRecipe;
+    facadeLength: number; facadeOffset: number;
   };
   const faces: Face[] = [];
   /**
@@ -462,6 +471,28 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
       });
     }
     const keep = new Set([...best.values()].map((c) => c.id));
+    const styleParts = [...best.values()].map((c) => {
+      const ring = prepareRing(c.ring, extent).map(([x, y]) => ({ x, y }));
+      const ll = ring.map((p) => lngLatOf(tile, extent, p.x, p.y));
+      const seam = primaryTileSeam(ring, extent).map((p) => lngLatOf(tile, extent, p.x, p.y));
+      return { ...c, box: c.box as [number, number, number, number], ring, area: ringArea(ring), styleKey: buildingStyleKey(c.height, c.base, ll, seam) };
+    });
+    // Shared walls / overlapping parts only: proximity alone recolours unrelated houses.
+    const styleKeys = clusterBuildingStyleKeys(styleParts, { pxToMeters: k * metersScale, proximityM: 0, maxHeightDelta: Infinity });
+    for (const part of styleParts) {
+      const assembly = options.buildingAssemblies?.get(part.id);
+      if (assembly) styleKeys.set(part.id, assembly.key);
+    }
+    const styles = new Map<string, [number, number, number]>();
+    for (const part of styleParts) {
+      const key = styleKeys.get(part.id)!;
+      const prior = styles.get(key);
+      const styleHeight = options.buildingAssemblies?.get(part.id)?.height ?? part.height;
+      if (prior) { prior[2] = Math.max(prior[2], styleHeight); continue; }
+      // The canonical key also works when the neighbouring tile sees only the cut half.
+      styles.set(key, [hashSeed(`district:${key}`) >>> 0, hashSeed(`roof:${key}`) >>> 0, styleHeight]);
+    }
+    for (const style of styles.values()) { style[0] /= 4294967296; style[1] /= 4294967296; }
     const crowded = new Set<string>();
     const buried = new Set<string>();
     {
@@ -517,6 +548,7 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
         const polygon = polygons[pi];
         if (!keep.has(`${f}:${pi}`) || buried.has(`${f}:${pi}`)) continue;
         const buildingId = `${f}:${pi}`;
+        const assembly = options.buildingAssemblies?.get(buildingId);
         const outer = prepareRing(polygon[0], extent);
         if (outer.length < 3) continue;
         const rings = [outer, ...polygon.slice(1).map((ring) => prepareRing(ring, extent)).filter((ring) => ring.length >= 3)];
@@ -526,7 +558,7 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
         const ringLngLat = outer.map((p) => lngLatOf(tile, extent, p[0], p[1]));
         const seamPx = primaryTileSeam(outer.map((p) => ({ x: p[0], y: p[1] })), extent);
         const seamLngLat = seamPx.map((p) => lngLatOf(tile, extent, p.x, p.y));
-        const key = buildingStyleKey(measured, base, ringLngLat, seamLngLat);
+        const key = styleKeys.get(buildingId) ?? buildingStyleKey(measured, base, ringLngLat, seamLngLat);
         const seed = hashSeed(key);
         let wall = WALLS[indexFor(WALLS.length, seed)];
         let roof = ROOFS[indexFor(ROOFS.length, seed ^ 0x51f0c3)];
@@ -537,6 +569,7 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
         const gx = Math.min(n - 1, Math.max(0, Math.floor(cxSum / outer.length / extent * n)));
         const gz = Math.min(n - 1, Math.max(0, Math.floor(czSum / outer.length / extent * n)));
         const chunk = builders[gz * n + gx];
+        chunk.styleValues = styles.get(key) ?? [0, 0, height];
         chunk.cx = cxSum / outer.length * k;
         chunk.cz = czSum / outer.length * k;
         // the ground it stands on: the highest point under its corners; a building cut by the
@@ -561,7 +594,7 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
         }
         chunk.buildings++;
         const recipe = options.detailed
-          ? createRecipe({ id: 0, key, height: measured, base }, HOUSE_PALETTE, 'auto', options.detailed.region)
+          ? createRecipe({ id: 0, key, height: assembly?.height ?? measured, base: assembly?.base ?? base }, HOUSE_PALETTE, 'auto', options.detailed.region)
           : null;
         stats.buildings++;
         chunk.maxHeight = Math.max(chunk.maxHeight, height);
@@ -621,11 +654,16 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
             const nz = sign * -dx / lengthMerc;
             const length = lengthMerc * metersScale;
             if (recipe) {
+              const frame = assembly ? assembledWall(assembly,
+                [tile.x * 4096 + a[0] * 4096 / extent, tile.y * 4096 + a[1] * 4096 / extent],
+                [tile.x * 4096 + b[0] * 4096 / extent, tile.y * 4096 + b[1] * 4096 / extent]) : null;
               faces.push({
+                facadeLength: frame ? frame.length * span / 4096 * metersScale : length,
+                facadeOffset: frame ? frame.offset * span / 4096 * metersScale : 0,
                 // a wall standing on the ground reaches down to it whatever its crest (neighbours
                 // on a slope have different crests): only a raised part (min_height) starts higher
-                owner: key, ax, az, bx, bz, y0: base > 0.3 ? crest + base : -1e6, y1: crest + top, order: faces.length,
-                chunk, cx: chunk.cx, cz: chunk.cz, nx, nz, length, ground: [g[0], g[1]],
+                owner: buildingId, ax, az, bx, bz, y0: base > 0.3 ? crest + base : -1e6, y1: crest + top, order: faces.length,
+                chunk, cx: chunk.cx, cz: chunk.cz, styleValues: chunk.styleValues, nx, nz, length, ground: [g[0], g[1]],
                 crest, base, top, wall, roof, glass: glassIndex, recipe,
               });
               continue;
@@ -724,7 +762,7 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
           const h = 0.55 + (recipe!.seed % 4) * 0.12;
           const thick = 0.26 * toMerc;
           const y1 = capY + h;
-          parapetOwners.set(key, y1);
+          parapetOwners.set(buildingId, y1);
           const inner: Pt3 = [Math.round(wall[0] * 0.86), Math.round(wall[1] * 0.86), Math.round(wall[2] * 0.86)];
           const g4: [number, number, number, number] = [crest, crest, crest, crest];
           for (let i = 0; i < ring.length; i++) {
@@ -808,6 +846,7 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
       const chunk = face.chunk;
       chunk.cx = face.cx;
       chunk.cz = face.cz;
+      chunk.styleValues = face.styleValues;
       const ax = face.ax + (face.bx - face.ax) * t0, az = face.az + (face.bz - face.az) * t0;
       const bx = face.ax + (face.bx - face.ax) * t1, bz = face.az + (face.bz - face.az) * t1;
       const ga = face.ground[0] + (face.ground[1] - face.ground[0]) * t0;
@@ -818,10 +857,10 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
       // under a raised part the wall stops where that part begins (no roof lip up there)
       const capped = cap != null && cap - face.crest < face.top - 0.05;
       const wallTop = capped ? Math.max(y0 + 0.1, cap - face.crest) : face.top;
-      const grid = windowGrid(face.length, face.base, face.top, face.recipe);
+      const grid = windowGrid(face.facadeLength, face.base, face.top, face.recipe);
       chunk.grid = grid ? [grid.n, grid.m, grid.step, grid.rowStep, grid.w, grid.h] : [0, 0, 0, 0, 0, 0];
-      const u0 = grid ? (face.length * t0 - grid.u0) / grid.step : 0;
-      const u1 = grid ? (face.length * t1 - grid.u0) / grid.step : 0;
+      const u0 = grid ? (face.facadeOffset + face.length * t0 - grid.u0) / grid.step : 0;
+      const u1 = grid ? (face.facadeOffset + face.length * t1 - grid.u0) / grid.step : 0;
       const v0 = grid ? (y0 - grid.v0) / grid.rowStep : 0;
       const v1 = grid ? (wallTop - grid.v0) / grid.rowStep : 0;
       chunk.quad(ax, az, bx, bz, y0, wallTop, face.nx, face.nz, face.wall, u1, v0, v1, face.glass, true, [ga, gb, face.crest, face.crest], u0);
@@ -878,6 +917,7 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
       facade: new Float32Array(b.facade),
       ground: new Float32Array(b.ground),
       center: new Float32Array(b.center),
+      style: new Float32Array(b.style),
       win: new Float32Array(b.win),
       winSize: new Float32Array(b.winSize),
       index: new Uint32Array(b.index),
@@ -886,7 +926,7 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
     stats.triangles += chunk.index.length / 3;
     stats.windows += windows.count;
     stats.bytes += chunk.positions.byteLength + chunk.normals.byteLength + chunk.colors.byteLength
-      + chunk.facade.byteLength + chunk.ground.byteLength + chunk.center.byteLength + chunk.win.byteLength + chunk.winSize.byteLength + chunk.index.byteLength + windows.offsets.byteLength + windows.axes.byteLength;
+      + chunk.facade.byteLength + chunk.ground.byteLength + chunk.center.byteLength + chunk.style.byteLength + chunk.win.byteLength + chunk.winSize.byteLength + chunk.index.byteLength + windows.offsets.byteLength + windows.axes.byteLength;
     chunks.push(chunk);
   });
   stats.decodeMs = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - started;
@@ -913,7 +953,7 @@ export function transferables(data: TileData): ArrayBuffer[] {
   for (const c of data.chunks) {
     out.push(c.positions.buffer as ArrayBuffer, c.normals.buffer as ArrayBuffer, c.colors.buffer as ArrayBuffer,
       c.facade.buffer as ArrayBuffer, c.ground.buffer as ArrayBuffer, c.center.buffer as ArrayBuffer, c.index.buffer as ArrayBuffer,
-      c.win.buffer as ArrayBuffer, c.winSize.buffer as ArrayBuffer,
+      c.win.buffer as ArrayBuffer, c.winSize.buffer as ArrayBuffer, c.style.buffer as ArrayBuffer,
       c.windows.offsets.buffer as ArrayBuffer, c.windows.axes.buffer as ArrayBuffer);
   }
   return out;

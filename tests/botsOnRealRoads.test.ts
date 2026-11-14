@@ -20,6 +20,22 @@ process.on('exit', () => { performance.now = realNow; });
 const step = (dt: number) => { simulated += dt * 1000; };
 
 const tile = { z: 14, x: 7808, y: 6190 };
+
+test('pruning roads keeps shared nodes and allows an old area to load again', () => {
+  const network = new TrafficRoadNetwork();
+  const road = (coordinates: number[][]) => ({ properties: { class: 'minor' }, geometry: { type: 'LineString', coordinates } }) as MapFeature;
+  const near = road([[0, 0], [0.001, 0]]);
+  const far = road([[0.001, 0], [0.1, 0]]);
+  network.addFeatures([near, far]);
+  network.flushRebuild();
+  network.prune([0, 0], 200);
+  assert.ok(network.nearest([0.001, 0]));
+  network.prune([1, 0], 200);
+  assert.equal(network.nearest([0.001, 0]), null);
+  assert.equal(network.addFeatures([near]), true);
+  network.flushRebuild();
+  assert.ok(network.nearest([0.001, 0]));
+});
 const vt = new VectorTile(new PbfReader(readFileSync(new URL('./fixtures/coimbra-14-7808-6190.pbf', import.meta.url))));
 
 function roads(): MapFeature[] {

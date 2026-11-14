@@ -23,6 +23,9 @@ export default function PerfOverlay({ mode, perf, bench, extra, onBench }: {
         <dt>Draw calls</dt><dd>{perf ? perf.drawCalls : '—'}</dd>
         <dt>Треугольники</dt><dd>{perf ? big(perf.triangles) : '—'}</dd>
         <dt>Инстансы</dt><dd>{perf ? big(perf.instances) : '—'}</dd>
+        {perf?.stages && Object.entries(perf.stages).map(([name, ms]) => (
+          <Fragment key={name}><dt>{name}, пик мс</dt><dd>{fmt(ms, 2)}</dd></Fragment>
+        ))}
         {extra?.map(([k, v]) => (<Fragment key={k}><dt>{k}</dt><dd>{v}</dd></Fragment>))}
         {bench && (<>
           <dt>Бенчмарк</dt><dd>{fmt(bench.avgMs, 2)} мс · p95 {fmt(bench.p95Ms, 2)}</dd>

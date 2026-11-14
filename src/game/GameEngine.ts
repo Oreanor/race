@@ -5004,9 +5004,9 @@ export class GameEngine {
   revealMap() {
     if (this.mapShown || this.disposed) return;
     this.mapShown = true;
-    // Short burst after reveal, then drop — leaving it on forever tanks FPS after a few M toggles.
-    this.map.beginStreamBurst();
-    this.bootBurstUntil = performance.now() + 2500;
+    // The ring is prepared while hidden. Visible frames use the normal upload budget.
+    this.map.endStreamBurst();
+    this.bootBurstUntil = 0;
     this.showIntroMap();
     this.host.style.transition = 'opacity .7s ease';
     this.host.style.opacity = '1';
@@ -5211,7 +5211,7 @@ export class GameEngine {
     // Save resume / arrive: sit in chase cam on the first frame (no intro fly-in)
     if (starting && this.mapShown) {
       this.map.setStreamCalm(false);
-      this.map.beginStreamBurst();
+      this.map.endStreamBurst();
       this.orbit = 0;
       this.distance = cameraConfig.distance;
       this.pitch = cameraConfig.pitch;
@@ -5227,7 +5227,7 @@ export class GameEngine {
         bearing: this.bearing,
         elevation: this.altitude,
       });
-      this.bootBurstUntil = performance.now() + 2500;
+      this.bootBurstUntil = 0;
     }
   }
 
@@ -5608,6 +5608,8 @@ export class GameEngine {
 
   /** Roads, water, green areas and stations for collisions and gameplay. */
   private *collectGround(refreshTiles: boolean, focus: [number, number]): Generator<null, void> {
+    this.trafficNetwork.prune(focus, 6000);
+    yield null;
     if (refreshTiles) {
       const now = performance.now();
       const batch = [...this.pendingIngest];
@@ -5713,6 +5715,8 @@ export class GameEngine {
 
   tick = (now: number) => {
     if (this.disposed) return;
+    const cpuStart = performance.now();
+    try {
     this.frame = requestAnimationFrame(this.tick);
     const dt = this.last ? Math.min((now - this.last) / 1000, 0.1) : 0;
     this.last = now;
@@ -6038,6 +6042,9 @@ export class GameEngine {
     if (!this.mapShown) this.settleBoot();
     if (!this.approachFrom) this.tickStreamBurst(now);
     this.map.triggerRepaint();
+    } finally {
+      if (this.map.perfMonitor) this.map.reportUpdateCpu(performance.now() - cpuStart);
+    }
   };
 
   dispose() {

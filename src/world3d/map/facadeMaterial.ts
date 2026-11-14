@@ -56,6 +56,8 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
       attribute float aGround;
       attribute vec4 aWin;
       attribute vec2 aWinSize;
+      attribute vec3 aStyle;
+      varying vec3 vStyle;
       varying vec3 vColor;
       varying vec3 vFacade;
       varying vec3 vNormal;
@@ -66,6 +68,7 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
       ${LAMP_VERTEX}
       void main() {
         vColor = aColor;
+        vStyle = aStyle;
         vFacade = aFacade;
         vLampUv = position.xz / uTileSpan;
         vWin = aWin;
@@ -98,7 +101,8 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
       uniform vec3 uSkinColors[72];
       uniform vec4 uSkinOpt[3];
       uniform vec3 uSkinRoofRange;
-      int skinBank;
+      int skinBank = 0;
+      varying vec3 vStyle;
       // precision-stable hash (avoids sin()*large patterns that break on some GPUs/drivers)
       float seeded(vec3 c, float salt) {
         vec3 p = fract(c * vec3(0.1031, 0.1030, 0.0973));
@@ -139,35 +143,38 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
       varying float vHeight;
       varying vec4 vWin;
       varying vec2 vWinSize;
-      // Mixed city: districts (~300 m) favour one style; height clamps which styles a building may take.
+      // Mixed city: a stable building seed favours one style; height limits the choices.
       // 0 old city, 1 modern, 2 futuristic, 3 victorian.
       float resolveMixedSkin() {
-        vec2 cell = floor(vWorld.xz / 300.0);
-        float dRoll = seeded(vec3(cell, 2.1), 1.1);
+        float dRoll = vStyle.x;
         // district dominant style (roughly even split of the four looks)
         float district = dRoll < 0.24 ? 0.0 : dRoll < 0.49 ? 1.0 : dRoll < 0.72 ? 2.0 : 3.0;
-        float floors = vWin.x > 0.5 ? vWin.y : max(1.0, floor(vHeight / 3.2 + 0.5));
-        float clear = vWin.x > 0.5 ? vWin.y * vWin.w : vHeight;
+        float floors = max(1.0, floor(vStyle.z / 3.2 + 0.5));
+        float clear = vStyle.z;
         bool high = floors >= 9.0 || clear >= 30.0;
         bool low = floors <= 2.0 && !high;
         float stick = seeded(vColor, 44.1);
         float pick = seeded(vColor, 48.7);
+        // One initialized result and one return keep ANGLE's HLSL translation
+        // from producing a potentially uninitialized function-result temporary.
+        float result = district;
         if (high) {
           // towers: modern / futuristic dominate; rare old-city or victorian spill
           if (stick < 0.84) {
-            if (district == 1.0 || district == 2.0) return district;
-            return pick < 0.55 ? 1.0 : 2.0;
+            if (district == 1.0 || district == 2.0) result = district;
+            else result = pick < 0.55 ? 1.0 : 2.0;
+          } else {
+            result = pick < 0.5 ? 0.0 : 3.0;
           }
-          return pick < 0.5 ? 0.0 : 3.0;
-        }
-        if (low) {
+        } else if (low) {
           // 1–2 floors: anything but futuristic
-          if (stick < 0.8 && district != 2.0) return district;
-          return pick < 0.34 ? 0.0 : pick < 0.67 ? 1.0 : 3.0;
+          if (stick < 0.8 && district != 2.0) result = district;
+          else result = pick < 0.34 ? 0.0 : pick < 0.67 ? 1.0 : 3.0;
+        } else if (stick >= 0.78) {
+          result = floor(pick * 3.999);
         }
         // mid-rise: any style, district still reads as the majority
-        if (stick < 0.78) return district;
-        return floor(pick * 3.999);
+        return result;
       }
       // 1 inside the centred rectangle of half-size h, antialiased by aa
       float box(vec2 p, vec2 h, vec2 aa) {
@@ -419,7 +426,8 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
         float fireGlass = 0.0;
         // ---- architecture skin: one wall and one roof tone per building, the style's patterns
         // mixed (uSkin=4) picks 0–3 per building from district + height; otherwise the global skin
-        float skin = uSkin > 3.5 ? resolveMixedSkin() : uSkin;
+        float skin = uSkin;
+        if (uSkin > 3.5) skin = resolveMixedSkin();
         skinBank = skin > 0.5 ? int(skin + 0.5) - 1 : 0;
         vec4 skinOpt = skin > 0.5 ? uSkinOpt[skinBank] : vec4(0.38, 0.0, 0.0, 0.0);
         float skinRoofRange = skin > 0.5
@@ -442,7 +450,7 @@ export function farBuildingMaterial(u: BaseUniforms, mask: THREE.Texture) {
             if (skin > 2.5) {
               // victorian roofs: each district (~260 m) keeps one family of three tones, so
               // neighbours agree without matching; one roof in ten takes any of the eight
-              float fd = seeded(vec3(floor(vWorld.xz / 260.0), 5.0), 2.9);
+              float fd = vStyle.y;
               vec3 ra = fd < 0.4 ? vec3(0.333, 0.353, 0.353) : fd < 0.75 ? vec3(0.639, 0.42, 0.337) : vec3(0.463, 0.42, 0.376);
               vec3 rb = fd < 0.4 ? vec3(0.271, 0.267, 0.255) : fd < 0.75 ? vec3(0.533, 0.31, 0.271) : vec3(0.455, 0.471, 0.427);
               vec3 rc = fd < 0.4 ? vec3(0.6, 0.576, 0.545) : fd < 0.75 ? vec3(0.463, 0.337, 0.278) : vec3(0.333, 0.353, 0.353);

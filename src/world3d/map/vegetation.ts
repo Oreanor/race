@@ -5,6 +5,7 @@ import { floraLit, simpleLit } from './simpleLit.ts';
 import { createPieceGeometries } from '@/game/buildings/BuildingGeometry';
 import { createFarFloraModels, createFloraModels } from './floraModels.ts';
 import { FLORA_MODELS } from '../tiles/flora.ts';
+import { instanceGroups } from './instanceGroups.ts';
 
 /** beyond this (m from the camera to the tile) trees switch to their far stand-ins */
 export const FLORA_FAR = 450;
@@ -251,7 +252,23 @@ function applyLampShape(mesh: THREE.InstancedMesh, shape: THREE.BufferGeometry) 
   }
   geometry.setIndex(shape.getIndex());
   geometry.computeBoundingSphere();
-  if (geometry.boundingSphere) geometry.boundingSphere.radius += 400;
+  mesh.boundingSphere = null;
+  groundBounds(mesh);
+}
+
+/** Include the shader's terrain lift without making every small batch 400 m larger. */
+function groundBounds(mesh: THREE.InstancedMesh) {
+  mesh.computeBoundingSphere();
+  const ground = mesh.geometry.getAttribute('iGround');
+  let low = 0, high = 0;
+  if (ground) for (let i = 0; i < ground.count; i++) {
+    const y = ground.getX(i);
+    low = Math.min(low, y); high = Math.max(high, y);
+  }
+  if (mesh.boundingSphere) {
+    mesh.boundingSphere.center.y += (low + high) / 2;
+    mesh.boundingSphere.radius += (high - low) / 2 + 2; // wind/foliage motion
+  }
 }
 
 /** A lamp's cone of light, in the lamp's own meters: from the head down to the street. */
@@ -362,16 +379,26 @@ export class VegetationRenderer {
 
   /** Meshes for one tile, ready to add to the tile group. Flora meshes are named `flora<shape index>`. */
   build(data: VegetationData): THREE.InstancedMesh[] {
+    return [...this.buildSteps(data, 1)].flat();
+  }
+
+  *buildSteps(data: VegetationData, metersScale: number): Generator<THREE.InstancedMesh[]> {
     const out: THREE.InstancedMesh[] = [];
-    data.flora.forEach((set, i) => out.push(...this.instanced(`flora${i}`, this.flora[i], this.floraMat, set)));
+    for (let i = 0; i < data.flora.length; i++) {
+      for (const group of instanceGroups(data.flora[i], metersScale)) {
+        const meshes = this.instanced(`flora${i}`, this.flora[i], this.floraMat, group.data);
+        for (const mesh of meshes) { mesh.userData.instanceSlots = group.slots; mesh.userData.lodBounds = group.bounds; }
+        yield meshes;
+      }
+    }
     for (const [kind, set] of [['post', data.posts], ['rail', data.rails], ['lamp', data.lamps], ['plinth', data.plinths], ['plinthLong', data.plinthsLong], ['figure', data.figures], ['rider', data.riders],
       ['fountain', data.fountains], ['fountainWater', data.fountainWater], ['shelter', data.shelters], ['shelterGlass', data.shelterGlass], ['goal', data.goals],
       ['bin', data.bins], ['dumpster', data.dumpsters], ['bollard', data.bollards]] as [Kind, InstanceSet | undefined][]) {
-      if (set) out.push(...this.instanced(kind, this.geometries[kind], this.materials[kind], set));
+      if (set) yield this.instanced(kind, this.geometries[kind], this.materials[kind], set);
     }
     // every lamp's cone of light, on its own copy of the matrices: a lamp knocked down puts it out
     out.push(...this.instanced('lampBeam', this.beam, this.beamMat, { ...data.lamps, matrices: data.lamps.matrices.slice() }).map((mesh) => { mesh.renderOrder = 6; return mesh; }));
-    return out;
+    yield out;
   }
 
   /**
@@ -419,8 +446,7 @@ export class VegetationRenderer {
     if (set.colors && set.colors.length) mesh.instanceColor = new THREE.InstancedBufferAttribute(set.colors, 3);
     mesh.count = set.count;
     mesh.matrixAutoUpdate = false;
-    mesh.computeBoundingSphere();
-    if (mesh.boundingSphere) mesh.boundingSphere.radius += 400; // ground lift with exaggeration
+    groundBounds(mesh);
     if (name === 'lamp') {
       this.lampMeshes.add(mesh);
       // lit or knocked down, per lamp (WorldTiles.lampOut)

@@ -12,6 +12,7 @@ import { LensFlare } from './LensFlare.ts';
 import { skyDirection } from '../astro.ts';
 import { PAINTED_SKINS, SKIN_DATA, type Skin, type SkinId } from '../buildings/skins.ts';
 import { METERS_PER_DEGREE } from '@/game/meters';
+import type { PerfMonitor } from '../perf/PerfMonitor.ts';
 
 
 /** bullet hole decals; the oldest one goes when a new one comes */
@@ -96,6 +97,9 @@ export class ThreeMarker {
 const TIME_ROLL_MS = 1000;
 
 export class ThreeMap {
+  perfMonitor: PerfMonitor | null = null;
+  private updateCpuMs = 0;
+  reportUpdateCpu(ms: number) { this.updateCpuMs += ms; }
   readonly renderer: THREE.WebGLRenderer;
   readonly camera = new MapCamera();
   readonly world: WorldTiles;
@@ -166,6 +170,10 @@ export class ThreeMap {
   private focusCar: { at: [number, number]; altitude: number; heading: number; pitch: number } | null = null;
   /** first-frame shader compile so the opening lap does not hitch on program link */
   private programsWarmed = false;
+  private gpuWarmQueue: THREE.Mesh[] = [];
+  private gpuWarmScene = new THREE.Scene();
+  private gpuWarmTarget: THREE.WebGLRenderTarget | null = null;
+  private gpuWarmFence: WebGLSync | null = null;
   /** while the map is hidden: fill a full tile ring and drain GPU uploads faster */
   private streamBurst = true;
   /** intro fly-in / M blend: tiny upload budget so the lerp stays at 60 */
@@ -215,6 +223,7 @@ export class ThreeMap {
     this.uniforms = baseUniforms(SKY);
     this.mask = facadeMask();
     this.world = new WorldTiles(this.uniforms, this.mask, { ...defaultWorldOptions, demTemplate: options.dem ?? null, region: options.region ?? '' });
+    this.world.onMesh = mesh => { this.gpuWarmQueue.push(mesh); };
     this.world.onTile = (key) => {
       // `tile` ("z/x/y") lets listeners skip tiles far from what they care about
       this.emit('tile', { tile: key });
@@ -368,7 +377,7 @@ export class ThreeMap {
 
   /** Everything inside the fog is in: the world can be shown without anything popping in later. */
   areTilesLoaded(radius = this.uniforms.uFogFar.value) {
-    return this.world.loadedAround(this.camera.state.center, radius);
+    return this.world.loadedAround(this.camera.state.center, radius) && !this.gpuWarmQueue.length && !this.gpuWarmFence;
   }
 
   /** Boot: isotropic ring + faster uploads while the canvas is still hidden / settled. */
@@ -386,7 +395,7 @@ export class ThreeMap {
   }
   /** Tiles + GPU uploads done around a point (not only the current camera). */
   areTilesLoadedAround(at: [number, number], radius = this.loadRadius) {
-    return this.world.loadedAround(at, radius);
+    return this.world.loadedAround(at, radius) && !this.gpuWarmQueue.length && !this.gpuWarmFence;
   }
 
   /** Ground lng/lat rectangle under the screen corners (top-down map streaming). */
@@ -862,8 +871,64 @@ export class ThreeMap {
     this.mercatorToScene.copy(this.sceneToMercator).invert();
   }
 
+  /** Upload hidden geometry in small slices; a first camera turn must not upload a city. */
+  private warmGpu() {
+    const renderer = this.renderer;
+    const gl = renderer.getContext() as WebGL2RenderingContext;
+    if (this.gpuWarmFence) {
+      const status = gl.clientWaitSync(this.gpuWarmFence, 0, 0);
+      if (status === gl.TIMEOUT_EXPIRED) return;
+      gl.deleteSync(this.gpuWarmFence);
+      this.gpuWarmFence = null;
+    }
+    if (this.streamCalm || !this.gpuWarmQueue.length) return;
+    const target = renderer.getRenderTarget();
+    this.gpuWarmTarget ??= new THREE.WebGLRenderTarget(1, 1, { depthBuffer: false });
+    const deadline = performance.now() + (this.streamBurst ? 5 : 1.5);
+    let remaining = this.streamBurst ? 6 : 1;
+    try {
+      renderer.setRenderTarget(this.gpuWarmTarget);
+      while (remaining-- > 0 && this.gpuWarmQueue.length && performance.now() < deadline) {
+        const source = this.gpuWarmQueue.shift()!;
+        // Unloaded tiles detach their group; do not resurrect disposed buffers.
+        if (!source.parent?.parent) continue;
+        const geometry = source.geometry;
+        const proxy = source instanceof THREE.InstancedMesh
+          ? new THREE.InstancedMesh(geometry, source.material, 0)
+          : new THREE.Mesh(geometry, source.material);
+        if (proxy instanceof THREE.InstancedMesh && source instanceof THREE.InstancedMesh) {
+          proxy.instanceMatrix = source.instanceMatrix;
+          proxy.instanceColor = source.instanceColor;
+          proxy.count = Math.min(source.count, 1);
+        }
+        proxy.frustumCulled = false;
+        proxy.matrixAutoUpdate = false;
+        proxy.matrix.copy(source.matrixWorld);
+        proxy.onBeforeRender = source.onBeforeRender;
+        const { start, count } = geometry.drawRange;
+        this.gpuWarmScene.add(proxy);
+        try {
+          // A zero-count draw uploads buffers but can leave driver compilation
+          // deferred until the first real draw during a camera turn.
+          geometry.setDrawRange(start, Math.min(count, 3));
+          renderer.render(this.gpuWarmScene, this.sceneCamera);
+        } finally {
+          geometry.setDrawRange(start, count);
+          this.gpuWarmScene.remove(proxy);
+          // Instance attributes belong to source. Disposing the proxy here
+          // would delete their shared GPU buffers and force a second upload.
+        }
+      }
+    } finally {
+      renderer.setRenderTarget(target);
+    }
+    this.gpuWarmFence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+    gl.flush(); // poll completion on a later frame, never block with finish/readPixels
+  }
+
   private render() {
     if (this.removed) return;
+    const cpuStart = performance.now();
     this.rebase();
     const cam = this.camera;
     cam.update();
@@ -886,6 +951,7 @@ export class ThreeMap {
       screen ?? undefined,
       this.streamCalm,
     );
+    const streamEnd = performance.now();
     worldTime.value = performance.now() / 1000;
     this.uniforms.uClock.value = worldTime.value;
     this.updateSeason();
@@ -919,7 +985,7 @@ export class ThreeMap {
     const eye = cam.cameraMercator;
     this.uniforms.uCameraPos.value.set((eye.x - this.origin.x01) / perMeter, eye.z / perMeter, (eye.y - this.origin.y01) / perMeter);
     // M-map / high cam: flora LOD is invisible under the pitch — skip the tile walk
-    if (!mapView && above < 900) this.world.updateFloraDetail(this.uniforms.uCameraPos.value, above);
+    this.world.updateFloraDetail(this.uniforms.uCameraPos.value, above);
     this.placeLamps();
     this.updateLighting(eye, perMeter);
     this.updateFlare(eye, perMeter);
@@ -947,6 +1013,7 @@ export class ThreeMap {
 
     const gl = this.renderer.getContext() as WebGL2RenderingContext;
     const args = { defaultProjectionData: { mainMatrix: cam.mainMatrix.elements, fallbackMatrix: cam.mainMatrix.elements, tileMercatorCoords: [0, 0, 1, 1] }, shaderData: { variantName: 'mercator' } };
+    const sceneEnd = performance.now();
     for (const layer of this.layers) layer.prerender?.(gl, args);
     // scene layers update their state and placement first, then everything draws in one pass
     for (const layer of this.fused) {
@@ -959,13 +1026,34 @@ export class ThreeMap {
       this.programsWarmed = true;
       try { this.renderer.compile(this.scene, this.sceneCamera); } catch { /* ignore */ }
     }
-    this.renderer.render(this.scene, this.sceneCamera);
+    this.perfMonitor?.beginGpu();
+    const layersEnd = performance.now();
+    let warmEnd = layersEnd, drawEnd = layersEnd;
+    try {
+      this.warmGpu();
+      warmEnd = performance.now();
+      this.renderer.render(this.scene, this.sceneCamera);
+      drawEnd = performance.now();
+    } finally {
+      this.perfMonitor?.endGpu();
+    }
     for (const layer of this.layers) {
       if (!this.fused.includes(layer)) layer.render?.(gl, args);
     }
     this.renderer.resetState();
     for (const marker of this.markers) this.placeMarker(marker);
     this.emit('render', {});
+    this.perfMonitor?.reportStages({
+      'Игра': this.updateCpuMs,
+      'Стриминг': streamEnd - cpuStart,
+      'Сцена и LOD': sceneEnd - streamEnd,
+      'Слои': layersEnd - sceneEnd,
+      'Подготовка GPU': warmEnd - layersEnd,
+      'Отрисовка CPU': drawEnd - warmEnd,
+      'Маркеры': performance.now() - drawEnd,
+    });
+    this.perfMonitor?.reportCpu(performance.now() - cpuStart + this.updateCpuMs);
+    this.updateCpuMs = 0;
   }
 
   /** Next season: real → spring → summer → autumn → winter → real. */
@@ -1181,6 +1269,9 @@ export class ThreeMap {
   }
 
   remove() {
+    if (this.gpuWarmFence) (this.renderer.getContext() as WebGL2RenderingContext).deleteSync(this.gpuWarmFence);
+    this.gpuWarmQueue.length = 0;
+    this.gpuWarmTarget?.dispose();
     this.removed = true;
     this.flare.dispose();
     cancelAnimationFrame(this.frame);

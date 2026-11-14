@@ -7,12 +7,14 @@
 import { buildWorldTile, worldTransferables, type WorldBuildOptions } from './worldTile.ts';
 import { decodeTerrarium, DEM_SIZE, padDem } from './dem.ts';
 import type { TileId } from '../mercator.ts';
+import { assembleBuildings } from './buildingAssembly.ts';
 
 type Job = {
   type: 'world';
   id: number;
   tile: TileId;
   vectorUrl: string;
+  vectorTemplate?: string;
   demUrl: string | null;
   /** the 8 neighbours' DEMs: w, e, n, s, nw, ne, sw, se (their edges stitch the seams) */
   demNeighbours?: (string | null)[];
@@ -55,6 +57,17 @@ async function loadVector(url: string, signal: AbortSignal) {
   return response.arrayBuffer();
 }
 
+// Neighbour geometry is reused by subsequent jobs, with bounded resident memory.
+const vectors = new Map<string, Promise<ArrayBuffer>>();
+function cachedVector(url: string) {
+  const cached = vectors.get(url);
+  if (cached) { vectors.delete(url); vectors.set(url, cached); return cached; }
+  const request = loadVector(url, AbortSignal.timeout(15000)).catch(error => { vectors.delete(url); throw error; });
+  vectors.set(url, request);
+  while (vectors.size > 32) vectors.delete(vectors.keys().next().value!);
+  return request;
+}
+
 scope.onmessage = async (event: MessageEvent<Request>) => {
   const message = event.data;
   if (message.type === 'cancel') {
@@ -67,16 +80,31 @@ scope.onmessage = async (event: MessageEvent<Request>) => {
   const started = performance.now();
   try {
     const [buffer, dem] = await Promise.all([
-      loadVector(message.vectorUrl, controller.signal),
+      cachedVector(message.vectorUrl),
       message.demUrl ? cachedDem(message.demUrl).then(async (center) => {
         if (!center) return null;
         const [w, e, n, s, nw, ne, sw, se] = await Promise.all((message.demNeighbours ?? []).concat(Array(8).fill(null)).slice(0, 8).map((url) => (url ? cachedDem(url) : Promise.resolve(null))));
         return padDem(center, { w, e, n, s, nw, ne, sw, se });
       }) : Promise.resolve(null),
     ]);
+    const sources = [{ tile: message.tile, buffer }];
+    let buildingAssemblies;
+    // Follow only buildings intersecting the requested tile. Continue past the
+    // immediate neighbours when an airport spans more than a 3x3 neighbourhood.
+    for (;;) {
+      if (controller.signal.aborted) return;
+      const needed: TileId[] = [];
+      buildingAssemblies = assembleBuildings(sources, message.tile, needed);
+      if (!needed.length || !message.vectorTemplate) break;
+      if (sources.length + needed.length > 64) throw new Error('Building assembly exceeded 64 source tiles');
+      sources.push(...await Promise.all(needed.map(async tile => {
+        const url = message.vectorTemplate!.replace('{z}', String(tile.z)).replace('{x}', String(tile.x)).replace('{y}', String(tile.y));
+        return { tile, buffer: await cachedVector(url) };
+      })));
+    }
     const fetchMs = performance.now() - started;
     if (controller.signal.aborted) return;
-    const data = buildWorldTile(buffer, message.tile, { ...message.options, dem });
+    const data = buildWorldTile(buffer.slice(0), message.tile, { ...message.options, dem, buildingAssemblies });
 
     scope.postMessage(
       { id: message.id, ok: true, data, fetchMs, buildMs: performance.now() - started - fetchMs },

@@ -73,6 +73,9 @@ export class TrafficRoadNetwork {
   private endpointIds = new Set<string>();
   private scaleX = METERS_PER_DEGREE;
   private pendingLines = new Map<string, Position[]>();
+  private lineNodes = new Map<string, Set<string>>();
+  private nodeOwners = new Map<string, number>();
+  private spatialCells = new Map<string, Set<RoadNode>>();
   revision = 0;
 
   addFeatures(features: Iterable<MapFeature>) {
@@ -100,8 +103,11 @@ export class TrafficRoadNetwork {
       if (firstLine?.length) this.scaleX = METERS_PER_DEGREE * Math.cos(firstLine[0][1] * Math.PI / 180);
     }
     const freshEndpoints: RoadNode[] = [];
-    for (const line of this.pendingLines.values()) {
-      for (const endpoint of this.ingestLine(line)) freshEndpoints.push(endpoint);
+    for (const [key, line] of this.pendingLines) {
+      const owned = new Set<string>();
+      for (const endpoint of this.ingestLine(line, owned)) freshEndpoints.push(endpoint);
+      this.lineNodes.set(key, owned);
+      for (const id of owned) this.nodeOwners.set(id, (this.nodeOwners.get(id) ?? 0) + 1);
     }
     this.pendingLines.clear();
     this.stitchEndpoints(freshEndpoints);
@@ -111,6 +117,42 @@ export class TrafficRoadNetwork {
 
   private ensureBuilt() {
     if (this.pendingLines.size) this.flushRebuild();
+  }
+
+  /** Retain intersecting roads, including long segments crossing the retained area. */
+  prune(center: Position, radius = 6000) {
+    const dx = radius / (METERS_PER_DEGREE * Math.cos(center[1] * Math.PI / 180));
+    const dy = radius / METERS_PER_DEGREE;
+    let changed = false;
+    for (const [key, line] of this.lines) {
+      let west = Infinity, east = -Infinity, south = Infinity, north = -Infinity;
+      for (const p of line) { west = Math.min(west, p[0]); east = Math.max(east, p[0]); south = Math.min(south, p[1]); north = Math.max(north, p[1]); }
+      if (east >= center[0] - dx && west <= center[0] + dx && north >= center[1] - dy && south <= center[1] + dy) continue;
+      this.lines.delete(key);
+      this.pendingLines.delete(key);
+      for (const id of this.lineNodes.get(key) ?? []) {
+        const owners = (this.nodeOwners.get(id) ?? 1) - 1;
+        if (owners > 0) { this.nodeOwners.set(id, owners); continue; }
+        this.nodeOwners.delete(id);
+        const node = this.nodes.get(id);
+        if (!node) continue;
+        for (const neighbour of node.edges.keys()) this.nodes.get(neighbour)?.edges.delete(id);
+        const cellKey = this.spatialKey(node.position);
+        const cell = this.spatialCells.get(cellKey);
+        cell?.delete(node);
+        if (!cell?.size) this.spatialCells.delete(cellKey);
+        this.nodes.delete(id);
+        this.endpointIds.delete(id);
+      }
+      this.lineNodes.delete(key);
+      changed = true;
+    }
+    if (changed) this.revision++;
+    return changed;
+  }
+
+  private spatialKey(position: Position) {
+    return `${Math.floor(position[0] * this.scaleX / 8)}:${Math.floor(position[1] * METERS_PER_DEGREE / 8)}`;
   }
 
   nearest(position: Position, excluded: Set<string> = new Set(), separation = 0, maxDistance = 70) {
@@ -353,6 +395,10 @@ export class TrafficRoadNetwork {
     if (!node) {
       node = { id, position: [...position], edges: new Map() };
       this.nodes.set(id, node);
+      const key = this.spatialKey(position);
+      let cell = this.spatialCells.get(key);
+      if (!cell) this.spatialCells.set(key, cell = new Set());
+      cell.add(node);
     }
     return node;
   }
@@ -365,7 +411,7 @@ export class TrafficRoadNetwork {
     b.edges.set(a.id, distance);
   }
 
-  private ingestLine(line: Position[]) {
+  private ingestLine(line: Position[], owned: Set<string>) {
     const endpoints: RoadNode[] = [];
     let previous: RoadNode | null = null;
     for (let index = 1; index < line.length; index++) {
@@ -377,6 +423,7 @@ export class TrafficRoadNetwork {
         const fraction = step / steps;
         const position: Position = [from[0] + (to[0] - from[0]) * fraction, from[1] + (to[1] - from[1]) * fraction];
         const node = this.addNode(position);
+        owned.add(node.id);
         if (previous) this.connect(previous, node);
         previous = node;
         if ((index === 1 && step === 0) || (index === line.length - 1 && step === steps)) {
@@ -390,23 +437,15 @@ export class TrafficRoadNetwork {
 
   private stitchEndpoints(endpoints: RoadNode[]) {
     if (!endpoints.length) return;
-    const cells = new Map<string, RoadNode[]>();
     const cellSize = 8;
     const cellFor = (position: Position) => [
       Math.floor(position[0] * this.scaleX / cellSize),
       Math.floor(position[1] * METERS_PER_DEGREE / cellSize),
     ];
-    for (const node of this.nodes.values()) {
-      const [x, y] = cellFor(node.position);
-      const key = `${x}:${y}`;
-      const cell = cells.get(key) ?? [];
-      cell.push(node);
-      cells.set(key, cell);
-    }
     for (const endpoint of endpoints) {
       const [x, y] = cellFor(endpoint.position);
       for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
-        for (const nearby of cells.get(`${x + dx}:${y + dy}`) ?? []) {
+        for (const nearby of this.spatialCells.get(`${x + dx}:${y + dy}`) ?? []) {
           if (nearby.id === endpoint.id || endpoint.edges.has(nearby.id)) continue;
           if (metersBetween(endpoint.position, nearby.position) <= 4.5) this.connect(endpoint, nearby);
         }

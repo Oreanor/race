@@ -4,6 +4,140 @@ import { readFileSync } from 'node:fs';
 import { buildTile, clipRing, omitBorderWall } from '../src/world3d/tiles/buildTile.ts';
 import { tileAt, tileCorner, tileSpan, mercatorX, mercatorY } from '../src/world3d/mercator.ts';
 import { tilesAround, tilesCovering } from '../src/world3d/tiles/tilePlan.ts';
+import { VectorTile } from '@mapbox/vector-tile';
+import { releaseWorkerJobs } from '../src/world3d/tiles/workerRecovery.ts';
+import { PerfMonitor } from '../src/world3d/perf/PerfMonitor.ts';
+
+test('frame diagnostics preserve the worst stage cost and reset the sampling window', () => {
+  const raf = globalThis.requestAnimationFrame, cancel = globalThis.cancelAnimationFrame;
+  globalThis.requestAnimationFrame = () => 1;
+  globalThis.cancelAnimationFrame = () => {};
+  try {
+    const monitor = new PerfMonitor({ getExtension: () => null } as unknown as WebGL2RenderingContext);
+    const tick = (monitor as unknown as { tick: (now: number) => void }).tick;
+    tick(10);
+    monitor.reportStages({ draw: 4, stream: 2 });
+    monitor.reportStages({ draw: 21, stream: 1 });
+    tick(610);
+    assert.deepEqual(monitor.latest.stages, { draw: 21, stream: 2 });
+    monitor.reportStages({ draw: 3 });
+    tick(1210);
+    assert.deepEqual(monitor.latest.stages, { draw: 3 });
+    monitor.dispose();
+  } finally {
+    globalThis.requestAnimationFrame = raf; globalThis.cancelAnimationFrame = cancel;
+  }
+});
+
+test('worker failure releases its tiles while preserving other workers and newer requests', () => {
+  const jobs = new Map([
+    [1, { key: 'a', worker: 0 }], [2, { key: 'b', worker: 1 }],
+    [3, { key: 'c', worker: 0 }], [4, { key: 'c', worker: 1 }],
+  ]);
+  const pending = new Map([['a', { id: 1 }], ['b', { id: 2 }], ['c', { id: 4 }]]);
+  assert.deepEqual(releaseWorkerJobs(0, jobs, pending), ['a']);
+  assert.deepEqual([...jobs.keys()], [2, 4]);
+  assert.deepEqual([...pending.keys()], ['b', 'c']);
+  assert.equal(pending.get('c')!.id, 4);
+  assert.deepEqual(releaseWorkerJobs(0, jobs, pending), []);
+});
+import { PbfWriter } from 'pbf';
+import { assembleBuildings, assembledWall } from '../src/world3d/tiles/buildingAssembly.ts';
+
+function buildingPbf(rings: number[][][]) {
+  const pbf = new PbfWriter();
+  pbf.writeMessage(3, (_, layer) => {
+    layer.writeStringField(1, 'building'); layer.writeVarintField(5, 4096); layer.writeVarintField(15, 2);
+    for (const ring of rings) layer.writeMessage(2, (_, feature) => {
+      feature.writeVarintField(1, 42); // intentionally shared by unrelated source features
+      feature.writeVarintField(3, 3);
+      const commands = [9]; let x = 0, y = 0;
+      ring.forEach(([px, py], i) => {
+        if (i === 1) commands.push(((ring.length - 1) << 3) | 2);
+        const dx = px - x, dy = py - y;
+        commands.push((dx << 1) ^ (dx >> 31), (dy << 1) ^ (dy >> 31)); x = px; y = py;
+      });
+      commands.push(15); feature.writePackedVarint(4, commands);
+    }, undefined);
+  }, undefined);
+  return pbf.finish().slice().buffer as ArrayBuffer;
+}
+
+test('assembly follows a long building past the immediate neighbour', () => {
+  const sources = [
+    { tile: { z: 14, x: 4823, y: 6156 }, buffer: buildingPbf([[[3900, 100], [4096, 100], [4096, 600], [3900, 600]]]) },
+    { tile: { z: 14, x: 4824, y: 6156 }, buffer: buildingPbf([[[0, 100], [4096, 100], [4096, 600], [0, 600]]]) },
+    { tile: { z: 14, x: 4825, y: 6156 }, buffer: buildingPbf([[[0, 100], [800, 100], [800, 600], [0, 600]]]) },
+  ];
+  const needed: typeof sources[0]['tile'][] = [];
+  assembleBuildings(sources.slice(0, 2), sources[0].tile, needed);
+  assert.deepEqual(needed, [sources[2].tile]);
+  const keys = sources.map(s => assembleBuildings(sources, s.tile).get('0:0')!.key);
+  assert.equal(new Set(keys).size, 1);
+});
+
+test('cross-tile assembly joins geometry before styling without joining unrelated ID copies', () => {
+  const left = { tile: { z: 14, x: 4823, y: 6156 }, buffer: buildingPbf([
+    [[3900, 100], [4096, 100], [4096, 600], [3900, 600]],
+    [[100, 100], [200, 100], [200, 200], [100, 200]],
+  ]) };
+  const right = { tile: { z: 14, x: 4824, y: 6156 }, buffer: buildingPbf([
+    [[0, 100], [800, 100], [800, 600], [0, 600]],
+  ]) };
+  const a = assembleBuildings([left, right], left.tile);
+  const b = assembleBuildings([right, left], right.tile);
+  assert.equal(a.has('1:0'), false, 'a separate house with the same MVT ID stays separate');
+  assert.equal(a.get('0:0')!.key, b.get('0:0')!.key);
+  const options = { chunks: 4, windows: false, detailed: { region: 'USA' } };
+  const l = buildTile(left.buffer, left.tile, { ...options, buildingAssemblies: a });
+  const r = buildTile(right.buffer, right.tile, { ...options, buildingAssemblies: b });
+  const expected = r.chunks[0].style.slice(0, 3);
+  assert.ok(l.chunks.some(c => c.style.some((_, i) => i % 3 === 0 && c.style.slice(i, i + 3).every((v, j) => v === expected[j]))));
+  const x = left.tile.x * 4096, y = left.tile.y * 4096;
+  const wallA = assembledWall(a.get('0:0')!, [x + 3900, y + 100], [x + 4096, y + 100]);
+  const wallB = assembledWall(b.get('0:0')!, [x + 4096, y + 100], [x + 4896, y + 100]);
+  assert.equal(wallA.length, 996);
+  assert.equal(wallA.length, wallB.length);
+  assert.equal(wallB.offset, 196, 'window phase continues from the first fragment');
+});
+
+test('an assembled building keeps its palette across different tile cuts', () => {
+  const make = (ring: number[][]) => {
+    const vt = Object.create(VectorTile.prototype) as VectorTile;
+    vt.layers = { building: { extent: 4096, length: 1, feature: () => ({ id: 987654321,
+      type: 3, properties: { render_height: 15 }, loadGeometry: () => [ring.map(([x, y]) => ({ x, y }))],
+    }) } } as unknown as VectorTile['layers'];
+    return vt;
+  };
+  // One half touches north and east, the other west only: primary seam keys differ.
+  const left = make([[3900, 0], [4096, 0], [4096, 500], [3900, 500], [3900, 0]]);
+  const right = make([[0, 0], [600, 0], [600, 500], [0, 500], [0, 0]]);
+  const options = { chunks: 4, windows: false, detailed: { region: 'USA' } };
+  const sources = [left, right].map((vt, i) => ({ tile: { z: 14, x: 4823 + i, y: 6156 }, buffer: buildingPbf([vt.layers.building.feature(0).loadGeometry()[0].slice(0, -1).map(p => [p.x, p.y])]) }));
+  const a = buildTile(left, sources[0].tile, { ...options, buildingAssemblies: assembleBuildings(sources, sources[0].tile) });
+  const b = buildTile(right, sources[1].tile, { ...options, buildingAssemblies: assembleBuildings(sources, sources[1].tile) });
+  const unique = (chunks: typeof a.chunks) => new Set(chunks.flatMap(c => Array.from({length: c.style.length / 3}, (_, i) => [...c.style.subarray(i * 3, i * 3 + 3)].join(','))));
+  assert.deepEqual(unique(a.chunks), unique(b.chunks));
+  const palette = (chunks: typeof a.chunks) => new Set(chunks.flatMap(c => Array.from({length: c.colors.length / 3}, (_, i) => [...c.colors.subarray(i * 3, i * 3 + 3)].join(','))));
+  assert.deepEqual(palette(a.chunks), palette(b.chunks));
+});
+
+test('the tile builder gives adjoining building parts one stable style', () => {
+  const vt = Object.create(VectorTile.prototype) as VectorTile;
+  const rings = [
+    [{ x: 100, y: 100 }, { x: 200, y: 100 }, { x: 200, y: 200 }, { x: 100, y: 200 }, { x: 100, y: 100 }],
+    [{ x: 200, y: 100 }, { x: 300, y: 100 }, { x: 300, y: 200 }, { x: 200, y: 200 }, { x: 200, y: 100 }],
+  ];
+  vt.layers = { building: { extent: 4096, length: 2, feature: (i: number) => ({
+    type: 3, properties: { render_height: i ? 20 : 12 }, loadGeometry: () => [rings[i]],
+  }) } } as unknown as VectorTile['layers'];
+  const data = buildTile(vt, { z: 14, x: 7808, y: 6190 }, { chunks: 1, windows: false });
+  assert.equal(data.stats.buildings, 2);
+  const style = data.chunks[0].style;
+  assert.ok(style.length > 0);
+  for (let i = 0; i < style.length; i += 3) assert.deepEqual([...style.subarray(i, i + 3)], [...style.subarray(0, 3)]);
+  assert.deepEqual(buildTile(vt, { z: 14, x: 7808, y: 6190 }, { chunks: 1, windows: false }).chunks[0].style, style);
+});
 
 const COIMBRA: [number, number] = [-8.42922, 40.20805];
 const tile = { z: 14, x: 7808, y: 6190 };

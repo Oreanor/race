@@ -126,3 +126,23 @@ test('a park tree stops the car while empty grass beside it does not',()=>{
   assert.equal(thicket.blocked(p(40,40),p(40.5,40)),false);
   assert.equal(thicket.blocked(p(10.645853500366211-2.5,-5.086665012836457),tree),true);
 });
+import { instanceGroups } from '../src/world3d/map/instanceGroups.ts';
+
+test('spatial flora batches retain every destruction slot and its attributes', () => {
+  const count = 600;
+  const matrices = new Float32Array(count * 16);
+  const ground = new Float32Array(count);
+  for (let i = 0; i < count; i++) { matrices[i * 16 + 12] = i % 2 ? 1000 : 10; matrices[i * 16 + 14] = 20; ground[i] = i; }
+  const seen = new Set<number>();
+  for (const group of instanceGroups({ count, matrices, ground }, 0.5)) {
+    assert.ok(group.data.count <= 256);
+    assert.ok((group.bounds[2] - group.bounds[0]) * 0.5 <= 256);
+    for (const [original, local] of group.slots) {
+      assert.equal(seen.has(original), false);
+      seen.add(original);
+      assert.equal(group.data.ground[local], original);
+      assert.equal(group.data.matrices[local * 16 + 12], matrices[original * 16 + 12]);
+    }
+  }
+  assert.equal(seen.size, count);
+});

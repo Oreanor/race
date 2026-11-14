@@ -4,6 +4,8 @@
 // which library issued them.
 
 export type PerfSnapshot = {
+  /** Worst CPU cost per stage in the sampling window, milliseconds. */
+  stages?: Record<string, number>;
   fps: number;
   /** average interval between animation frames, ms */
   frameMs: number;
@@ -73,12 +75,20 @@ export class PerfMonitor {
   private base: Counters = { calls: 0, triangles: 0, instances: 0 };
   private cpuTotal = 0;
   private cpuFrames = 0;
+  private stages: Record<string, number> = {};
   private gpuTotal = 0;
   private gpuFrames = 0;
   private timer: { ext: { TIME_ELAPSED_EXT: number; GPU_DISJOINT_EXT: number }; queries: WebGLQuery[]; active: WebGLQuery | null } | null = null;
   latest: PerfSnapshot = { fps: 0, frameMs: 0, worstMs: 0, cpuMs: -1, gpuMs: -1, drawCalls: 0, triangles: 0, instances: 0 };
 
-  constructor(private gl: WebGL2RenderingContext, private onSample?: (s: PerfSnapshot) => void, private windowMs = 500) {
+  private gl: WebGL2RenderingContext;
+  private onSample?: (s: PerfSnapshot) => void;
+  private windowMs: number;
+
+  constructor(gl: WebGL2RenderingContext, onSample?: (s: PerfSnapshot) => void, windowMs = 500) {
+    this.gl = gl;
+    this.onSample = onSample;
+    this.windowMs = windowMs;
     this.counters = instrument(gl);
     const ext = gl.getExtension('EXT_disjoint_timer_query_webgl2') as { TIME_ELAPSED_EXT: number; GPU_DISJOINT_EXT: number } | null;
     if (ext) this.timer = { ext, queries: [], active: null };
@@ -89,6 +99,10 @@ export class PerfMonitor {
   reportCpu(ms: number) {
     this.cpuTotal += ms;
     this.cpuFrames++;
+  }
+
+  reportStages(stages: Record<string, number>) {
+    for (const [name, ms] of Object.entries(stages)) this.stages[name] = Math.max(this.stages[name] ?? 0, ms);
   }
 
   /** Optional GPU timing around the app's own render call (three-world). */
@@ -142,6 +156,7 @@ export class PerfMonitor {
     const c = this.counters;
     const frames = this.frames;
     this.latest = {
+      stages: this.stages,
       fps: Math.round(frames * 1000 / span),
       frameMs: span / frames,
       worstMs: this.worst,
@@ -152,6 +167,7 @@ export class PerfMonitor {
       instances: Math.round((c.instances - this.base.instances) / frames),
     };
     this.base = { ...c };
+    this.stages = {};
     this.frames = 0;
     this.worst = 0;
     this.cpuTotal = this.cpuFrames = 0;

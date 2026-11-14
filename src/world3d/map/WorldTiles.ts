@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { releaseWorkerJobs } from '../tiles/workerRecovery.ts';
 import { VectorTile } from '@mapbox/vector-tile';
 import { PbfReader } from 'pbf';
 import type { ChunkData } from '../tiles/buildTile.ts';
@@ -239,6 +240,9 @@ export class WorldTiles {
   private fallSphere = new THREE.Sphere();
   private pending = new Map<string, Pending>();
   private workers: Worker[] = [];
+  private workerReady: boolean[] = [];
+  private workerRestarts: number[] = [];
+  private restartTimers = new Map<number, ReturnType<typeof setTimeout>>();
   private load: number[] = [];
   private jobs = new Map<number, { key: string; worker: number }>();
   private nextId = 1;
@@ -264,9 +268,11 @@ export class WorldTiles {
   private softKeepAt: LngLat | null = null;
   /** M-map / calm: only ground+roads upload; buildings wait until chase */
   private mapLite = false;
+  private streamPlan: { key: string; wanted: PlannedTile[]; keep: Set<string> } | null = null;
   /** hide trees/lamps while looking straight down (London fill-rate) */
   private propsHidden = false;
   onTile: (key: string) => void = () => {};
+  onMesh: (mesh: THREE.Mesh) => void = () => {};
   revision = 0;
 
   constructor(private uniforms: BaseUniforms, mask: THREE.Texture, readonly options: WorldTilesOptions = defaultWorldOptions) {
@@ -280,13 +286,48 @@ export class WorldTiles {
     tileTemplate().then((t) => { this.template = t; });
     const size = Math.min(3, Math.max(1, (navigator.hardwareConcurrency || 4) - 2));
     for (let i = 0; i < size; i++) {
-      const worker = new Worker(new URL('../tiles/world.worker.ts', import.meta.url), { type: 'module' });
-      const index = i;
-      worker.onmessage = (event) => this.receive(index, event.data);
-      worker.onerror = (event) => console.error('[world] tile worker error', event.message);
-      this.workers.push(worker);
       this.load.push(0);
+      this.workerRestarts.push(0);
+      this.startWorker(i);
     }
+  }
+
+  private startWorker(index: number) {
+    if (this.disposed) return;
+    try {
+      const worker = new Worker(new URL('../tiles/world.worker.ts', import.meta.url), { type: 'module' });
+      this.workers[index] = worker;
+      this.workerReady[index] = true;
+      worker.onmessage = event => {
+        if (this.disposed || this.workers[index] !== worker || !this.workerReady[index]) return;
+        this.receive(index, event.data);
+        if (event.data.ok) this.workerRestarts[index] = 0;
+      };
+      worker.onerror = event => {
+        event.preventDefault();
+        if (this.workers[index] === worker && this.workerReady[index]) this.restartWorker(index, event.message);
+      };
+      worker.onmessageerror = () => {
+        if (this.workers[index] === worker && this.workerReady[index]) this.restartWorker(index, 'Unreadable worker message');
+      };
+    } catch (error) {
+      this.restartWorker(index, String(error));
+    }
+  }
+
+  private restartWorker(index: number, reason: string) {
+    if (this.disposed || this.restartTimers.has(index)) return;
+    this.workerReady[index] = false;
+    this.workers[index]?.terminate();
+    const released = releaseWorkerJobs(index, this.jobs, this.pending);
+    this.load[index] = 0;
+    const attempts = this.workerRestarts[index]++;
+    const delay = Math.min(30000, 500 * 2 ** Math.min(attempts, 6));
+    console.warn(`[world] restarting worker ${index}; released ${released.length} tiles`, reason);
+    this.restartTimers.set(index, setTimeout(() => {
+      this.restartTimers.delete(index);
+      this.startWorker(index);
+    }, delay));
   }
 
   setMaterialSide(side: THREE.Side) {
@@ -346,8 +387,16 @@ export class WorldTiles {
       focus[0] + Math.sin(heading) * aheadM / (METERS_PER_DEGREE * cosLat),
       focus[1] + Math.cos(heading) * aheadM / METERS_PER_DEGREE,
     ];
+    const planKey = [o.zoom, o.loadRadius, o.unloadRadius, burst, calm,
+      Math.floor(mercatorX(focus[0]) * cosLat / 20), Math.floor(mercatorY(focus[1]) * cosLat / 20),
+      Math.round(heading / 0.08), screen ? `${screen.west},${screen.south},${screen.east},${screen.north}` : ''].join(':');
     let wanted: PlannedTile[];
-    const keep = new Set<string>();
+    let keep: Set<string>;
+    if (this.streamPlan?.key === planKey) {
+      wanted = this.streamPlan.wanted;
+      keep = new Set(this.streamPlan.keep);
+    } else {
+    keep = new Set<string>();
     if (screen) {
       // same pad for load + keep — old loadPad≪keepPad left edge tiles "kept" but never requested.
       // calm blend: tighter pad so we don't request a city block mid-lerp
@@ -382,6 +431,8 @@ export class WorldTiles {
       for (const t of tilesAround(focus, o.unloadRadius, o.zoom)) keep.add(t.key);
     }
     for (const p of wanted) keep.add(p.key);
+    this.streamPlan = { key: planKey, wanted, keep: new Set(keep) };
+    }
     const nowKeep = performance.now();
     if (screen) {
       // sticky rectangle: reopen M in the same area must not refetch the sides
@@ -429,7 +480,7 @@ export class WorldTiles {
     for (const plan of wanted) {
       if (this.tiles.has(plan.key) || this.pending.has(plan.key)) continue;
       const failed = this.failures.get(plan.key);
-      if (failed && (failed.count >= 4 || now < failed.at)) continue;
+      if (failed && now < failed.at) continue;
       if (this.pending.size >= flightCap) break;
       this.request(plan.key, plan.tile);
     }
@@ -450,14 +501,15 @@ export class WorldTiles {
     }
     if (this.mapLite) budget = Math.min(budget, 2);
     // wanted first; soft-kept only when not calm (otherwise M leftovers hitch the intro fly-in)
+    const uploadDeadline = performance.now() + (burst ? 8 : 2);
     for (const plan of wanted) {
       const live = this.tiles.get(plan.key);
-      while (live && live.waiting.length && budget > 0) { live.waiting.shift()!(); budget--; }
+      while (live && live.waiting.length && budget > 0 && performance.now() < uploadDeadline) { live.waiting.shift()!(); budget--; }
       if (budget <= 0) break;
     }
     if (budget > 0 && !calm && !this.mapLite) {
       for (const live of this.tiles.values()) {
-        while (live.waiting.length && budget > 0) { live.waiting.shift()!(); budget--; }
+        while (live.waiting.length && budget > 0 && performance.now() < uploadDeadline) { live.waiting.shift()!(); budget--; }
         if (budget <= 0) break;
       }
     }
@@ -476,15 +528,20 @@ export class WorldTiles {
   }
 
   private request(key: string, tile: TileId) {
+    let worker = -1;
+    for (let i = 0; i < this.workers.length; i++) {
+      if (this.workerReady[i] && (worker < 0 || this.load[i] < this.load[worker])) worker = i;
+    }
+    if (worker < 0) return;
     const id = this.nextId++;
-    let worker = 0;
-    for (let i = 1; i < this.workers.length; i++) if (this.load[i] < this.load[worker]) worker = i;
     this.load[worker]++;
     this.jobs.set(id, { key, worker });
     this.pending.set(key, { id, key, tile });
+    try {
     this.workers[worker].postMessage({
       type: 'world', id, tile,
       vectorUrl: this.url(this.template!, tile),
+      vectorTemplate: this.template!,
       demUrl: this.options.demTemplate ? this.url(this.options.demTemplate, tile) : null,
       demNeighbours: this.options.demTemplate ? [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]].map(([dx, dy]) => {
         const size = 2 ** tile.z, y = tile.y + dy;
@@ -493,6 +550,9 @@ export class WorldTiles {
       }) : null,
       options: { chunks: 4, inset: 0, grid: this.options.grid, region: this.options.region },
     });
+    } catch (error) {
+      this.restartWorker(worker, String(error));
+    }
   }
 
   private cancel(id: number) {
@@ -515,7 +575,7 @@ export class WorldTiles {
     if (!message.ok || !message.data) {
       if (message.aborted) return;
       const prior = this.failures.get(job.key)?.count ?? 0;
-      this.failures.set(job.key, { count: prior + 1, at: performance.now() + 1500 * 2 ** prior });
+      this.failures.set(job.key, { count: Math.min(prior + 1, 6), at: performance.now() + Math.min(60000, 1500 * 2 ** prior) });
       console.warn(`[world] tile ${job.key} failed`, message.error);
       return;
     }
@@ -593,22 +653,27 @@ export class WorldTiles {
     // Manhattan/London: while M-map is open, don't upload towers/trees — ground+roads are enough top-down
     const detail: (() => void)[] = [];
     for (const chunk of data.buildings.chunks) detail.push(() => this.addChunk(live, chunk));
-    detail.push(() => {
-      const meshes = [...this.vegetation.build(data.vegetation), ...this.vegetation.buildAccents(data.buildings.accents)];
-      const flora: THREE.InstancedMesh[] = [];
+    const uploadedProps: THREE.InstancedMesh[] = [];
+    live.floraMeshes = [];
+    live.disposables.push({ dispose: () => this.vegetation.release(uploadedProps) });
+    const propSteps = this.vegetation.buildSteps(data.vegetation, data.metersScale);
+    const uploadProps = () => {
+      const step = propSteps.next();
+      const meshes = step.done ? this.vegetation.buildAccents(data.buildings.accents) : step.value;
+      uploadedProps.push(...meshes);
       for (const mesh of meshes) {
         this.lampLit(mesh, live);
         mesh.visible = true;
         group.add(mesh);
         const list = live.props.get(mesh.name);
         if (list) list.push(mesh); else live.props.set(mesh.name, [mesh]);
-        if (mesh.name.startsWith('flora')) flora.push(mesh);
+        if (mesh.name.startsWith('flora')) live.floraMeshes!.push(mesh);
       }
-      live.floraMeshes = flora;
       group.updateMatrixWorld(true);
-      live.disposables.push({ dispose: () => this.vegetation.release(meshes) });
-      if (this.spiresOn) this.buildSpires(live);
-    });
+      if (!step.done) live.waiting.unshift(uploadProps);
+      else if (this.spiresOn) this.buildSpires(live);
+    };
+    detail.push(uploadProps);
     if (this.mapLite) live.deferred.push(...detail);
     else live.waiting.push(...detail);
     // Gameplay may read this tile now: features and DEM are final.
@@ -645,6 +710,7 @@ export class WorldTiles {
         (material as THREE.ShaderMaterial).uniformsNeedUpdate = true;
       }
     };
+    this.onMesh(mesh);
     return mesh;
   }
 
@@ -657,6 +723,7 @@ export class WorldTiles {
     geometry.setAttribute('aGround', new THREE.BufferAttribute(chunk.ground, 1));
     geometry.setAttribute('aWin', new THREE.BufferAttribute(chunk.win, 4));
     geometry.setAttribute('aWinSize', new THREE.BufferAttribute(chunk.winSize, 2));
+    geometry.setAttribute('aStyle', new THREE.BufferAttribute(chunk.style, 3));
     geometry.setIndex(new THREE.BufferAttribute(chunk.index, 1));
     // aGround*uExag lifts walls in the vertex shader (not in positions); pad for DEM.
     // Keep pad modest so off-screen Manhattan blocks actually cull.
@@ -784,10 +851,15 @@ export class WorldTiles {
     for (const live of this.tiles.values()) {
       const meshes = live.floraMeshes;
       if (!meshes?.length || !live.group.visible) continue;
-      const size = tileSpan(live.tile.z) * this.sceneScale;
-      const x0 = live.group.position.x, z0 = live.group.position.z;
-      const dx = Math.max(x0 - eye.x, 0, eye.x - (x0 + size)), dz = Math.max(z0 - eye.z, 0, eye.z - (z0 + size));
-      this.vegetation.floraDetail(meshes, Math.hypot(dx, dz, above));
+      for (const mesh of meshes) {
+        const b = mesh.userData.lodBounds as number[];
+        const x0 = live.group.position.x + b[0] * this.sceneScale;
+        const z0 = live.group.position.z + b[1] * this.sceneScale;
+        const x1 = live.group.position.x + b[2] * this.sceneScale;
+        const z1 = live.group.position.z + b[3] * this.sceneScale;
+        const dx = Math.max(x0 - eye.x, 0, eye.x - x1), dz = Math.max(z0 - eye.z, 0, eye.z - z1);
+        this.vegetation.floraDetail([mesh], Math.hypot(dx, dz, above));
+      }
     }
   }
 
@@ -1417,7 +1489,11 @@ export class WorldTiles {
     const kind = fell[index];
     const parts: Fallen['parts'] = [];
     const take = (kinds: string[], slot: number) => {
-      const meshes = kinds.flatMap((k) => live.props.get(k) ?? []);
+      let meshes = kinds.flatMap((k) => live.props.get(k) ?? []);
+      if (kinds[0]?.startsWith('flora')) {
+        meshes = meshes.filter((mesh) => (mesh.userData.instanceSlots as Map<number, number>).has(slot));
+        if (meshes.length) slot = (meshes[0].userData.instanceSlots as Map<number, number>).get(slot)!;
+      }
       if (!meshes.length || slot < 0) return;
       const matrices = meshes[0].instanceMatrix.array as Float32Array;
       parts.push({ matrices, offset: slot * 16, standing: matrices.slice(slot * 16, slot * 16 + 16), meshes });
@@ -1716,8 +1792,10 @@ export class WorldTiles {
 
   dispose() {
     this.disposed = true;
+    for (const timer of this.restartTimers.values()) clearTimeout(timer);
+    this.restartTimers.clear();
     for (const [key, live] of [...this.tiles]) this.unload(key, live);
-    for (const w of this.workers) w.terminate();
+    for (const w of this.workers) w?.terminate();
     this.workers = [];
     for (const m of [this.roadMat, this.farMat, this.groundMat, this.waterMat, ...this.overlayMats]) m.dispose();
     this.vegetation.dispose();
