@@ -2399,7 +2399,8 @@ export class GameEngine {
 
   /** H beside a parked car (ours or somebody else's): get in and drive off — the police come. */
   private tryHijack() {
-    if (!this.driving || this.paused || this.mode !== 'roam' || this.bountyFight) return;
+    // the police do not steal cars (and would end up chased by their own colleagues)
+    if (!this.driving || this.paused || this.mode !== 'roam' || this.bountyFight || this.canHuntBounty()) return;
     if (this.onMission()) { this.say(t('mission.busy'), true); return; }
     const near = this.sharedTraffic.parkedNear(this.vehicle.position, 4.5);
     if (!near) { this.say(t('hijack.none'), true); return; }
@@ -2424,7 +2425,7 @@ export class GameEngine {
 
   /** A word when we stop beside a parked car. */
   private hijackHint() {
-    if (!this.driving || this.mode !== 'roam' || this.onMission() || Math.abs(this.vehicle.speed) > 2.5) return;
+    if (!this.driving || this.mode !== 'roam' || this.onMission() || this.canHuntBounty() || Math.abs(this.vehicle.speed) > 2.5) return;
     const near = this.sharedTraffic.parkedNear(this.vehicle.position, 4.5);
     if (!near || near.id === this.hijackHintFor) return;
     this.hijackHintFor = near.id;
