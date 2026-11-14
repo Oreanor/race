@@ -1217,19 +1217,56 @@ function pushDeck(bridges: number[], deck: Deck, half: number) {
 }
 
 /** A railway or tram line, or null for anything else. */
-function railKind(p: Record<string, unknown>): { tram: boolean; gauge: number } | null {
+function railKind(p: Record<string, unknown>): { tram: boolean; gauge: number; wired: boolean } | null {
   const sub = String(p.subclass ?? '');
   const tram = p.class === 'transit' && sub === 'tram';
   const rail = (p.class === 'rail' || p.class === 'transit') && /^(rail|narrow_gauge|light_rail|preserved|subway|funicular)$/.test(sub);
   if (!tram && !rail) return null;
-  return { tram, gauge: sub === 'narrow_gauge' || sub === 'funicular' ? 0.5 : 0.72 };
+  // the tiles carry no `electrified` tag: main lines and light rail get the overhead line
+  return { tram, gauge: sub === 'narrow_gauge' || sub === 'funicular' ? 0.5 : 0.72, wired: sub === 'rail' || sub === 'light_rail' };
 }
 
-/** Railway track: a gravel bed with two steel rails; trams get the rails only (in the street). */
+/**
+ * Railway track: a pale shoulder, a darker ballast bed, sparse sleepers and two rails
+ * (dark foot, bright head); trams get the rails only, in a dark groove in the street.
+ * Everything goes into the one road mesh — more flat triangles, no extra draw calls.
+ */
 function railTracks(builder: RoadBuilder, layer: VectorTile['layers'][string], k: number, at: Surfaces, bridges: number[], ways: Map<number, Way>, plan: Map<number, Planned>) {
   const toMerc = at.toMerc, groundAt = at.driveAt;
-  const bed = hex('#9c958c');
-  const steel = hex('#5f656b');
+  const shoulder = hex('#8b847a');
+  const ballast = hex('#6c665f');
+  const sleeper = hex('#4a3d33');
+  const foot = hex('#34373b');
+  const head = hex('#b4bac0');
+  const groove = hex('#26282b');
+  /** sleeper pitch (m): sparse on purpose — reads as a track from the car, costs little */
+  const SLEEPER_STEP = 1.15;
+  // overhead line: masts with a cantilever, a contact wire and a catenary above it
+  const mast = hex('#6d7378');
+  const wire = hex('#2a2d30');
+  const MAST_STEP = 55, MAST_OFF = 2.5, MAST_H = 6.6, CONTACT_Y = 5.6, CATENARY_Y = 6.3;
+  /** a mast beside the track at (x, z), its arm reaching over the track centre */
+  const overheadMast = (x: number, z: number, nx: number, nz: number, dx: number, dz: number) => {
+    const g = (px: number, pz: number) => builder.groundAt(px, pz);
+    const mx = x + nx * MAST_OFF * toMerc, mz = z + nz * MAST_OFF * toMerc;
+    const w = 0.09 * toMerc;
+    // two crossed walls make a post that reads from every side (both faces drawn)
+    for (const [ux, uz] of [[nx, nz], [dx, dz]]) {
+      const ax = mx - ux * w, az = mz - uz * w, bx = mx + ux * w, bz = mz + uz * w;
+      builder.quad([[ax, az, g(ax, az), 0], [bx, bz, g(bx, bz), 0], [bx, bz, g(bx, bz), MAST_H], [ax, az, g(ax, az), MAST_H]], mast);
+    }
+    // the cantilever: a thin wall from the mast out over the track, from catenary down to contact height
+    const ex = x - nx * 0.3 * toMerc, ez = z - nz * 0.3 * toMerc;
+    builder.quad([[mx, mz, g(mx, mz), CONTACT_Y - 0.05], [ex, ez, g(ex, ez), CONTACT_Y - 0.05], [ex, ez, g(ex, ez), CATENARY_Y + 0.05], [mx, mz, g(mx, mz), CATENARY_Y + 0.05]], mast);
+  };
+  // the two rails of a piece: wide dark foot (or tram groove) under a thin bright head
+  const railPair = (lay: (ox: number, oz: number, half: number, y: number, rgb: [number, number, number]) => void, nx: number, nz: number, gauge: number, tram: boolean) => {
+    for (const side of [-1, 1]) {
+      const ox = nx * gauge * side, oz = nz * gauge * side;
+      lay(ox, oz, (tram ? 0.07 : 0.06) * toMerc, tram ? 0.185 : 0.1, tram ? groove : foot);
+      lay(ox, oz, 0.025 * toMerc, tram ? 0.19 : 0.115, head);
+    }
+  };
   for (const [i, way] of ways) {
     const kind = railKind(layer.feature(i).properties);
     if (!kind) continue;
@@ -1240,17 +1277,22 @@ function railTracks(builder: RoadBuilder, layer: VectorTile['layers'][string], k
       const half = 2.1 * toMerc;
       deckStructure(builder, deck, half, toMerc, plan, i);
       pushDeck(bridges, deck, half);
-      if (!tram) deckRibbon(builder, deck, 1.5 * toMerc, 0.06, bed, 0);
-      for (const sideSign of [-1, 1]) {
-        for (let n = 1; n < deck.pts.length; n++) {
-          const [ax, az] = deck.pts[n - 1], [bx, bz] = deck.pts[n];
-          const len = Math.hypot(bx - ax, bz - az) || 1;
-          const ox = -(bz - az) / len * gauge * sideSign, oz = (bx - ax) / len * gauge * sideSign;
-          deckRibbon(builder, { pts: [[ax + ox, az + oz], [bx + ox, bz + oz]], h: [deck.h[n - 1], deck.h[n]] }, 0.05 * toMerc, tram ? 0.19 : 0.11, steel, 0);
-        }
+      if (!tram) deckRibbon(builder, deck, 1.3 * toMerc, 0.06, ballast, 0);
+      for (let n = 1; n < deck.pts.length; n++) {
+        const [ax, az] = deck.pts[n - 1], [bx, bz] = deck.pts[n];
+        const len = Math.hypot(bx - ax, bz - az) || 1;
+        const nx = -(bz - az) / len, nz = (bx - ax) / len;
+        railPair((ox, oz, w, y, rgb) => deckRibbon(builder, { pts: [[ax + ox, az + oz], [bx + ox, bz + oz]], h: [deck.h[n - 1], deck.h[n]] }, w, y, rgb, 0), nx, nz, gauge, tram);
+      }
+      if (kind.wired) {
+        deckRibbon(builder, deck, 0.03 * toMerc, CONTACT_Y, wire, 0);
+        deckRibbon(builder, deck, 0.03 * toMerc, CATENARY_Y, wire, 0);
       }
     }
     for (const line of planned?.rest ?? way.lines) {
+      // distance to the next sleeper, carried across the line's pieces so the pitch stays even
+      let toSleeper = SLEEPER_STEP * 0.5;
+      let toMast = MAST_STEP * 0.5;
       for (let j = 0; j + 1 < line.length; j++) {
         const cut = clipSegment(line[j].x, line[j].y, line[j + 1].x, line[j + 1].y, layer.extent);
         if (!cut) continue;
@@ -1260,14 +1302,30 @@ function railTracks(builder: RoadBuilder, layer: VectorTile['layers'][string], k
         builder.groundAt = groundAt;
         const nx = -(bz - az) / len, nz = (bx - ax) / len;
         if (!tram) {
-          builder.segment(ax, az, bx, bz, 1.5 * toMerc, 0.06, bed);
-          if (j > 0) builder.disc(ax, az, 1.5 * toMerc, 0.06, bed, 8);
+          builder.segment(ax, az, bx, bz, 1.65 * toMerc, 0.05, shoulder);
+          builder.segment(ax, az, bx, bz, 1.2 * toMerc, 0.06, ballast);
+          if (j > 0) {
+            builder.disc(ax, az, 1.65 * toMerc, 0.05, shoulder, 6);
+            builder.disc(ax, az, 1.2 * toMerc, 0.06, ballast, 6);
+          }
+          // sleepers across the bed, a little wider than the gauge
+          const lenM = len / toMerc, reach = (kind.gauge + 0.45) * toMerc;
+          for (let s = toSleeper; s < lenM; s += SLEEPER_STEP) {
+            const cx = ax + (bx - ax) * s / lenM, cz = az + (bz - az) * s / lenM;
+            builder.segment(cx - nx * reach, cz - nz * reach, cx + nx * reach, cz + nz * reach, 0.11 * toMerc, 0.08, sleeper);
+          }
+          toSleeper = ((toSleeper - lenM) % SLEEPER_STEP + SLEEPER_STEP) % SLEEPER_STEP;
+          if (kind.wired) {
+            builder.segment(ax, az, bx, bz, 0.03 * toMerc, CONTACT_Y, wire);
+            builder.segment(ax, az, bx, bz, 0.03 * toMerc, CATENARY_Y, wire);
+            const dx = (bx - ax) / len, dz = (bz - az) / len;
+            for (let s = toMast; s < lenM; s += MAST_STEP) {
+              overheadMast(ax + (bx - ax) * s / lenM, az + (bz - az) * s / lenM, nx, nz, dx, dz);
+            }
+            toMast = ((toMast - lenM) % MAST_STEP + MAST_STEP) % MAST_STEP;
+          }
         }
-        const y = tram ? 0.19 : 0.11;
-        for (const side of [-1, 1]) {
-          const ox = nx * gauge * side, oz = nz * gauge * side;
-          builder.segment(ax + ox, az + oz, bx + ox, bz + oz, 0.05 * toMerc, y, steel);
-        }
+        railPair((ox, oz, w, y, rgb) => builder.segment(ax + ox, az + oz, bx + ox, bz + oz, w, y, rgb), nx, nz, gauge, tram);
       }
     }
     builder.groundAt = groundAt;
