@@ -64,13 +64,15 @@ export function placeIndicator(view: IndicatorView, marker: Indicator, from: Pos
   const projected = Number.isFinite(point.x) && Number.isFinite(point.y);
   const sideMargin = Math.min(64, width * 0.1);
   const topMargin = Math.min(96, height * 0.15);
-  const bottomMargin = Math.min(64, height * 0.11);
+  // clear of the speed / rpm / fuel gauges along the bottom
+  const bottomMargin = Math.min(130, height * 0.18);
   const inFrame = projected && point.x >= 0 && point.x <= width && point.y >= 0 && point.y <= height;
   const inSafe = projected
     && point.x >= sideMargin && point.x <= width - sideMargin
     && point.y >= topMargin && point.y <= height - bottomMargin;
-  // Mission HUD yields to the map pin as soon as the target is anywhere in the viewport.
-  if (inFrame && (onMap || meters < pinMeters) && marker.element.classList.contains('mission-indicator')) {
+  // Mission HUD yields to the map pin once the target is well inside the viewport; at the very
+  // edge the pin's label would hang off-screen, so the edge arrow stays (never nothing on screen)
+  if ((onMap ? inFrame : inSafe) && (onMap || meters < pinMeters) && marker.element.classList.contains('mission-indicator')) {
     marker.element.classList.add('is-onscreen');
     marker.element.classList.remove('is-edge');
     marker.element.style.display = 'none';
@@ -86,9 +88,10 @@ export function placeIndicator(view: IndicatorView, marker: Indicator, from: Pos
   }
   const cx = width / 2;
   const cy = height / 2;
-  // on the map: straight from the screen centre toward the projected target;
-  // driving: compass on the screen edge — clear even when project() fails behind the camera
-  const angle = onMap && projected && meters < 20000 // far beyond the horizon a projection can flip
+  // in front of the camera: straight from the screen centre toward the projected target, so the
+  // edge arrow sits where the goal (and its map pin) really is on screen — with a steep chase
+  // camera a compass bearing put it far from the pin; behind the camera project() fails → bearing
+  const angle = projected && meters < 20000 // far beyond the horizon a projection can flip
     ? Math.atan2(point.x - cx, cy - point.y)
     : (bearingTo(from, target) - view.getBearing()) * Math.PI / 180;
   const dx = Math.sin(angle);

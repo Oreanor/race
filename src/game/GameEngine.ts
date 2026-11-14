@@ -4487,8 +4487,17 @@ export class GameEngine {
     }
     // map pins carry range while in view; edge HUD only when the goal is off-frame
     const pinRange = this.driving && !this.mapInspecting();
+    // shown state follows the live mode every frame: the pins are laid out in the menu
+    // (not driving yet) and nothing re-synced them when the drive began — so in view they were gone
+    const pinsShown = roaming && !this.onMission();
     for (const mission of this.missions) {
-      this.setMapPinRange(this.missionMarkers.get(mission.id), mission.position, pinRange);
+      const marker = this.missionMarkers.get(mission.id);
+      const el = marker?.getElement();
+      if (el) {
+        const display = pinsShown ? '' : 'none';
+        if (el.style.display !== display) el.style.display = display;
+      }
+      this.setMapPinRange(marker, mission.position, pinRange);
     }
     this.setMapPinRange(this.raceGoalMarker, this.raceGoal, pinRange && this.mode === 'race');
     this.setMapPinRange(this.bountyMarker, this.bountyPickup ?? this.bounty?.spot ?? null, pinRange && this.canHuntBounty());

@@ -814,12 +814,13 @@ export class ThreeMap {
     const el = marker.getElement();
     const [lng, lat] = marker.position();
     // stands on the ground under it: known once its tile is in (kept after the tile goes);
-    // until then hidden, a label at a guessed height slides across the screen as the camera moves
+    // until then (a far goal) it stands at the camera's ground height — a slight guess beats
+    // an invisible goal: the player must always see where to drive
     const ground = marker.fixed ?? this.groundAt([lng, lat]);
     if (ground != null) marker.altitude = ground;
-    if (marker.altitude == null) { el.style.visibility = 'hidden'; return; }
+    const altitude = marker.altitude ?? this.camera.state.elevation;
     this.camera.update();
-    const p = this.camera.project(lng, lat, marker.altitude);
+    const p = this.camera.project(lng, lat, altitude);
     if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) { el.style.visibility = 'hidden'; return; }
     el.style.visibility = '';
     const shift = el.dataset.anchor === 'bottom' ? 'translate(-50%,-100%)' : 'translate(-50%,-50%)';
