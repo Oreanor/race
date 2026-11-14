@@ -2506,7 +2506,7 @@ export class GameEngine {
 
   /**
    * The police drive their own cars honestly: that car's pickup and top speed, no rubber band
-   * to ours and no boost. They got the call and pull away from a standstill.
+   * to ours; the boost like ours on the straights. They got the call and pull away from a standstill.
    */
   private policePace(bot: { position: [number, number] | Position; car: Car }) {
     return {

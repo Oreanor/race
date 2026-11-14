@@ -589,7 +589,10 @@ function cruiseKeys(bot: TrafficBot) {
   return keys;
 }
 
-/** `huntTop` (m/s): a pursuer's speed on the straights (the police); without it hunters keep the old town pace */
+/** the boost raises the top speed this much (VehicleController, Space) */
+const BOOST = 1.5;
+
+/** `huntTop` (m/s): a pursuer's top speed (boost on the straights) (the police); without it hunters keep the old town pace */
 export function trafficBotKeys(bot: TrafficBot, network: TrafficRoadNetwork, huntTop: number | null = null) {
   // Keep following the current path when the road graph grows (tile loads).
   // Repathing all bots on every revision was the race FPS killer.
@@ -653,7 +656,7 @@ export function trafficBotKeys(bot: TrafficBot, network: TrafficRoadNetwork, hun
   const farHunt = hunting && bot.huntRange > 250;
   let targetSpeed = hunting
     ? (huntTop != null
-      ? (turnAngle > 0.55 ? 12 : huntTop)
+      ? (turnAngle > 0.55 ? 12 : huntTop * BOOST)
       : (closing ? 15 : farHunt ? 20 : turnAngle > 0.55 ? 10 : 16))
     : (turnAngle > 0.5 ? 8 : 15);
   // facing well away from the next point: slow down to turn onto it (at speed the
@@ -665,8 +668,11 @@ export function trafficBotKeys(bot: TrafficBot, network: TrafficRoadNetwork, hun
   if (bot.routeIndex === bot.route.length - 1 && !hunting) targetSpeed = Math.min(targetSpeed, Math.max(3, metersBetween(bot.position, target) * 0.45));
   if (bot.controller.speed < targetSpeed) keys.add('KeyW');
   else if (bot.controller.speed > targetSpeed + 1.4) keys.add('KeyS');
-  // town hunters lunge with the boost up close; a paced pursuer (the police) has none
-  if (closing && bot.huntRange < 45 && huntTop == null) keys.add('Space');
+  // town hunters lunge with the boost up close; a pursuer (the police) uses it like we do —
+  // on the straights, never while braking (same 1.5× limit as the player's Space)
+  if (huntTop != null) {
+    if (keys.has('KeyW') && targetSpeed > huntTop) keys.add('Space');
+  } else if (closing && bot.huntRange < 45) keys.add('Space');
   if (error > 0.04) keys.add('KeyD');
   else if (error < -0.04) keys.add('KeyA');
   return keys;
