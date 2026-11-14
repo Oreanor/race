@@ -859,9 +859,16 @@ export default function Game() {
                           }}
                         />
                         <CarCarousel index={car} onIndex={setCar} cars={introCars}>
-                          <div className="car-deal">
-                            <span>{t('dealer.price')}</span>
-                            <strong className={canBuyStarter ? undefined : 'is-broke'}><Price value={starterPrice} /></strong>
+                          {/* owned: no charge on the start — say so instead of a price */}
+                          <div className={`car-deal${ownsStarter ? ' is-owned' : ''}`}>
+                            {ownsStarter ? (
+                              <span>{t('intro.owned')}</span>
+                            ) : (
+                              <>
+                                <span>{t('dealer.price')}</span>
+                                <strong className={canBuyStarter ? undefined : 'is-broke'}><Price value={starterPrice} /></strong>
+                              </>
+                            )}
                           </div>
                         </CarCarousel>
                         <div className="city-search">
