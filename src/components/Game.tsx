@@ -9,7 +9,7 @@ import { healthColor } from '@/game/health';
 import { GameEngine } from '@/game/GameEngine';
 import type { BountyOffer, DealerOffer, EventOffer, EventResult, FuelHud, HudParticipant, PlayerCarry, BankOffer, RideOffer, ServiceOffer, Settings, Theme, TravelOffer } from '@/game/offers';
 import { EVACUATION_COST } from '@/game/Fuel';
-import { loadSave, writeSave, type GameSave } from '@/game/save';
+import { loadSave, wipeProgress, writeSave, type GameSave } from '@/game/save';
 import {
   loadMapLabelFilters,
   MAP_LABEL_KINDS,
@@ -242,6 +242,9 @@ export default function Game() {
   /** after logo settles: plaque fades in under the logo */
   const [introIn, setIntroIn] = useState(false);
   const [exitConfirm, setExitConfirm] = useState(false);
+  const [restartConfirm, setRestartConfirm] = useState(false);
+  /** set while starting over, so no pending persist writes the old run back */
+  const wipingRef = useRef(false);
   const [search, setSearch] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [found, setFound] = useState<City[]>([]);
@@ -387,7 +390,8 @@ export default function Game() {
         const out = { ...defaults } as Record<string, unknown>;
         for (const key of Object.keys(defaults) as (keyof Settings)[]) {
           const value = saved[key];
-          if (key === 'theme' || value == null || typeof value !== typeof defaults[key]) continue;
+          // terrain is always on now — an old saved `false` must not switch it off
+          if (key === 'theme' || key === 'terrain' || value == null || typeof value !== typeof defaults[key]) continue;
           if (key === 'skin' && !(SKINS as readonly string[]).includes(value as string)) continue;
           if (key === 'quality' && !['low', 'medium', 'high'].includes(value as string)) continue;
           if (key === 'sensitivity' && !(Number.isFinite(value) && (value as number) >= 0.3 && (value as number) <= 2)) continue;
@@ -514,7 +518,7 @@ export default function Game() {
       // carry for the destination — do not overwrite with the old map (and wipe the purse).
       const hopping = cityHopRef.current;
       cityHopRef.current = false;
-      if (game?.runStarted && !hopping) {
+      if (game?.runStarted && !hopping && !wipingRef.current) {
         const save = game.snapshot({ name: place.name, country: place.country, coords: place.coords });
         if (save) {
           writeSave(save);
@@ -693,6 +697,12 @@ export default function Game() {
   const closeSettings = () => setSettingsOpen(false);
   const askExit = () => setExitConfirm(true);
   const cancelExit = () => setExitConfirm(false);
+  /** Start over: wipe the run (money, garage, position, bounty), keep preferences, reload clean. */
+  const confirmRestart = () => {
+    wipingRef.current = true;
+    wipeProgress();
+    window.location.reload();
+  };
   const confirmExit = () => {
     // Same intro as a reload: keep money / garage, calm map — do not wipe the run.
     stashProgress();
@@ -716,6 +726,7 @@ export default function Game() {
   useEffect(() => {
     if (!driving) return;
     const persist = () => {
+      if (wipingRef.current) return; // starting over: do not write the old run back
       const game = engine.current;
       // null while the engine is still booting — keep the old save untouched
       const save = game?.snapshot({ name: place.name, country: place.country, coords: place.coords });
@@ -767,10 +778,10 @@ export default function Game() {
 
   const settingsForm = (
     <div className="ui-form">
-      <label>{t('settings.language')}<select value={lang} onChange={e => setLang(e.target.value as Lang)}>{LANGS.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select></label>
       <div className="ui-theme-row">
-        <span>{t('settings.theme')}</span>
+        <span>{t('settings.langTheme')}</span>
         <div className="ui-theme" role="group" aria-label={t('settings.theme')}>
+          <select aria-label={t('settings.language')} value={lang} onChange={e => setLang(e.target.value as Lang)}>{LANGS.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select>
           <button type="button" className={`ui-theme-btn${settings.theme === 'light' ? ' is-on' : ''}`} aria-pressed={settings.theme === 'light'} aria-label={t('theme.light')} onClick={() => update({ theme: 'light' as Theme })}>
             <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="12" cy="12" r="4" fill="currentColor"/><path d="M12 2v2.5M12 19.5V22M4.2 4.2l1.8 1.8M18 18l1.8 1.8M2 12h2.5M19.5 12H22M4.2 19.8 6 18M18 6l1.8-1.8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" fill="none"/></svg>
           </button>
@@ -781,12 +792,14 @@ export default function Game() {
       </div>
       <label>{t('settings.skin')}<select value={settings.skin} onChange={e => update({ skin: e.target.value as Settings['skin'] })}>{SKINS.map(id => <option key={id} value={id}>{t(`skin.${id}`)}</option>)}</select></label>
       <label>{t('settings.quality')}<select value={settings.quality} onChange={e => update({ quality: e.target.value as Settings['quality'] })}><option value="low">{t('quality.low')}</option><option value="medium">{t('quality.medium')}</option><option value="high">{t('quality.high')}</option></select></label>
-      <label className="toggle">{t('settings.terrain')}<input type="checkbox" checked={settings.terrain} onChange={e => update({ terrain: e.target.checked })} /></label>
       <label className="toggle">{t('settings.follow')}<input type="checkbox" checked={settings.follow} onChange={e => update({ follow: e.target.checked })} /></label>
       <label>{t('settings.sensitivity')}<input type="range" min="0.3" max="2" step="0.1" value={settings.sensitivity} onChange={e => update({ sensitivity: Number(e.target.value) })} /></label>
       <label className="toggle">{t('settings.stats')}<input type="checkbox" checked={perfOn} onChange={e => toggleStats(e.target.checked)} /></label>
       <ServerStatus />
-      <button type="button" className="ui-btn is-ghost" onClick={() => { setSettingsOpen(false); setKeysOpen(true); }}>{t('keys.open')} · K</button>
+      <div className="ui-form-buttons">
+        <button type="button" className="ui-btn is-ghost" onClick={() => { setSettingsOpen(false); setKeysOpen(true); }}>{t('keys.open')} · K</button>
+        <button type="button" className="ui-btn is-ghost" onClick={() => setRestartConfirm(true)}>{t('settings.restart')}</button>
+      </div>
     </div>
   );
 
@@ -971,6 +984,20 @@ export default function Game() {
           </>}
         >
           <p className="ui-text">{t('settings.exit.text')}</p>
+        </Dialog>
+      )}
+
+      {restartConfirm && (
+        <Dialog
+          tone="alert"
+          title={t('settings.restart.confirm')}
+          onBackdrop={() => setRestartConfirm(false)}
+          actions={<>
+            <button type="button" className="ui-btn" autoFocus onClick={() => setRestartConfirm(false)}>{t('settings.restart.no')}</button>
+            <button type="button" className="ui-btn is-ghost" onClick={confirmRestart}>{t('settings.restart.yes')}</button>
+          </>}
+        >
+          <p className="ui-text">{t('settings.restart.text')}</p>
         </Dialog>
       )}
 

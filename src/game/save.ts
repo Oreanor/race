@@ -32,6 +32,14 @@ export function loadSave(): GameSave | null {
   }
 }
 
+/** Start over: forget the run (save + active bounty); preferences keep their own keys. */
+export function wipeProgress() {
+  try {
+    localStorage.removeItem(STORE);
+    localStorage.removeItem('cityRider.bounty');
+  } catch { /* private mode: nothing stored */ }
+}
+
 export function writeSave(save: GameSave) {
   try {
     localStorage.setItem(STORE, JSON.stringify(save));

@@ -305,7 +305,10 @@
 .ui-form select{height:40px;padding:0 10px;border:1px solid var(--ui-line);border-radius:var(--ui-radius-sm);background:var(--ui-soft);color:var(--ui-ink);font:14px var(--ui-font)}
 .ui-form input[type=checkbox],.ui-form input[type=range]{accent-color:var(--ui-accent)}
 .ui-theme-row{display:flex;align-items:center;justify-content:space-between;gap:12px;font:13px var(--ui-font);color:var(--ui-ink)}
-.ui-theme{display:flex;gap:6px}
+.ui-theme{display:flex;align-items:center;gap:6px}
+.ui-theme select{width:120px;height:40px}
+.ui-form-buttons{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.ui-form-buttons .ui-btn{width:100%;margin:0}
 .ui-theme-btn{display:flex;align-items:center;justify-content:center;width:40px;height:40px;margin:0;padding:0;border:1px solid var(--ui-line);border-radius:var(--ui-radius-sm);background:var(--ui-soft);color:var(--ui-muted);cursor:pointer}
 .ui-theme-btn:hover{color:var(--ui-ink);border-color:var(--ui-accent)}
 .ui-theme-btn.is-on{background:var(--ui-accent);border-color:var(--ui-accent);color:var(--ui-accent-ink)}
@@ -409,6 +412,9 @@
 .car-pick-name{display:flex;justify-content:space-between;align-items:baseline;padding:0 12px 10px;font:13px var(--ui-font);color:var(--ui-ink)}
 .car-pick-name span{font-size:11px;color:var(--ui-muted);padding:2px 8px;border:1.5px solid var(--ui-line);border-radius:999px;background:var(--ui-bg)}
 @media (max-height:850px){.car-pick .car-preview{height:270px}.car-arrow{top:140px}.intro .car-pick .car-preview{height:210px}.intro .car-arrow{top:105px}.intro{top:105px}}
+/* short windows: the intro card must end above the map-label chips at the bottom */
+@media (max-height:800px){.intro .car-pick .car-preview{height:120px}.intro .car-arrow{top:42px}.intro .car-specs div{padding:2px 0}}
+@media (max-height:680px){.intro .car-pick .car-preview{height:90px}.intro .car-arrow{top:27px}}
 .car-specs{margin:0;padding:2px 12px 10px}
 .car-specs div{display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:5px 0;border-top:1px solid var(--ui-line)}
 .car-specs dt{font:12px var(--ui-font);color:var(--ui-muted)}
@@ -442,10 +448,18 @@
 
 
 .intro .trip-card{width:100%;box-sizing:border-box}
-.intro .trip-card.is-settings{gap:12px}
-.intro .trip-card.is-settings .ui-title{margin:0 0 2px;font-size:18px}
-.intro .trip-card.is-settings .ui-form{gap:12px}
-.intro .trip-card.is-settings .ui-actions{margin-top:2px}
+/* settings on the intro: compact, and always ends above the map-label chips at the bottom */
+.intro .trip-card.is-settings{gap:10px;max-height:calc(100dvh - 250px);overflow:auto;scrollbar-width:thin}
+.intro .trip-card.is-settings .ui-title{margin:0;font-size:17px}
+.intro .trip-card.is-settings .ui-form{gap:9px}
+.intro .trip-card.is-settings .ui-form label>select,
+.intro .trip-card.is-settings .ui-theme select{height:32px}
+.intro .trip-card.is-settings .ui-theme-btn{width:32px;height:32px}
+.intro .trip-card.is-settings .ui-theme-btn svg{width:17px;height:17px}
+.intro .trip-card.is-settings .ui-form .ui-btn,
+.intro .trip-card.is-settings .ui-actions .ui-btn{height:38px!important}
+.ui-form .server-status{margin:0;font-size:13px}
+.intro .trip-card.is-settings .ui-actions{margin-top:0}
 .intro .city-search{position:relative;z-index:5;width:100%}
 @media(max-width:800px){
   .game-shell{--hud-left:12px;--hud-width:min(370px,calc(100vw - 24px))}
