@@ -230,8 +230,12 @@ export class TrafficRoadNetwork {
     return out;
   }
 
-  /** Spots along the roads every ~75 m; `start` shifts the row (coins sit halfway between balls). */
-  pickupLocations(center: Position, radius = 650, limit = 80, start = 37.5): RoadPickup[] {
+  /**
+   * Spots along the roads every `spacing` m (nearest `limit` within `radius`). Out of town a
+   * road is all there is, so a dense row keeps the drive paying; in town `limit` caps the count.
+   */
+  pickupLocations(center: Position, radius = 650, limit = 110, spacing = 40): RoadPickup[] {
+    const start = spacing / 2;
     const candidates = new Map<string, Position>();
     for (const line of this.lines.values()) {
       let traveled = 0;
@@ -250,12 +254,11 @@ export class TrafficRoadNetwork {
             const id = `${Math.round(position[0] * this.scaleX / 8)}:${Math.round(position[1] * METERS_PER_DEGREE / 8)}`;
             if (!candidates.has(id)) candidates.set(id, position);
           }
-          nextPickup += 75;
+          nextPickup += spacing;
         }
         traveled += length;
       }
     }
-    const spacing = 75;
     const spacingSquared = spacing * spacing;
     const cos = Math.cos(center[1] * Math.PI / 180);
     const nearby = new Map<string, Position[]>();

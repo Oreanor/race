@@ -268,14 +268,14 @@ test('road pickups are spaced along loaded streets and remain inside the visible
   }]);
 
   const pickups = network.pickupLocations([0, 0], 330);
-  assert.equal(pickups.length, 4);
+  assert.equal(pickups.length, 8); // every 40 m: 20, 60 … 300 m
   assert.equal(new Set(pickups.map(pickup => pickup.id)).size, pickups.length);
   for (const pickup of pickups) {
     assert.equal(pickup.position[1], 0);
     assert.ok(pickup.position[0] * 111319.49 <= 330);
   }
   for (let index = 1; index < pickups.length; index++) {
-    assert.ok(Math.abs((pickups[index].position[0] - pickups[index - 1].position[0]) * 111319.49 - 75) < 0.1);
+    assert.ok(Math.abs((pickups[index].position[0] - pickups[index - 1].position[0]) * 111319.49 - 40) < 0.1);
   }
 });
 
@@ -298,7 +298,7 @@ test('road pickups keep their minimum spacing across short road segments', () =>
   for (let index = 0; index < pickups.length; index++) {
     for (let other = index + 1; other < pickups.length; other++) {
       const distance = (pickups[other].position[0] - pickups[index].position[0]) * 111319.49;
-      assert.ok(Math.abs(distance) >= 74.9);
+      assert.ok(Math.abs(distance) >= 39.9);
     }
   }
 });

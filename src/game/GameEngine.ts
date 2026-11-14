@@ -110,6 +110,8 @@ import {
   GRAVITY,
   HAUL_AIM_M,
   HAUL_COIN_PX,
+  COIN_RESPAWN_M,
+  COIN_SPACING_M,
   HAUL_COINS_MS,
   HAUL_DECK_BACK,
   HAUL_DECK_UP,
@@ -534,7 +536,13 @@ export class GameEngine {
   private carry: PlayerCarry | null = null;
   get money() { return this.playerMoney; }
   private pickups = new Map<string, ActivePickup>();
-  private collectedPickups = new Set<string>();
+  /**
+   * Road coins taken: where (null: from the save, place unknown). They come back once we are
+   * COIN_RESPAWN_M away — so driving the roads keeps paying, without farming a spot.
+   */
+  private collectedPickups = new Map<string, Position | null>();
+  /** where the run (re)started: saved coins without a place come back once we leave it */
+  private collectedFrom: Position | null = null;
   /** true once the run's purse/coins/hp are in place — before that a snapshot would wipe the save */
   private runReady = false;
   /** the run's purse/coins/hp have been applied (see runReady) */
@@ -1144,7 +1152,8 @@ export class GameEngine {
       const carry = this.carry;
       const resumeHp = carry?.at?.hp;
       this.playerHp = resumeHp != null ? Math.max(1, Math.min(this.playerMaxHp, resumeHp)) : this.playerMaxHp;
-      this.collectedPickups = new Set(carry?.collected?.filter((id) => typeof id === 'string') ?? []);
+      this.collectedPickups = new Map((carry?.collected?.filter((id) => typeof id === 'string') ?? []).map((id) => [id, null] as [string, Position | null]));
+      this.collectedFrom = carry?.at?.position ? [...carry.at.position] as Position : null;
       // Intro: empty garage + STARTING_CASH (prod). GIFT_CARS only in next.devs.
       // The menu car is bought when setDriving(true) — not on boot spawn.
       this.fuel.level = this.fuel.spec.tank * (carry?.fuel ?? 1);
@@ -1177,7 +1186,7 @@ export class GameEngine {
   /** Snapshot for localStorage so a refresh lands back mid-drive. */
   snapshot(place: { name: string; country: string; coords: [number, number] }): GameSave | null {
     if (!this.runReady) return null;
-    const collected = [...this.collectedPickups];
+    const collected = [...this.collectedPickups.keys()];
     // keep the newest ids if the list grows huge (localStorage quota)
     if (collected.length > 4000) collected.splice(0, collected.length - 4000);
     return {
@@ -2201,9 +2210,14 @@ export class GameEngine {
       if (metersBetween(position, pickup.position) <= 800) continue;
       this.pickups.delete(id);
     }
+    // taken coins come back once we are well away (saved ones: once we leave the start)
+    const leftStart = !this.collectedFrom || metersBetween(position, this.collectedFrom) > COIN_RESPAWN_M;
+    for (const [id, at] of this.collectedPickups) {
+      if (at ? metersBetween(position, at) > COIN_RESPAWN_M : leftStart) this.collectedPickups.delete(id);
+    }
 
     // spinning coins on the road — money only, no coloured score orbs
-    for (const spot of this.trafficNetwork.pickupLocations(position)) {
+    for (const spot of this.trafficNetwork.pickupLocations(position, 650, 110, COIN_SPACING_M)) {
       const id = `coin:${spot.id}`;
       if (this.pickups.has(id) || this.collectedPickups.has(id)) continue;
       this.pickups.set(id, { position: spot.position, color: '#f2c230', kind: 'coin' });
@@ -2289,7 +2303,7 @@ export class GameEngine {
       const t = Math.max(0, Math.min(len, dx * ux + dy * uy + du * uu));
       if (Math.hypot(ux * t - dx, uy * t - dy, uu * t - du) > 2.8) continue;
       this.pickups.delete(id);
-      if (!pickup.drop) this.collectedPickups.add(id);
+      if (!pickup.drop) this.collectedPickups.set(id, [...pickup.position] as Position);
       if (pickup.kind === 'cash') {
         money += CASH_BUNDLE;
         if (this.heist) this.heist.cash += CASH_BUNDLE;
@@ -2688,7 +2702,7 @@ export class GameEngine {
         if (pickup.kind === 'cash' && !player) continue;             // bank money is ours to grab
         if (metersBetween(position, pickup.position) > (pickup.kind === 'cash' ? 4.5 : 3.5)) continue;
         this.pickups.delete(id);
-        if (!pickup.drop) this.collectedPickups.add(id); // road coins stay gone after a reload
+        if (!pickup.drop) this.collectedPickups.set(id, [...pickup.position] as Position); // gone until we drive away
         if (pickup.kind === 'cash') {
           money += CASH_BUNDLE;
           if (this.heist) this.heist.cash += CASH_BUNDLE;

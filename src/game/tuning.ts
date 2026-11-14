@@ -217,3 +217,8 @@ export function randomDriverNames(count: number) {
   }
   return names.slice(0, count);
 }
+
+/** road coins: one every this many metres along the roads */
+export const COIN_SPACING_M = 40;
+/** a taken road coin comes back once we are this far from it (m) */
+export const COIN_RESPAWN_M = 1500;
