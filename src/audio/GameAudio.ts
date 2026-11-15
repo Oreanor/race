@@ -176,8 +176,8 @@ export class GameAudio {
     // tyres: a squeal is a tone (rubber stick-slip), two detuned voices through a band-pass,
     // with only a breath of noise under it
     const ta = ctx.createOscillator(); ta.type = 'triangle';
-    const tb = ctx.createOscillator(); tb.type = 'sawtooth';
-    const tf = ctx.createBiquadFilter(); tf.type = 'bandpass'; tf.frequency.value = 1400; tf.Q.value = 2.5;
+    const tb = ctx.createOscillator(); tb.type = 'sine';
+    const tf = ctx.createBiquadFilter(); tf.type = 'highpass'; tf.frequency.value = 1500; tf.Q.value = 0.7;
     const tg = ctx.createGain(); tg.gain.value = 0;
     ta.connect(tf); tb.connect(tf); tf.connect(tg); tg.connect(out);
     ta.start(); tb.start();
@@ -246,13 +246,13 @@ export class GameAudio {
     // a hard corner at speed whimpers (the everyday drift tops out at ~0.42 rad), a real
     // slide or a spin screams; the pitch wavers a little like rubber does
     const squeal = clamp((Math.abs(f.slip) - 0.34) * 2.2) * clamp(Math.abs(f.speed) / 10);
-    // the pitch wavers fast and climbs a little with the slide
-    const wobble = Math.sin(t * 31) * 35 + Math.sin(t * 13.7) * 25;
-    const squealPitch = 880 + squeal * 260 + wobble;
-    this.tyres.a.frequency.setTargetAtTime(squealPitch, t, 0.02);
-    this.tyres.b.frequency.setTargetAtTime(squealPitch * 1.5 + 7, t, 0.02);
-    this.tyres.filter.frequency.setTargetAtTime(squealPitch * 1.3, t, 0.03);
-    this.tyres.gain.gain.setTargetAtTime(squeal * 0.075 * on, t, 0.035);
+    // a high thin "eeee": two near-unison tones ~2.4–3.1 kHz beating against each other,
+    // the pitch jittering fast and climbing with the slide
+    const wobble = Math.sin(t * 37) * 45 + Math.sin(t * 17.3) * 30;
+    const squealPitch = 2400 + squeal * 700 + wobble;
+    this.tyres.a.frequency.setTargetAtTime(squealPitch, t, 0.015);
+    this.tyres.b.frequency.setTargetAtTime(squealPitch * 1.012, t, 0.015);
+    this.tyres.gain.gain.setTargetAtTime(squeal * 0.05 * on, t, 0.03);
     this.tyres.hiss.gain.setTargetAtTime(squeal * 0.04 * on, t, 0.05);
     // ---- wind with speed
     const rush = clamp(Math.abs(f.speed) / 70);
