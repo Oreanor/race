@@ -65,8 +65,34 @@ function contains(area: Area, p: Position) { return containsRings(area.rings, p)
 function edgeNear(area: Area, p: Position, margin: number) {
   return area.rings.some(r => r.some((v,i) => segmentDistance(p,v,r[(i+1)%r.length]) < margin));
 }
-function onRoad(roads: {a: Position; b: Position; width: number}[], p: Position, extra = 0) {
-  return roads.some(r => {
+type RoadPiece = {a: Position; b: Position; width: number};
+/** the widest `extra` any caller asks for (m): the grid pads each piece by it */
+const ROAD_EXTRA_MAX = 2;
+const ROAD_CELL = 32;
+/** Road pieces in 32 m cells, so a point is tested against its own cell (it ran over every road for every plant). */
+const roadGrids = new WeakMap<RoadPiece[], { length: number; cells: Map<string, RoadPiece[]> }>();
+function roadGrid(roads: RoadPiece[]) {
+  const known = roadGrids.get(roads);
+  if (known && known.length === roads.length) return known.cells;
+  const cells = new Map<string, RoadPiece[]>();
+  for (const r of roads) {
+    const pad = r.width + ROAD_EXTRA_MAX;
+    const x0 = Math.floor((Math.min(r.a[0], r.b[0]) - pad) / ROAD_CELL), x1 = Math.floor((Math.max(r.a[0], r.b[0]) + pad) / ROAD_CELL);
+    const y0 = Math.floor((Math.min(r.a[1], r.b[1]) - pad) / ROAD_CELL), y1 = Math.floor((Math.max(r.a[1], r.b[1]) + pad) / ROAD_CELL);
+    if ((x1 - x0 + 1) * (y1 - y0 + 1) > 2500) continue; // a broken, endless piece
+    for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) {
+      const key = x + ',' + y;
+      const list = cells.get(key);
+      if (list) list.push(r); else cells.set(key, [r]);
+    }
+  }
+  roadGrids.set(roads, { length: roads.length, cells });
+  return cells;
+}
+function onRoad(roads: RoadPiece[], p: Position, extra = 0) {
+  const list = roadGrid(roads).get(Math.floor(p[0] / ROAD_CELL) + ',' + Math.floor(p[1] / ROAD_CELL));
+  if (!list) return false;
+  return list.some(r => {
     const pad = r.width + extra;
     return p[0] >= Math.min(r.a[0], r.b[0]) - pad && p[0] <= Math.max(r.a[0], r.b[0]) + pad
       && p[1] >= Math.min(r.a[1], r.b[1]) - pad && p[1] <= Math.max(r.a[1], r.b[1]) + pad
