@@ -159,10 +159,11 @@ const CAMERA_STORE = 'race.camera';
 const RACE_LOOK_M = 400;
 /** coin grids on open fields: one candidate per this big square of the world (m) */
 const FIELD_CELL_M = 1000;
-/** …coins this far apart in the rows (m) */
-const FIELD_STEP_M = 3;
-/** …in these sizes (columns × rows): squares and long strips, 10 × 15 at most */
-const FIELD_GRIDS: [number, number][] = [[10, 10], [10, 15], [6, 10], [4, 12], [3, 15], [2, 15]];
+/** …coins this far apart (m) */
+const FIELD_STEP_M = 4;
+/** …in these shapes (columns × rows): mostly a single trail of up to 10, now and then
+ * a strip, 5 × 10 at most */
+const FIELD_GRIDS: [number, number][] = [[1, 5], [1, 7], [1, 8], [1, 10], [1, 10], [1, 6], [2, 8], [3, 6], [4, 8], [5, 10]];
 /** a race nobody finishes is called off after this long from the start (ms) */
 const RACE_TIME_LIMIT_MS = 5 * 60_000;
 /** never a race / arena rival: the police, the emergency and work vehicles, the robot, the monster truck */
