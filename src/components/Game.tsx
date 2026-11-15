@@ -873,7 +873,7 @@ export default function Game() {
             <a className="brand stage-brand" href="/" aria-label="City Rider">
               <span className="brand-icon" aria-hidden="true">
                 <svg viewBox="0 0 64 64" fill="none" focusable="false">
-                  <path d="M6 28h9c7 0 9-4 17-4s10 4 17 4h9v8h-9c-8 0-13 5-13 13v9h-8v-9c0-8-5-13-13-13H6Z" fill="#ff9800" />
+                  <path d="M6 28h9c7 0 9-4 17-4s10 4 17 4h9v8h-9c-8 0-13 5-13 13v9h-8v-9c0-8-5-13-13-13H6Z" fill="currentColor" />
                   <circle cx="32" cy="32" r="27" stroke="currentColor" strokeWidth="6.5" />
                 </svg>
               </span> city rider
