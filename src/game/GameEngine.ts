@@ -159,6 +159,8 @@ const CAMERA_STORE = 'race.camera';
 const RACE_LOOK_M = 400;
 /** hit a wall faster than this (km/h) and three coins jump out of it */
 const WALL_COIN_KMH = 100;
+/** …when the wall takes at least this much of the speed (m/s, ~40 km/h): a hit, not a graze */
+const WALL_COIN_HIT = 11;
 /** coin grids on open fields: one candidate per this big square of the world (m) */
 const FIELD_CELL_M = 1000;
 /** …coins this far apart (m) */
@@ -2313,6 +2315,7 @@ export class GameEngine {
   }
 
   private dropSerial = 0;
+  private wallCoinsAt = 0;
   private trainCoinAt = 0;
 
   /** Train cars near `around` as flat capsules in metres east/north of it, with their ground height. */
@@ -6024,11 +6027,19 @@ export class GameEngine {
         // airborne: let the car fly into the river; water only stops surface driving
         if (!this.plunge && !this.airborne) {
           const building = this.collisions.resolve(previous, this.vehicle.position, this.vehicle.heading, 1, this.altitude);
+          // how hard the wall hit: the speed it took off our step (m/s); a head-on hit at speed
+          // often comes back as a slide along the wall, so both cases are measured the same way
+          const wanted = this.vehicle.position as [number, number];
+          const wallHit = (building.stopped || building.slid) ? metersBetween(wanted, building.position as [number, number]) * 60 : 0;
+          const fast = Math.abs(this.vehicle.speed) > WALL_COIN_KMH / 3.6;
+          if (wallHit > 3) this.audio.crash(wallHit / 30);
+          // faster than 100 km/h into a wall (not a graze): three coins jump out of it
+          if (fast && wallHit > WALL_COIN_HIT && now - this.wallCoinsAt > 1500) {
+            this.wallCoinsAt = now;
+            this.wallCoins(building.position as [number, number], oldHeading);
+          }
           if (building.stopped) {
             this.vehicle.position = building.position;
-            if (Math.abs(this.vehicle.speed) > 3) this.audio.crash(Math.abs(this.vehicle.speed) / 35);
-            // a wall taken faster than 100 km/h coughs up three coins
-            if (Math.abs(this.vehicle.speed) > WALL_COIN_KMH / 3.6) this.wallCoins(building.position as [number, number], oldHeading);
             this.vehicle.heading = oldHeading;
             this.vehicle.speed = 0;
             blocked = true;
