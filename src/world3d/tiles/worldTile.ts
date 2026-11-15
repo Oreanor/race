@@ -1351,6 +1351,8 @@ function roadMesh(vt: VectorTile, span: number, grid: number, at: Surfaces, brid
     // bridges, overpasses and their ramps, worked out once for rails and both road passes
     const plan = planBridges(ways, layer.extent, span, at);
     railTracks(builder, layer, k, at, bridges, ways, plan);
+    // the drawn roads round their corners (the plan's lines stay as they are for the rest)
+    const drawn = roundedRoadLines(ways, plan, toMerc / k);
     // casings first (lower), then fills, each a flat ribbon slightly above ground
     for (const pass of ['casing', 'fill'] as const) {
       for (const [i, way] of ways) {
@@ -1375,7 +1377,7 @@ function roadMesh(vt: VectorTile, span: number, grid: number, at: Surfaces, brid
           } else pushDeck(bridges, deck, half);
           deckRibbon(builder, deck, half, y, rgb, steps);
         }
-        for (const line of planned?.rest ?? way.lines) {
+        for (const line of drawn.get(i) ?? planned?.rest ?? way.lines) {
           for (let j = 0; j + 1 < line.length; j++) {
             const c = clipSegment(line[j].x, line[j].y, line[j + 1].x, line[j + 1].y, layer.extent);
             if (!c) continue;
@@ -1414,10 +1416,52 @@ function roadMesh(vt: VectorTile, span: number, grid: number, at: Surfaces, brid
         builder.groundAt = driveAt;
       }
     }
-    laneMarkings(builder, layer, ways, plan, k, toMerc, driveAt);
+    laneMarkings(builder, layer, ways, drawn, plan, k, toMerc, driveAt);
     zebraCrossings(builder, layer, ways, k, toMerc, driveAt);
   }
   return meshOf(builder);
+}
+
+/**
+ * Road lines with their corners rounded for drawing: every bend sharper than ~12° is cut
+ * by up to 8 m (a third of the shorter arm) on each side and filled with a short arc.
+ * Points other lines share (junctions, joins) stay put, so roads still meet.
+ * `unitsPerMeter`: tile units in a metre.
+ */
+function roundedRoadLines(ways: Map<number, Way>, plan: Map<number, Planned>, unitsPerMeter: number) {
+  const uses = new Map<string, number>();
+  const note = (q: XY) => { const key = q.x + ',' + q.y; uses.set(key, (uses.get(key) ?? 0) + 1); };
+  for (const way of ways.values()) for (const line of way.lines) for (const q of line) note(q);
+  const fixed = (q: XY) => (uses.get(q.x + ',' + q.y) ?? 0) > 1;
+  const cutMax = 8 * unitsPerMeter;
+  const out = new Map<number, XY[][]>();
+  for (const [i, way] of ways) {
+    if (way.foot) continue;
+    const lines = plan.get(i)?.rest ?? way.lines;
+    out.set(i, lines.map((line) => {
+      if (line.length < 3) return line;
+      const result: XY[] = [line[0]];
+      for (let n = 1; n + 1 < line.length; n++) {
+        const p = line[n - 1], q = line[n], r = line[n + 1];
+        const ux = q.x - p.x, uy = q.y - p.y, vx = r.x - q.x, vy = r.y - q.y;
+        const lu = Math.hypot(ux, uy), lv = Math.hypot(vx, vy);
+        const cos = lu && lv ? (ux * vx + uy * vy) / (lu * lv) : 1;
+        if (fixed(q) || cos > 0.978 || !lu || !lv) { result.push(q); continue; }
+        // cut back along both arms and run a quadratic arc through the corner
+        const cut = Math.min(cutMax, lu / 3, lv / 3);
+        const a = { x: q.x - ux / lu * cut, y: q.y - uy / lu * cut };
+        const b = { x: q.x + vx / lv * cut, y: q.y + vy / lv * cut };
+        const steps = cos < 0.5 ? 5 : 3;
+        for (let t = 0; t <= steps; t++) {
+          const f = t / steps, g = 1 - f;
+          result.push({ x: g * g * a.x + 2 * g * f * q.x + f * f * b.x, y: g * g * a.y + 2 * g * f * q.y + f * f * b.y });
+        }
+      }
+      result.push(line[line.length - 1]);
+      return result;
+    }));
+  }
+  return out;
 }
 
 /**
@@ -1427,7 +1471,7 @@ function roadMesh(vt: VectorTile, span: number, grid: number, at: Surfaces, brid
  * stay plain; the paint stops 7 m short of a junction so lines do not cross it. Flat strips
  * in the one road mesh — no extra draw calls.
  */
-function laneMarkings(builder: RoadBuilder, layer: VectorTile['layers'][string], ways: Map<number, Way>, plan: Map<number, Planned>, k: number, toMerc: number, driveAt: (x: number, z: number) => number) {
+function laneMarkings(builder: RoadBuilder, layer: VectorTile['layers'][string], ways: Map<number, Way>, drawn: Map<number, XY[][]>, plan: Map<number, Planned>, k: number, toMerc: number, driveAt: (x: number, z: number) => number) {
   // junctions: points where three or more arms of drivable roads meet
   const arms = new Map<string, number>();
   for (const [i, way] of ways) {
@@ -1478,7 +1522,7 @@ function laneMarkings(builder: RoadBuilder, layer: VectorTile['layers'][string],
     if (!centre) continue;
     const edge = motorway || main ? style.width / 2 - 0.35 : null;
     const y = style.lift + 0.05;
-    for (const line of plan.get(i)?.rest ?? way.lines) {
+    for (const line of drawn.get(i) ?? plan.get(i)?.rest ?? way.lines) {
       let phase = 0; // metres into the dash pattern, carried along the line
       for (let j = 0; j + 1 < line.length; j++) {
         const c = clipSegment(line[j].x, line[j].y, line[j + 1].x, line[j + 1].y, layer.extent);
