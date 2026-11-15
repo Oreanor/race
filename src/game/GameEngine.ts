@@ -451,7 +451,7 @@ export class GameEngine {
    * A bank job in progress (mode 'arena' for the guns and contacts): cash picked up so far,
    * police to send (a downed car calls two more), a touch or a wrecked car = arrest.
    */
-  private heist: { cash: number; reinforce: number; sent: number; caught: boolean; stolen?: { carId: string; previousId: string; owned: boolean } } | null = null;
+  private heist: { cash: number; reinforce: number; sent: number; caught: boolean; stolen?: { carId: string; previousId: string; owned: boolean; fuel: number } } | null = null;
   /** each chasing bot's last look at its target: is the way clear of houses (checked every 300 ms) */
   private botSight = new Map<string, { at: number; clear: boolean }>();
   /** hunters that got stuck: no cutting across until then (ms) */
@@ -2408,7 +2408,7 @@ export class GameEngine {
   }
 
   /** Three police cars come for us (a bank job or a hijack); `stolen`: the car we took. */
-  private startChase(stolen?: { carId: string; previousId: string; owned: boolean }) {
+  private startChase(stolen?: { carId: string; previousId: string; owned: boolean; fuel: number }) {
     this.trafficBots = [];
     this.heist = { cash: 0, reinforce: 0, sent: 0, caught: false, stolen };
     this.mode = 'arena';
@@ -2426,10 +2426,13 @@ export class GameEngine {
     if (Math.abs(this.vehicle.speed) > 2.5) { this.say(t('hijack.slow'), true); return; }
     this.sharedTraffic.takeParked(near.id);
     const previous = this.car;
+    // our own tank waits with our car; the stolen one has whatever its owner left in it
+    const ourFuel = this.fuel.level;
     // a stolen car never joins the garage: get away and it goes to the black market
     const owned = this.garage.has(near.car.id);
     this.setCar(near.car);
     this.onCarBought(near.car);
+    this.fuel.level = this.fuel.spec.tank * (0.25 + Math.random() * 0.6);
     // we sit in it where it stood; our own car waits in the garage
     this.vehicle.position = [...near.position] as [number, number];
     this.vehicle.heading = near.heading;
@@ -2438,7 +2441,7 @@ export class GameEngine {
     this.bearing = this.vehicle.heading * 180 / Math.PI;
     this.renderVehicle.reset(this.vehicle);
     this.accumulator = 0;
-    this.startChase({ carId: near.car.id, previousId: previous.id, owned });
+    this.startChase({ carId: near.car.id, previousId: previous.id, owned, fuel: ourFuel });
     this.say(t('hijack.started', { car: near.car.name }), true);
   }
 
@@ -2621,7 +2624,7 @@ export class GameEngine {
       const price = sold ? Math.round(carPrice(sold) * BLACK_MARKET_SHARE) : 0;
       this.playerMoney += price;
       const previous = carsConfig.find((car) => car.id === stolen.previousId);
-      if (previous) { this.setCar(previous); this.onCarBought(previous); }
+      if (previous) { this.setCar(previous); this.onCarBought(previous); this.fuel.level = Math.min(this.fuel.spec.tank, stolen.fuel); }
       this.onEventResult({ kind: 'hijack', won: true, cash: price, name: sold?.name ?? '' });
     } else this.onEventResult({ kind: 'heist', won: true, cash });
   }
@@ -2633,7 +2636,8 @@ export class GameEngine {
     // a hijacked car goes back to its owner; we are in our own again
     if (heist.stolen) {
       const previous = carsConfig.find((car) => car.id === heist.stolen!.previousId);
-      if (previous) { this.setCar(previous); this.onCarBought(previous); }
+      // our own car, with our own fuel as we left it
+      if (previous) { this.setCar(previous); this.onCarBought(previous); this.fuel.level = Math.min(this.fuel.spec.tank, heist.stolen.fuel); }
     }
     this.heist = null;
     this.mode = 'roam';
