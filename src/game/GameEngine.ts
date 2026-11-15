@@ -156,6 +156,8 @@ const wrapDegrees = (deg: number) => ((deg + 180) % 360 + 360) % 360 - 180;
 const CAMERA_STORE = 'race.camera';
 /** a racer looks this far (m) straight toward the flag: clear of houses and water → it cuts across */
 const RACE_LOOK_M = 400;
+/** a race nobody finishes is called off after this long from the start (ms) */
+const RACE_TIME_LIMIT_MS = 5 * 60_000;
 /** never a race / arena rival: the police, the emergency and work vehicles, the robot, the monster truck */
 const RIVAL_EXCLUDED = new Set(['09', '16', '21', '18', '19', '20', '14', '03']);
 /** The camera as last left, within its limits; null if none was kept (or it is unreadable). */
@@ -1767,6 +1769,9 @@ export class GameEngine {
   private hunterGuns = new Map<string, { burstUntil: number; nextBurst: number; nextShot: number }>();
   /** race: everyone on the grid until this moment (3‑2‑1 countdown); 0 when no race is starting */
   private raceStartAt = 0;
+  /** race: called off at this moment if nobody has reached the flag (0: no race) */
+  private raceDeadline = 0;
+  private raceWarned = false;
   private raceCount = 0;
 
   /** Mission props (tow wreck, ambulance pileup) never chase or shoot. */
@@ -2128,6 +2133,8 @@ export class GameEngine {
     this.vehicle.speed = 0;
     this.raceStartAt = performance.now() + 3200;
     this.raceCount = 0;
+    this.raceDeadline = this.raceStartAt + RACE_TIME_LIMIT_MS;
+    this.raceWarned = false;
     this.mode = 'race';
     this.vehicleContactTimes.clear();
     this.hideEventBeacons();
@@ -2180,10 +2187,14 @@ export class GameEngine {
     this.mode = 'roam';
     this.eventCooldown = performance.now() + 8000;
     const won = winnerId === 'player';
+    this.raceDeadline = 0;
     if (won) {
       this.playerMoney += RACE_PRIZE;
       this.addWin('player');
       this.say(t('race.won'), true);
+    } else if (!winnerId) {
+      // time ran out: nobody wins, the entry fee is gone
+      this.say(t('race.timeout'), true);
     } else {
       const bot = this.trafficBots.find(entry => entry.id === winnerId);
       if (bot) bot.money += RACE_PRIZE;
@@ -2848,6 +2859,13 @@ export class GameEngine {
     }
     if (this.mode === 'race') {
       if (!this.raceGoal) return;
+      // nobody gets there (lost, stuck, all wrecked): the race is called off
+      const now = performance.now();
+      if (this.raceDeadline && now >= this.raceDeadline) { this.endRace('', ''); return; }
+      if (this.raceDeadline && !this.raceWarned && this.raceDeadline - now <= 30_000) {
+        this.raceWarned = true;
+        this.say(t('race.hurry'), true);
+      }
       // Generous radius — flag is a point; cars need room to count as finished.
       if (metersBetween(this.vehicle.position, this.raceGoal) <= 28) {
         this.endRace('player', t('you'));

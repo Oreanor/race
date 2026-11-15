@@ -1183,7 +1183,7 @@ export default function Game() {
                   : eventResult.kind === 'arena' && !eventResult.won
                     ? t('arena.lost')
                     : eventResult.kind === 'race' && !eventResult.won
-                      ? t('race.lost', { name: eventResult.name ?? '' })
+                      ? (eventResult.name ? t('race.lost', { name: eventResult.name }) : t('race.timeout'))
                       : t('event.success');
         return (
           <Dialog
