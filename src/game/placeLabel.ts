@@ -38,7 +38,7 @@ export function localityFromAddress(a: PlaceAddress, lang: Lang = 'en'): Localit
       // Geocoders sometimes include the type in the returned name already.
       return [/\b(county|municipality|distrito|município)\b|округ|муниципалитет/i.test(value) ? value : `${types[kind]} ${value}`];
     });
-  const title = [...parts.map(p => `${types.district} ${p}`), `${settlementType} ${name}`, parentCity]
+  const title = [district ? `${types.district} ${district}` : '', `${settlementType} ${name}`, parentCity]
     .filter(Boolean).filter((p, i, list) => list.indexOf(p) === i).join(', ');
   const context = [region, ...administrative, country].filter(Boolean).filter((p, i, list) => list.indexOf(p) === i).join(', ');
   return { name, district, title, context, label: [title, context].filter(Boolean).join(', ') };

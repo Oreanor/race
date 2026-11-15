@@ -66,3 +66,9 @@ test('all useful administrative parents survive, without duplicating the city', 
   const place = localityFromAddress({ neighbourhood: 'Розвилл', city: 'Ньюарк', municipality: 'Ньюарк', county: 'Эссекс', state: 'Нью-Джерси', country_code: 'us' }, 'ru')!;
   assert.equal(place.context, 'штат Нью-Джерси, округ Эссекс, США');
 });
+
+test('a neighbourhood and a long parish name do not both expand the heading', () => {
+  const place = localityFromAddress({ suburb: 'Santa Clara', city_district: 'Santa Clara e Castelo Viegas', city: 'Коимбра', state: 'Коимбра', country_code: 'pt' }, 'ru')!;
+  assert.equal(place.title, 'район Santa Clara, г. Коимбра');
+  assert.ok(!place.title.includes('Castelo Viegas'));
+});
