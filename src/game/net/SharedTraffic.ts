@@ -29,7 +29,9 @@ const TOP_SPEED = 14;
 /** parked cars: kept this close (m); new ones only farther than PARK_NEAR so none appears in view */
 const PARK_KEEP = 900;
 const PARK_NEAR = 250;
-const PARK_MAX = 18;
+const PARK_MAX = 24;
+/** a parked car this far behind us (m) gives its place to one ahead */
+const PARK_BEHIND = 150;
 /** new parked cars no farther than this (m) */
 const PARK_FAR = 700;
 /** about one kerb spot in three has a car */
@@ -251,9 +253,15 @@ export class SharedTraffic {
     this.parkedWhen = now;
     const me = this.host.myId() ?? 'me';
     const layer = this.host.layer();
+    const heading = this.host.vehicle.heading;
+    const cos = Math.cos(here[1] * Math.PI / 180);
+    /** metres ahead of us along our heading (negative: behind) */
+    const ahead = (p: Position) => (p[0] - here[0]) * METERS_PER_DEGREE * cos * Math.sin(heading) + (p[1] - here[1]) * METERS_PER_DEGREE * Math.cos(heading);
     this.parked = this.parked.filter((p) => {
       if (layer && !layer.isTargetAlive(p.id) && layer.targetHp(p.id) === 0) this.spent.set(p.spot, [...p.controller.position] as Position);
-      return metersBetween(p.controller.position, here) < PARK_KEEP;
+      const d = metersBetween(p.controller.position, here);
+      // left well behind (out of the chase camera's view): its place goes to a kerb ahead
+      return d < PARK_KEEP && !(d > PARK_BEHIND && ahead(p.controller.position) < -PARK_BEHIND * 0.7);
     });
     for (const [spot, at] of this.spent) if (metersBetween(at, here) > PARK_KEEP * 2) this.spent.delete(spot);
     const used = new Set(this.parked.map((p) => p.spot));
@@ -268,8 +276,12 @@ export class SharedTraffic {
       used.add(spot);
       this.parked.push({ id: `${me}:k${this.serial++}`, spot, car, controller: new VehicleController(position, heading * 180 / Math.PI) });
     };
-    for (const spot of this.host.network.kerbSpots(here, PARK_FAR)) {
-      if (spotHash(spot.id) >= PARK_SHARE) continue;
+    // the nearest spots ahead of us first: the cars stand where we are going
+    const spots = this.host.network.kerbSpots(here, PARK_FAR).filter((spot) => spotHash(spot.id) < PARK_SHARE);
+    const score = (p: Position) => metersBetween(p, here) - Math.max(0, ahead(p)) * 0.7 + Math.max(0, -ahead(p));
+    spots.sort((a, b) => score(a.position) - score(b.position));
+    for (const spot of spots) {
+      if (this.parked.length >= PARK_MAX) break;
       // a narrow street: the kerb is nearer the middle (else the spot lands in a house)
       let position = spot.position;
       for (const pull of [1, 3.4 / 4.4, 2.8 / 4.4]) {
