@@ -98,10 +98,53 @@ export function gridWaterLevel(levels: Float32Array, grid: number, u: number, v:
 /** floats per bridge deck piece */
 const BRIDGE_STRIDE = 7;
 
+/** the widest `widen` any caller asks for: the grid index pads each piece by this much */
+const MAX_WIDEN = 1.6;
+
+/** Bridge pieces in square cells, so a height query looks at its own cell only (it ran per vertex over all). */
+type BridgeGrid = { x0: number; z0: number; cell: number; nx: number; nz: number; cells: Map<number, number[]>; length: number };
+const bridgeGrids = new WeakMap<Float32Array, BridgeGrid>();
+
+function bridgeGrid(bridges: Float32Array): BridgeGrid {
+  const known = bridgeGrids.get(bridges);
+  if (known && known.length === bridges.length) return known;
+  let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity, widest = 0;
+  for (let i = 0; i < bridges.length; i += BRIDGE_STRIDE) {
+    const pad = bridges[i + 4] * MAX_WIDEN;
+    widest = Math.max(widest, pad);
+    x0 = Math.min(x0, bridges[i] - pad, bridges[i + 2] - pad); x1 = Math.max(x1, bridges[i] + pad, bridges[i + 2] + pad);
+    z0 = Math.min(z0, bridges[i + 1] - pad, bridges[i + 3] - pad); z1 = Math.max(z1, bridges[i + 1] + pad, bridges[i + 3] + pad);
+  }
+  const cell = Math.max(widest * 2, (x1 - x0) / 96, (z1 - z0) / 96, 1e-9);
+  const nx = Math.max(1, Math.ceil((x1 - x0) / cell)), nz = Math.max(1, Math.ceil((z1 - z0) / cell));
+  const cells = new Map<number, number[]>();
+  for (let i = 0; i < bridges.length; i += BRIDGE_STRIDE) {
+    const pad = bridges[i + 4] * MAX_WIDEN;
+    const cx0 = Math.floor((Math.min(bridges[i], bridges[i + 2]) - pad - x0) / cell), cx1 = Math.floor((Math.max(bridges[i], bridges[i + 2]) + pad - x0) / cell);
+    const cz0 = Math.floor((Math.min(bridges[i + 1], bridges[i + 3]) - pad - z0) / cell), cz1 = Math.floor((Math.max(bridges[i + 1], bridges[i + 3]) + pad - z0) / cell);
+    for (let cx = Math.max(0, cx0); cx <= Math.min(nx - 1, cx1); cx++) {
+      for (let cz = Math.max(0, cz0); cz <= Math.min(nz - 1, cz1); cz++) {
+        const key = cz * nx + cx;
+        const list = cells.get(key);
+        if (list) list.push(i); else cells.set(key, [i]);
+      }
+    }
+  }
+  const grid = { x0, z0, cell, nx, nz, cells, length: bridges.length };
+  bridgeGrids.set(bridges, grid);
+  return grid;
+}
+
 /** Deck height if (x, z) lies on a bridge, else null. `widen` expands the ribbon (buildings need more than the car). */
 export function bridgeDeck(bridges: Float32Array, x: number, z: number, widen = 1.2): number | null {
+  if (!bridges.length) return null;
+  const grid = bridgeGrid(bridges);
+  const cx = Math.floor((x - grid.x0) / grid.cell), cz = Math.floor((z - grid.z0) / grid.cell);
+  if (cx < 0 || cz < 0 || cx >= grid.nx || cz >= grid.nz) return null;
+  const list = grid.cells.get(cz * grid.nx + cx);
+  if (!list) return null;
   let deck: number | null = null;
-  for (let i = 0; i < bridges.length; i += BRIDGE_STRIDE) {
+  for (const i of list) {
     const ax = bridges[i], az = bridges[i + 1], bx = bridges[i + 2], bz = bridges[i + 3], half = bridges[i + 4];
     const dx = bx - ax, dz = bz - az;
     const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz || 1)));
