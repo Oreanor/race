@@ -138,10 +138,23 @@ export class BuildingCollisions {
     return best;
   }
 
-  /** A building stands on the straight line between two points (sampled every 2 m; for shots). */
+  /**
+   * One step of the swept test. The three body probes span the car plus its
+   * widest scale, so `step` must stay below the narrowest façade the engine can
+   * ever put in this set — otherwise a long leap (frame hitch, tow, launch) can
+   * land all probes on the far side of a wall and read as clear air.
+   */
+  private static readonly STEP = 0.3;
+
+  private samples(from: Point, to: Point, step = BuildingCollisions.STEP) {
+    const distance = Math.hypot(to[0] - from[0], to[1] - from[1]);
+    return Math.max(1, Math.ceil(distance / step));
+  }
+
+  /** A building stands on the straight line between two points (for shots). */
   sightBlocked(from: Position, to: Position) {
     const a = this.local(from), b = this.local(to);
-    const count = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / 2));
+    const count = this.samples(a, b, 2);
     for (let step = 1; step < count; step++) {
       const t = step / count;
       const point: Point = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
@@ -181,7 +194,7 @@ export class BuildingCollisions {
   }
 
   private hits(from: Point, to: Point, heading: number, scale: number, altitude: number) {
-    const count = Math.max(1, Math.ceil(Math.hypot(to[0] - from[0], to[1] - from[1]) / 0.4));
+    const count = this.samples(from, to);
     const startDepth = this.depth(from, heading, scale, altitude);
     for (let step = 0; step <= count; step++) {
       const t = step / count;
@@ -195,7 +208,7 @@ export class BuildingCollisions {
 
   private deepens(from: Point, to: Point, heading: number, scale: number, altitude: number) {
     const start = this.depth(from, heading, scale, altitude);
-    const count = Math.max(1, Math.ceil(Math.hypot(to[0] - from[0], to[1] - from[1]) / 0.4));
+    const count = this.samples(from, to);
     for (let step = 1; step <= count; step++) {
       const t = step / count;
       const point: Point = [from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t];
@@ -324,7 +337,7 @@ export class BuildingCollisions {
   }
 
   private slide(from: Point, to: Point, heading: number, scale: number, altitude: number) {
-    const count = Math.max(1, Math.ceil(Math.hypot(to[0] - from[0], to[1] - from[1]) / 0.4));
+    const count = this.samples(from, to);
     let normal: Point | null = null;
     let sink = 0;
     for (let step = 0; step <= count; step++) {

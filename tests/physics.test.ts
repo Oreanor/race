@@ -127,6 +127,16 @@ test('ferrari pulls hardest, ford stays fast, howler is slower but not flat',()=
 });
 test('wall contact and courtyard geometry',()=>{const p:[number,number][][]=[[[0,0],[10,0],[10,10],[0,10],[0,0]],[[3,3],[7,3],[7,7],[3,7],[3,3]]];assert.equal(circleHitsPolygon([-0.5,5],1,p),true);assert.equal(circleHitsPolygon([-2,5],1,p),false);assert.equal(circleHitsPolygon([5,5],1,p),false);assert.equal(circleHitsPolygon([1,1],.5,p),true);});
 test('swept collision prevents tunneling in both directions',()=>{const c=new BuildingCollisions();c.update([0,0],[[[[.0001,-.0001],[.00012,-.0001],[.00012,.0001],[.0001,.0001],[.0001,-.0001]]]]);assert.equal(c.blocked([0,0],[.0002,0],Math.PI/2),true);assert.equal(c.blocked([.0002,0],[0,0],Math.PI/2),true);assert.equal(c.blocked([0,.001],[.0002,.001],0),false);});
+test('swept collisions keep sampling on arbitrarily long frames',()=>{
+  const collision=new BuildingCollisions();
+  const meters=111319.49;
+  const thin: [number,number][][]=[[[4.75/meters,-5/meters],[5.25/meters,-5/meters],[5.25/meters,5/meters],[4.75/meters,5/meters],[4.75/meters,-5/meters]]];
+  collision.update([0,0],[thin]);
+  assert.equal(collision.blocked([0,0],[1000/meters,0],Math.PI/2),true,'a 1 km frame cannot jump the wall');
+  assert.equal(collision.blocked([1000/meters,0],[0,0],Math.PI/2),true,'and it works in reverse');
+  // the sweep's far half sits at 500 m: lateral probe reach never touches this wall there
+  assert.equal(collision.blocked([0,500/meters],[1000/meters,500/meters],Math.PI/2),false,'far from the wall still clear');
+});
 test('a car overlapping a building can move out but not deeper into it',()=>{
   const collision=new BuildingCollisions();
   const meters=111319.49;
@@ -168,6 +178,30 @@ test('building collision footprint grows with the car scale',()=>{
   assert.equal(collision.blocked([0,0],[0,2/meters],0,2),true);
 });
 
+test('a car cannot pass through a building during a hitch leap',()=>{
+  const collision=new BuildingCollisions();
+  const meters=111319.49;
+  const house: [number,number][][]=[[[12/meters,-20/meters],[32/meters,-20/meters],[32/meters,20/meters],[12/meters,20/meters],[12/meters,-20/meters]]];
+  collision.update([0,0],[house]);
+  const heading=Math.PI/2;
+  const start:[number,number]=[0,0];
+  // 300 km/h is 1.4 m per 60 Hz step; a 0.3 s hitch turns it into a 25 m leap
+  assert.equal(collision.blocked(start,[25/meters,0],heading),true,'the leap still meets the wall');
+});
+test('a fast car cannot tunnel a broad house at a frame hitch',()=>{
+  const collision=new BuildingCollisions();
+  const meters=111319.49;
+  const house: [number,number][][]=[[[12/meters,-20/meters],[32/meters,-20/meters],[32/meters,20/meters],[12/meters,20/meters],[12/meters,-20/meters]]];
+  collision.update([0,0],[house]);
+  const heading=Math.PI/2;
+  const step=300/3.6*0.1;
+  let at:[number,number]=[0,0];
+  for(let i=0;i<30;i++){
+    const next:[number,number]=[at[0]+step/meters,0];
+    at=collision.resolve(at,next,heading).position as [number,number];
+  }
+  assert.ok(at[0]<12/meters,`ended at ${at[0]*meters} m`);
+});
 test('a car clears a building only above its roof skin', () => {
   const collision = new BuildingCollisions();
   const meters = 111319.49;
