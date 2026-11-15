@@ -65,6 +65,12 @@ export type WorldBuildOptions = {
   grid: number;
   /** country: biases building styles like the old detailed layer */
   region: string;
+  /**
+   * The vector tiles around this one (dx, dy ∈ -1..1): their roads and railways go into
+   * the bridge plan, so a bridge crossing the tile edge gets the same heights on both
+   * sides. Without them each tile plans alone (and patches its edges).
+   */
+  neighbours?: { dx: number; dy: number; buffer: ArrayBuffer }[];
 };
 
 /**
@@ -306,6 +312,48 @@ function clipSegmentBox(ax: number, ay: number, bx: number, by: number, lo: numb
 }
 
 /** Liang–Barsky: clip segment to the tile square [0, extent]². */
+/** A polyline cut to the box [x0, x1] × [y0, y1], as the runs inside it (clip points rounded so both tiles agree). */
+function clipLineBox(line: XY[], x0: number, y0: number, x1: number, y1: number): XY[][] {
+  const out: XY[][] = [];
+  let run: XY[] | null = null;
+  const snap = (v: number) => Math.round(v * 8) / 8;
+  for (let i = 0; i + 1 < line.length; i++) {
+    const a = line[i], b = line[i + 1];
+    let t0 = 0, t1 = 1;
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const p = [-dx, dx, -dy, dy], q = [a.x - x0, x1 - a.x, a.y - y0, y1 - a.y];
+    let inside = true;
+    for (let k = 0; k < 4; k++) {
+      if (p[k] === 0) { if (q[k] < 0) { inside = false; break; } continue; }
+      const t = q[k] / p[k];
+      if (p[k] < 0) { if (t > t1) { inside = false; break; } if (t > t0) t0 = t; }
+      else { if (t < t0) { inside = false; break; } if (t < t1) t1 = t; }
+    }
+    if (!inside) { run = null; continue; }
+    const s0 = t0 > 0 ? { x: snap(a.x + dx * t0), y: snap(a.y + dy * t0) } : a;
+    const s1 = t1 < 1 ? { x: snap(a.x + dx * t1), y: snap(a.y + dy * t1) } : b;
+    if (!run || t0 > 0) { run = [s0]; out.push(run); }
+    run.push(s1);
+    if (t1 < 1) run = null;
+  }
+  return out.filter((r) => r.length >= 2);
+}
+
+/**
+ * This tile's ways cut to its own square, with the neighbours' ways (cut to their own
+ * squares and to a band `margin` wide round ours) in our frame: no way drawn twice, and
+ * the pieces of one road meet exactly at the tile edges. Neighbour ids from 1e7 up.
+ */
+function waysInContext(ways: Map<number, Way>, extra: Map<number, Way>, extent: number): Map<number, Way> {
+  const out = new Map<number, Way>();
+  for (const [i, way] of ways) {
+    const lines = way.lines.flatMap((line) => clipLineBox(line, 0, 0, extent, extent));
+    if (lines.length) out.set(i, { ...way, lines });
+  }
+  for (const [i, way] of extra) out.set(i, way);
+  return out;
+}
+
 function clipSegment(ax: number, ay: number, bx: number, by: number, extent: number): [number, number, number, number] | null {
   return clipSegmentBox(ax, ay, bx, by, 0, extent);
 }
@@ -367,7 +415,11 @@ type Deck = { pts: Pt[]; s: number[]; h: number[]; bed: number[]; length: number
 type Need = { s: number; h: number };
 
 /** A road or railway in the tile: its lines, whether it is a bridge, and its level (OSM layer). */
-type Way = { lines: XY[][]; bridge: boolean; level: number; /** paths, steps, platforms: nothing to clear over */ foot: boolean };
+type Way = {
+  lines: XY[][]; bridge: boolean; level: number; /** paths, steps, platforms: nothing to clear over */ foot: boolean;
+  /** a neighbour's way: the half width its deck has (m), for the car on our side of the edge */
+  half?: number;
+};
 
 /** How a way is drawn: lifted parts as decks, the rest on the ground as usual. */
 type Planned = { decks: Deck[]; rest: XY[][] };
@@ -589,8 +641,11 @@ function transportWays(layer: VectorTile['layers'][string]): Map<number, Way> {
  * Two rounds let bridges that meet end to end share their heights. A road that
  * reaches a lifted bridge end climbs to it as a ramp on the same kind of deck.
  */
-export function planBridges(ways: Map<number, Way>, extent: number, span: number, at: Surfaces): Map<number, Planned> {
+export function planBridges(ownWays: Map<number, Way>, extent: number, span: number, at: Surfaces, extra?: Map<number, Way>): Map<number, Planned> {
   const k = span / extent;
+  // with the neighbours' ways the plan sees past the edge: no edge patching needed after
+  const context = !!extra?.size;
+  const ways = context ? waysInContext(ownWays, extra!, extent) : ownWays;
   const toM = (p: XY): Pt => [p.x * k, p.y * k];
   const key = (p: XY) => p.x + ',' + p.y;
   // how many lines pass through each point: a bridge end on one line only continues nowhere
@@ -663,7 +718,7 @@ export function planBridges(ways: Map<number, Way>, extent: number, span: number
     const clipped = decks.flatMap((d) => clipDeck(d, span, at, seamPad));
     // tile-border tips must use the same formula on both sides — in-tile `needs`
     // were lifting one half and leaving a step / hole at the seam
-    for (const d of clipped) sealDeckBorderTips(d, span, at);
+    if (!context) for (const d of clipped) sealDeckBorderTips(d, span, at);
     plan.set(i, { decks: clipped, rest: [] });
   }
   // approach ramps: ground ways meeting a bridge end that stands above the ground
@@ -690,7 +745,7 @@ export function planBridges(ways: Map<number, Way>, extent: number, span: number
           const deck: Deck = { pts: run, s: sr, h: run.map(([x, z], m) => at.driveAt(x, z) + lift[start + m]), bed: run.map(([x, z]) => at.groundAt(x, z)), length: sr[sr.length - 1] };
           // same seam pad as bridge decks — flush-cut ramps left a step at the tile edge
           const pieces = clipDeck(deck, span, at, seamPad);
-          for (const d of pieces) sealDeckBorderTips(d, span, at);
+          if (!context) for (const d of pieces) sealDeckBorderTips(d, span, at);
           planned.decks.push(...pieces);
         } else planned.rest.push(run.map(([x, z]) => ({ x: x / k, y: z / k })));
         start = n;
@@ -710,6 +765,12 @@ export function planBridges(ways: Map<number, Way>, extent: number, span: number
   // facing stubs across a small air gap (split ways inside the tile): meet mid-way.
   // Border tips stay put — the neighbour tile owns the other half of that seam.
   closeFacingDeckGaps(plan, at.toMerc, span);
+  if (context) {
+    // planned with the neighbours: heights already agree across the edge. Their decks stay
+    // in the plan only where they reach our edge (clipDeck padded them): the car on our
+    // side of a ribbon that lies across the edge still has the deck under it
+    return plan;
+  }
   // OSM ways that stop a few metres short of the tile edge leave an air gap with
   // the neighbour — pull those tips onto the shared square before resealing.
   extendNearBorderTips(plan, span, at.toMerc);
@@ -1100,7 +1161,14 @@ function deckRibbon(builder: RoadBuilder, deck: Pick<Deck, 'pts' | 'h'>, half: n
     const dx = bx - ax, dz = bz - az, len2 = dx * dx + dz * dz || 1;
     builder.groundAt = (x, z) => ha + (hb - ha) * Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / len2));
     builder.segment(ax, az, bx, bz, half, y, rgb);
-    if (joints && i + 1 < deck.pts.length) builder.disc(bx, bz, half, y, rgb, joints);
+    // the join with the next piece: a wedge on the outer side of the bend, level with the
+    // joint — a flat round disc there stuck up through the next (sloping) piece, a row of
+    // scales along every ramp
+    if (joints && i + 1 < deck.pts.length) {
+      const [cx, cz] = deck.pts[i + 1];
+      builder.groundAt = () => hb;
+      builder.bevel(bx, bz, bx - ax, bz - az, cx - bx, cz - bz, half, y, rgb);
+    }
   }
   builder.groundAt = saved;
 }
@@ -1586,7 +1654,33 @@ function hedgeLawns(plants: { x: number; z: number; species: string; yaw: number
   return out;
 }
 
-function roadMesh(vt: VectorTile, span: number, grid: number, at: Surfaces, bridges: number[], pitchLines: number[] = [], lawns: number[] = []): MeshData {
+/** the share of a tile round ours whose neighbour roads go into the bridge plan */
+const CONTEXT_MARGIN = 0.25;
+
+/** The neighbours' roads and railways in our tile frame: cut to their own squares and to a band round ours. */
+function neighbourWays(neighbours: { dx: number; dy: number; vt: VectorTile }[], extent: number): Map<number, Way> {
+  const out = new Map<number, Way>();
+  const m = extent * CONTEXT_MARGIN;
+  neighbours.forEach(({ dx, dy, vt }, n) => {
+    const layer = vt.layers.transportation;
+    if (!layer) return;
+    const scale = extent / layer.extent;
+    for (const [i, way] of transportWays(layer)) {
+      const lines = way.lines
+        .flatMap((line) => clipLineBox(line, 0, 0, layer.extent, layer.extent))
+        .map((line) => line.map((p) => ({ x: (p.x + dx * layer.extent) * scale, y: (p.y + dy * layer.extent) * scale })))
+        .flatMap((line) => clipLineBox(line, -m, -m, extent + m, extent + m));
+      if (!lines.length) continue;
+      const p = layer.feature(i).properties;
+      const style = roadStyle(String(p.class ?? ''), String(p.subclass ?? ''), Number(p.ramp) === 1);
+      const half = style ? style.width / 2 + 0.18 + (style.width < 1.5 ? 0.35 : DECK_SHOULDER) : railKind(p)?.tram ? 2.1 : RAIL_DECK_HALF;
+      out.set(1e7 * (n + 1) + i, { ...way, lines, half });
+    }
+  });
+  return out;
+}
+
+function roadMesh(vt: VectorTile, span: number, grid: number, at: Surfaces, bridges: number[], pitchLines: number[] = [], lawns: number[] = [], neighbours: { dx: number; dy: number; vt: VectorTile }[] = []): MeshData {
   const towerSpots = new Set<string>();
   const { driveAt, groundAt: bedAt } = at;
   const builder = new RoadBuilder(driveAt, span / grid, grid);
@@ -1606,7 +1700,14 @@ function roadMesh(vt: VectorTile, span: number, grid: number, at: Surfaces, brid
     const through = new Set<string>();
     for (const way of ways.values()) for (const line of way.lines) for (let n = 1; n + 1 < line.length; n++) through.add(line[n].x + ',' + line[n].y);
     // bridges, overpasses and their ramps, worked out once for rails and both road passes
-    const plan = planBridges(ways, layer.extent, span, at);
+    const extra = neighbours.length ? neighbourWays(neighbours, layer.extent) : undefined;
+    const plan = planBridges(ways, layer.extent, span, at, extra);
+    // a neighbour's deck that reaches our edge: not drawn here (its tile draws it), but the
+    // car on our side of the edge drives on it
+    if (extra) for (const [id, planned] of plan) {
+      const half = extra.get(id)?.half;
+      if (half != null) for (const deck of planned.decks) pushDeck(bridges, deck, half * toMerc);
+    }
     railTracks(builder, layer, k, at, bridges, ways, plan);
     // the drawn roads round their corners (the plan's lines stay as they are for the rest)
     const drawn = roundedRoadLines(ways, plan, toMerc / k);
@@ -1632,8 +1733,9 @@ function roadMesh(vt: VectorTile, span: number, grid: number, at: Surfaces, brid
             deckStructure(builder, deck, edge, toMerc, plan, i);
             // footbridges: stair towers where an end hangs in the air
             if (style.width < 1.5) stairTowers(builder, deck, toMerc, span, towerSpots, plan);
-            // round joins on the concrete edge too — otherwise bends show a notch
-            deckRibbon(builder, deck, edge, y - 0.01, CONCRETE, 6);
+            // the shoulders out to the parapets in the carriageway's own asphalt (one surface,
+            // the casing reads as the edge line); round joins as smooth as the road's
+            deckRibbon(builder, deck, edge, y - 0.01, hex(style.fill), steps);
           } else pushDeck(bridges, deck, edge);
           deckRibbon(builder, deck, half, y, rgb, steps);
         }
@@ -1927,7 +2029,11 @@ export function buildWorldTile(buffer: ArrayBuffer, tile: TileId, options: World
   // the planted streets, once: the trees and hedges for the vegetation, and the strip of
   // lawn a hedge stands on for the road mesh
   const streets = planStreets(corner, span, metersScale, features as unknown as Record<string, MapFeature[]>);
-  const roads = roadMesh(vt, span, options.grid, { driveAt, groundAt, waterAt, toMerc: 1 / metersScale }, bridgeList, furniture.lines, hedgeLawns(streets.plants, 1 / metersScale));
+  // the tiles around: their roads go into the bridge plan (an unreadable one is left out)
+  const around = (options.neighbours ?? []).flatMap(({ dx, dy, buffer: b }) => {
+    try { return b.byteLength ? [{ dx, dy, vt: new VectorTile(new PbfReader(new Uint8Array(b))) }] : []; } catch { return []; }
+  });
+  const roads = roadMesh(vt, span, options.grid, { driveAt, groundAt, waterAt, toMerc: 1 / metersScale }, bridgeList, furniture.lines, hedgeLawns(streets.plants, 1 / metersScale), around);
   // streams sit on the water surface — following the carved bed made torn blue ribbons
   const streamAt = (x: number, z: number) => {
     const g = groundAt(x, z);

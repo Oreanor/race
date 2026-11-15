@@ -64,7 +64,7 @@ function cachedVector(url: string) {
   if (cached) { vectors.delete(url); vectors.set(url, cached); return cached; }
   const request = loadVector(url, AbortSignal.timeout(15000)).catch(error => { vectors.delete(url); throw error; });
   vectors.set(url, request);
-  while (vectors.size > 32) vectors.delete(vectors.keys().next().value!);
+  while (vectors.size > 48) vectors.delete(vectors.keys().next().value!);
   return request;
 }
 
@@ -102,9 +102,19 @@ scope.onmessage = async (event: MessageEvent<Request>) => {
         return { tile, buffer: await cachedVector(url) };
       })));
     }
+    // the eight tiles around: their roads go into the bridge plan, so a bridge over the
+    // edge has the same heights on both sides (one that fails to load is left out)
+    const neighbours = message.vectorTemplate
+      ? (await Promise.all([-1, 0, 1].flatMap((dy) => [-1, 0, 1].map(async (dx) => {
+        if (!dx && !dy) return null;
+        const tile = { z: message.tile.z, x: message.tile.x + dx, y: message.tile.y + dy };
+        const url = message.vectorTemplate!.replace('{z}', String(tile.z)).replace('{x}', String(tile.x)).replace('{y}', String(tile.y));
+        try { return { dx, dy, buffer: (await cachedVector(url)).slice(0) }; } catch { return null; }
+      })))).filter((n): n is { dx: number; dy: number; buffer: ArrayBuffer } => !!n)
+      : [];
     const fetchMs = performance.now() - started;
     if (controller.signal.aborted) return;
-    const data = buildWorldTile(buffer.slice(0), message.tile, { ...message.options, dem, buildingAssemblies });
+    const data = buildWorldTile(buffer.slice(0), message.tile, { ...message.options, dem, buildingAssemblies, neighbours });
 
     scope.postMessage(
       { id: message.id, ok: true, data, fetchMs, buildMs: performance.now() - started - fetchMs },
