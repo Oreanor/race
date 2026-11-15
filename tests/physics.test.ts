@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveVehicleCollision, VehicleController } from '../src/game/VehicleController.ts';
+import { resolveVehicleCollision, vehicleImpact, vehicleWidth, VehicleController } from '../src/game/VehicleController.ts';
 import { VehiclePose } from '../src/game/VehiclePose.ts';
 
 test('render motion is uniform across 60, 120 and 144 Hz frames', () => {
@@ -73,6 +73,28 @@ test('player brake: S held from forward stops and holds; a fresh press backs up'
   assert.equal(v.speed,-config.reverseSpeed);
 });
 test('bots keep S as brake into reverse',()=>{const v=new VehicleController([0,40],0);for(let i=0;i<120;i++)v.step(1/60,new Set(['KeyW']),config);for(let i=0;i<600;i++)v.step(1/60,new Set(['KeyS']),config);assert.ok(v.speed<0);});
+
+test('a fresh S press brakes reverse and holds zero until released', () => {
+  const v = new VehicleController([0, 40], 0); v.stopBeforeReverse = true;
+  for (let i = 0; i < 120; i++) v.step(1 / 60, new Set(['KeyS']), config);
+  assert.ok(v.speed < -2);
+  v.step(1 / 60, new Set(), config);
+  for (let i = 0; i < 180; i++) v.step(1 / 60, new Set(['KeyS']), config);
+  assert.equal(v.speed, 0);
+  v.step(1 / 60, new Set(), config);
+  v.step(1 / 60, new Set(['KeyS']), config);
+  assert.ok(v.speed < 0, 'another fresh press starts reverse from rest');
+});
+
+test('a bus and a car fit in opposing lanes without a five-metre bus collider', () => {
+  assert.equal(vehicleWidth(11), 2.6);
+  assert.equal(resolveVehicleCollision(
+    { position: [-1.5 / 111319.49, 0], heading: 0, speed: 10, length: 11 },
+    { position: [1.5 / 111319.49, 0], heading: Math.PI, speed: 10, length: 4.5 },
+  ), null);
+  assert.equal(vehicleImpact({ heading: 0, speed: 20 }, { heading: 0, speed: 20 }), 0);
+  assert.equal(vehicleImpact({ heading: 0, speed: 20 }, { heading: Math.PI, speed: 20 }), 40);
+});
 test('space holds a fifty percent faster cap',()=>{const v=new VehicleController([0,40],0);for(let i=0;i<800;i++)v.step(1/60,new Set(['KeyW']),config);assert.equal(v.speed,config.maxSpeed);for(let i=0;i<800;i++)v.step(1/60,new Set(['KeyW','Space']),config);assert.equal(v.speed,config.maxSpeed*1.5);v.step(1/60,new Set(['KeyW']),config);assert.equal(v.speed,config.maxSpeed);});
 test('clutch holds the car and builds revs at a standstill',()=>{
   const v=new VehicleController([0,40],0);
@@ -179,7 +201,7 @@ test('a car clears a building only above its roof skin', () => {
   assert.ok(eave! < 8.4 && ridge! > 9.6, `eave ${eave} ridge ${ridge}`);
 });
 
-import { supportAltitude } from '../src/game/groundSupport.ts';
+import { fallingVehicle, leavesSupport, supportAltitude } from '../src/game/groundSupport.ts';
 import { healthColor } from '../src/game/health.ts';
 import { Euler, Vector3 } from 'three';
 test('health colors switch at the two thirds and one third thresholds', () => {
@@ -190,7 +212,17 @@ test('health colors switch at the two thirds and one third thresholds', () => {
   assert.equal(healthColor(0, 1000), 'red');
 });
 
-import { advanceTrafficBot, createTrafficBot, TrafficRoadNetwork } from '../src/game/TrafficBots.ts';
+import { advanceTrafficBot, createTrafficBot, trafficLanePoint, TrafficRoadNetwork } from '../src/game/TrafficBots.ts';
+import { roadDeckHalf, roadStyle } from '../src/world3d/tiles/roadStyle.ts';
+
+test('roads widen for two vehicles and opposing bots choose separate lane sides', () => {
+  const road = roadStyle('minor', '', false)!;
+  assert.ok(road.width >= 6.2);
+  assert.ok(roadDeckHalf(road) * 2 > road.width);
+  assert.ok(roadStyle('path', 'footway', false)!.width < 1.5);
+  assert.ok(trafficLanePoint([0, 0], [0.001, 0])[1] < 0, 'eastbound keeps south of the axis');
+  assert.ok(trafficLanePoint([0.001, 0], [0, 0])[1] > 0, 'westbound keeps north of the axis');
+});
 
 test('terrain support keeps wheels and belly above slopes even while tilt is catching up', () => {
   for (const pitch of [-0.3, 0, 0.3]) for (const roll of [-0.25, 0, 0.25]) {
@@ -205,6 +237,20 @@ test('terrain support keeps wheels and belly above slopes even while tilt is cat
       assert.ok(altitude+point.y >= sample.height-1e-9);
     }
   }
+});
+
+test('a large drop starts gravity even when the car is stopped or reversing slowly', () => {
+  for (const speed of [0, 0.2, 3, 20]) assert.equal(leavesSupport(12, 0, 0, 1 / 60, speed, false), true);
+  assert.equal(leavesSupport(12, 11.9, 0, 1 / 60, 0, false), false, 'small curb stays supported');
+});
+
+test('other vehicles fall continuously and land without floating or snapping down', () => {
+  let altitude = 12, velocity = 0;
+  let first = fallingVehicle(altitude, velocity, 0, 1 / 60);
+  assert.ok(first.altitude < 12 && first.altitude > 11.9);
+  for (let i = 0; i < 120; i++) ({ altitude, velocity } = fallingVehicle(altitude, velocity, 0, 1 / 60));
+  assert.equal(altitude, 0); assert.equal(velocity, 0);
+  assert.equal(fallingVehicle(12, 0, null, 1 / 60).altitude, 12, 'unknown tiles provide no invented drop');
 });
 
 test('traffic bots follow connected road geometry using vehicle physics', () => {

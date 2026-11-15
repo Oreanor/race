@@ -10,6 +10,7 @@ import { METERS_PER_DEGREE, offsetPosition, type Position } from '@/game/Vehicle
 import { BATMOBILE_ID, FAMILY_SEDAN_ID } from '@/game/tuning';
 
 import type { Pose } from '@/game/VehiclePose';
+import { fallingVehicle } from '../game/groundSupport.ts';
 import { t } from '@/i18n';
 import {
   DROP_MS,
@@ -61,6 +62,8 @@ type TargetState = TargetVehicle & {
   wreckRestY: number;
   /** the ground under it (m), its own: a bot under a bridge stays under it */
   altitude: number | null;
+  fallVelocity: number;
+  waterSink: number | null;
   /** its model is in (the real one, or the stand-in if that failed) */
   loaded: boolean;
   /** fading in: since when (null until it has settled on its ground) */
@@ -410,7 +413,7 @@ export function vehicleLayer(
    * under it on the road below. A wreck stays where it fell.
    */
   function targetLift(target: TargetState) {
-    if (!target.destroyed || target.altitude == null) {
+    if (target.altitude == null) {
       // first look: our own height as the hint (targets appear near us)
       const ground = map.groundAt(target.position, target.altitude ?? undefined);
       if (ground != null) target.altitude = ground;
@@ -452,11 +455,11 @@ export function vehicleLayer(
     target.root.quaternion.copy(target.wreckQuat).premultiply(wreckYawScratch);
   }
 
-  function destroyTarget(target: TargetState, now: number, here: Position, heading: number) {
+  function destroyTarget(target: TargetState, now: number, here: Position, heading: number, reward = true) {
     target.destroyed = true;
     // a wreck's police lights go out
     target.root.traverse((child) => { if (child.userData.beacon) child.visible = false; });
-    targetDestroyedHandler(target.id, [...target.position] as Position);
+    targetDestroyedHandler(target.id, [...target.position] as Position, reward);
     target.deathPhase = 'tumble';
     target.root.visible = true;
     target.explodedAt = now;
@@ -489,7 +492,7 @@ export function vehicleLayer(
   let remoteHitHandler: (id: string) => boolean = () => false;
   /** set by the game: our bullet hit a target */
   let targetHitHandler: (id: string) => void = () => {};
-  let targetDestroyedHandler: (id: string, position: Position) => void = () => {};
+  let targetDestroyedHandler: (id: string, position: Position, reward?: boolean) => void = () => {};
   let shotHandler: (kind: 'gun' | 'water') => void = () => {};
   /** pickups just taken: hop up, spin, fall to the road and vanish */
   const popping: { position: Position; mesh: THREE.Object3D; ground: number | null; born: number; phase: number; instanced: boolean }[] = [];
@@ -637,7 +640,7 @@ export function vehicleLayer(
         ...spec, root, explosion, shadow: makeShadow(spec.car.length, spec.car.length * 0.44), hp: targetMaxHp,
         destroyed: false, deathPhase: null, explodedAt: 0, flashUntil: 0, flashing: false,
         spinX: 0, spinY: 0, spinZ: 0, velUp: 0, blastsLeft: 0, nextBlastAt: 0, charMats: [],
-        wreckQuat: null, wreckBakeHeading: 0, wreckRestY: 0.45, altitude: null,
+        wreckQuat: null, wreckBakeHeading: 0, wreckRestY: 0.45, altitude: null, fallVelocity: 0, waterSink: null,
         loaded: false, shownAt: null, fadeMats: null,
       };
       targets.set(spec.id, target);
@@ -1254,21 +1257,21 @@ export function vehicleLayer(
     get onShotCoins() { return shotCoinHandler; },
     set onShotCoins(handler: (from: Position, fromAlt: number, to: Position, toAlt: number) => void) { shotCoinHandler = handler; },
     get onTargetDestroyed() { return targetDestroyedHandler; },
-    set onTargetDestroyed(handler: (id: string, position: Position) => void) { targetDestroyedHandler = handler; },
+    set onTargetDestroyed(handler: (id: string, position: Position, reward?: boolean) => void) { targetDestroyedHandler = handler; },
     setRemotes,
     updateTargets,
     flashTarget(id, duration) {
       const target = targets.get(id);
       if (target && !target.destroyed) target.flashUntil = Math.max(target.flashUntil, performance.now() + duration);
     },
-    damageTarget(id, amount) {
+    damageTarget(id, amount, reward = true) {
       const target = targets.get(id);
       if (!target || target.destroyed || amount <= 0) return false;
       target.hp = Math.max(0, target.hp - amount);
       target.flashUntil = Math.max(target.flashUntil, performance.now() + 160);
       if (target.hp === 0) {
         const here = vehicle.position;
-        destroyTarget(target, performance.now(), here, vehicle.heading);
+        destroyTarget(target, performance.now(), here, vehicle.heading, reward);
       }
       return true;
     },
@@ -1349,6 +1352,28 @@ export function vehicleLayer(
       const here = vehicle.position;
       const heading = vehicle.heading;
       const carAlt = height();
+      for (const target of targets.values()) {
+        if (carried?.id === target.id) continue;
+        if (target.waterSink != null) {
+          target.altitude = Math.max(target.waterSink - 3.2, (target.altitude ?? target.waterSink) - dt * 2);
+          continue;
+        }
+        if (target.destroyed || target.altitude == null) continue;
+        const ground = map.groundAt(target.position, target.altitude);
+        const fall = fallingVehicle(target.altitude, target.fallVelocity, ground, dt);
+        target.altitude = fall.altitude;
+        target.fallVelocity = fall.velocity;
+        const water = map.waterLevelAt(target.position);
+        if (water != null && ground != null && ground <= water + 0.15 && target.altitude <= water + 0.15) {
+          // A water landing is a sunken wreck, without an explosion or shot coins.
+          target.waterSink = water;
+          target.destroyed = true;
+          target.hp = 0;
+          target.deathPhase = 'wreck';
+          target.wreckRestY = 0;
+          target.root.traverse(child => { if (child.userData.beacon) child.visible = false; });
+        }
+      }
       fx.altitude = carAlt;
       // façade smoke is throttled — every window every frame was killing FPS
       if (burningHouse.placed && now - lastHouseFx > 90) {

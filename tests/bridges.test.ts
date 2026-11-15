@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
-import { planBridges } from '../src/world3d/tiles/worldTile.ts';
+import { driveTerrainHeight, planBridges } from '../src/world3d/tiles/worldTile.ts';
 import { planRoadNetwork, ROAD_GRADE, ROAD_CLEARANCE, type RoadWay } from '../src/world3d/tiles/roadNetwork.ts';
 import { buildRoadSurface, deckSections, deckSideOpening, surfaceHeight } from '../src/world3d/tiles/roadSurface.ts';
 
@@ -13,6 +13,12 @@ const flat = {
   waterAt: () => null as number | null,
   toMerc: 1,
 };
+
+test('smoothed bank heights cannot support cars above open water', () => {
+  assert.equal(driveTerrainHeight(-2.4, 15, 0), -0.12);
+  assert.equal(driveTerrainHeight(10, 10, null), 10);
+  assert.equal(driveTerrainHeight(5, 5, 0), 5, 'dry embankment stays solid');
+});
 
 function midHeight(plan: ReturnType<typeof planBridges>, id: number) {
   const deck = plan.get(id)?.decks[0];

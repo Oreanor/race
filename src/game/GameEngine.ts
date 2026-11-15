@@ -1,11 +1,11 @@
 import { roadStart } from './roadStart.ts';
 import { VehiclePose } from './VehiclePose.ts';
-import { supportAltitude, type GroundSample } from './groundSupport.ts';
+import { leavesSupport, supportAltitude, type GroundSample } from './groundSupport.ts';
 import { BuildingCollisions } from './BuildingCollisions.ts';
 import { WaterCollisionController, type MapFeature } from './WaterCollisionController.ts';
 import { mapConfig, cars as carsConfig, carPrice, GIFT_CARS, STARTING_CASH, type City, type Car, vehicleConfig } from '@/config/vehicle.config';
 import { cameraConfig, lookAheadFor, zoomForDistance } from '@/config/camera.config';
-import { VehicleController, bumpDamage, offsetPosition, resolveVehicleCollision, type Position } from './VehicleController.ts';
+import { VehicleController, bumpDamage, vehicleImpact, offsetPosition, resolveVehicleCollision, type Position } from './VehicleController.ts';
 import { GameAudio } from '@/audio/GameAudio';
 import { DROP_MS, vehicleLayer, type PickupVisual, type TargetVehicle, type VehicleSceneLayer } from '@/rendering/VehicleLayer';
 import {
@@ -739,9 +739,9 @@ export class GameEngine {
       this.combatLayer.onShotCoins = (from, fromAlt, to, toAlt) => this.shotCollectCoins(from, fromAlt, to, toAlt);
       this.combatLayer.onFireWindowOut = (left) => this.onFireWindowOut(left);
       this.combatLayer.onShot = (kind) => this.audio.shot(kind);
-      this.combatLayer.onTargetDestroyed = (id, position) => {
+      this.combatLayer.onTargetDestroyed = (id, position, reward = true) => {
         this.audio.explosion(position);
-        this.dropCoins(position);
+        if (reward) this.dropCoins(position);
         // a wrecked police car is simply out of the chase (no reinforcements out of nowhere)
       };
       this.map.addLayer(this.combatLayer);
@@ -1729,7 +1729,8 @@ export class GameEngine {
       this.vehicleContactTimes.set(key, now);
       // every knock that flashes a car red takes health off it: the slower side takes
       // the knock, a hunting bot ramming at speed hurts whoever it rams, and harder
-      const impact = Math.abs(a.controller.speed) + Math.abs(b.controller.speed);
+      const impact = vehicleImpact(a.controller, b.controller);
+      if (impact < 1.5) return;
       if (a.id === 'player' || b.id === 'player') this.audio.crash(impact / 40);
       const hunting = (id: string) => this.findBot(id)?.mood === 'hunt';
       const ramming = (id: string) => impact > 6 && hunting(id);
@@ -1739,7 +1740,7 @@ export class GameEngine {
         const amount = rammed ? Math.max(bumpDamage(impact), Math.min(55, 12 + impact * 2.2)) : bumpDamage(impact);
         if (victim.id === 'player') this.damagePlayer(amount, 180);
         else {
-          this.combatLayer?.damageTarget(victim.id, amount);
+          this.combatLayer?.damageTarget(victim.id, amount, attacker.id === 'player');
           // we hit them — they leave the route and come after us
           if (attacker.id === 'player') this.provoke(victim.id);
         }
@@ -2025,14 +2026,7 @@ export class GameEngine {
    * the deck ribbon at deck height, or the water edge walls off the on-ramp.
    */
   private onBridgeDeck(at: Position, altitude: number) {
-    if (this.map.isDeckAt(at, altitude)) return true;
-    // fallback: dual ground sample (older gap test) for odd cases
-    const low = this.map.groundAt(at);
-    if (low == null) return false;
-    const high = this.map.groundAt(at, altitude);
-    if (high == null) return false;
-    const gap = high - low;
-    return gap > 0.9 && altitude >= low + gap * 0.3 && Math.abs(altitude - high) < 2.5;
+    return this.map.isDeckAt(at, altitude);
   }
 
   /** Splash, sink under the surface, then appear on the nearest dry road. */
@@ -5673,12 +5667,15 @@ export class GameEngine {
         add(-reach, -track, rearLeft);
         add(-reach, track, rearRight);
         // Include the belly and bumpers when crossing a crest or a sharp bank.
-        add(0, 0, sample(0, 0));
+        const center = sample(0, 0);
+        add(0, 0, center);
         const bumper = this.car.length * 0.5;
         add(bumper, 0, sample(bumper, 0));
         add(-bumper, 0, sample(-bumper, 0));
         this.wheelTargets = {
-          altitude: supportAltitude(supports, pitch, roll),
+          // Once the centre of mass is outside the deck, a bumper or a wheel
+          // still over its edge cannot cantilever the entire car in the air.
+          altitude: center != null && this.altitude - center > 1 ? center : supportAltitude(supports, pitch, roll),
           pitch: this.settings.terrain ? pitch : 0,
           roll: this.settings.terrain ? roll : 0,
           ready: true,
@@ -5690,12 +5687,6 @@ export class GameEngine {
     const lift = this.driving ? this.rampLift(this.renderVehicle.position) : null;
     let ground = this.wheelTargets.altitude + (lift ?? 0);
     const speed = Math.abs(this.vehicle.speed);
-    // a deck seam can report the road/river under the bridge for one sample — don't dive
-    if (!this.airborne && this.altitude - ground > 2.4 && Math.abs(this.climb) < 5) {
-      const held = this.map.groundAt(this.vehicle.position, this.altitude);
-      if (held != null && this.altitude - held < 1.6) ground = held;
-      else if (this.onBridgeDeck(this.vehicle.position, this.altitude)) ground = this.altitude;
-    }
     if (this.hangAltitude != null) {
       // on the cable: held up there, no gravity
       this.altitude = this.hangAltitude;
@@ -5706,6 +5697,11 @@ export class GameEngine {
       return;
     }
     if (this.plunge) return;
+    if (!this.airborne && lift == null && this.altitude <= ground + 0.7
+      && !this.onBridgeDeck(this.vehicle.position, this.altitude) && this.water.covers(this.vehicle.position)) {
+      this.beginPlunge(ground);
+      return;
+    }
     if (this.airborne) {
       // flying: gravity only; the nose follows the flight path
       this.climb -= GRAVITY * dt;
@@ -5726,9 +5722,7 @@ export class GameEngine {
     }
     // the ground falls away faster than gravity can pull the car down: it flies
     const predicted = this.altitude + this.climb * dt - 0.5 * GRAVITY * dt * dt;
-    // (a drop of more than 2.4 m is a deck seam, not a cliff — except off a ramp's lip:
-    // a tall ramp over a river is 4–5 m up, and it must throw the car, not let it slide down)
-    if (speed > 5 && ground < predicted - 0.3 && (this.altitude - ground < 2.4 || this.wasOnRamp)) {
+    if (lift == null && leavesSupport(this.altitude, ground, this.climb, dt, speed, this.wasOnRamp)) {
       this.airborne = true;
       this.altitude = predicted;
       this.climb -= GRAVITY * dt;

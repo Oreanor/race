@@ -343,6 +343,11 @@ export class ThreeMap {
     const [lng, lat] = toLngLat(p);
     return this.world.isDeckAt(lng, lat, altitude);
   }
+  waterLevelAt(p: LngLatLike) {
+    if (!this.relief) return null;
+    const [lng, lat] = toLngLat(p);
+    return this.world.waterLevelAt(lng, lat);
+  }
   getCenterElevation() { return this.camera.state.elevation; }
   /** What the wheels are on at a point: paved, grass (and earth) or sand. */
   surfaceAt(p: LngLatLike) {

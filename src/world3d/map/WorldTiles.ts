@@ -5,7 +5,7 @@ import { PbfReader } from 'pbf';
 import type { ChunkData } from '../tiles/buildTile.ts';
 import { ROOF_STRIDE } from '../tiles/buildTile.ts';
 import type { GeoFeature, MeshData, WorldTileData } from '../tiles/worldTile.ts';
-import { gridGround, gridWaterLevel, pickDriveHeight } from '../tiles/worldTile.ts';
+import { driveTerrainHeight, gridGround, gridWaterLevel, pickDriveHeight } from '../tiles/worldTile.ts';
 import { surfaceHeight } from '../tiles/roadSurface.ts';
 import { tileTemplate } from '../tiles/tileSource.ts';
 import { tilesAround, tilesCovering, distanceToTile, type PlannedTile } from '../tiles/tilePlan.ts';
@@ -909,7 +909,7 @@ export class WorldTiles {
     let ground = gridGround(drive, this.options.grid, u, v);
     // carved baths are only visual — don't drop the car into a 2 m hole (launches on the way out)
     const water = gridWaterLevel(live.data.ground.waterLevel, this.options.grid, u, v);
-    if (water != null && ground < water - 0.4) ground = water - 0.12;
+    ground = driveTerrainHeight(gridGround(live.data.ground.heights, this.options.grid, u, v), ground, water);
     // The exact triangles drawn as pavement, including their shoulder widths and
     // bends. Select a storey with the car's height rather than always the top deck.
     const deck = surfaceHeight(live.data.roadSurface, x, z, atAltitude ?? ground + ROAD_TOP);
@@ -932,6 +932,16 @@ export class WorldTiles {
     if (deck - bed < 0.3) return false;
     // near the deck surface — under the bridge altitude is far below
     return altitude >= deck - 2.8 && altitude <= deck + 6;
+  }
+
+  /** Actual wet bed, as distinct from the dry-bank grid used for driving. */
+  waterLevelAt(lng: number, lat: number): number | null {
+    const live = this.liveAt(lng, lat);
+    if (!live) return null;
+    const span = tileSpan(live.tile.z), [cx, cy] = live.data.corner;
+    const u = (mercatorX(lng) - cx) / span, v = (cy - mercatorY(lat)) / span;
+    const water = gridWaterLevel(live.data.ground.waterLevel, this.options.grid, u, v);
+    return water != null && gridGround(live.data.ground.heights, this.options.grid, u, v) < water - 0.1 ? water : null;
   }
 
   /**

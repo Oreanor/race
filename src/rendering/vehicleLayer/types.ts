@@ -66,7 +66,7 @@ export type VehicleSceneLayer = MapLayer & {
   /** our bullet hit a target */
   onTargetHit: (id: string) => void;
   /** any target blew up (shot, rammed, or reported by its owner) */
-  onTargetDestroyed: (id: string, position: Position) => void;
+  onTargetDestroyed: (id: string, position: Position, reward?: boolean) => void;
   /** our bullet hit a vintage train here */
   onTrainCoin: (point: Position, altitude: number) => void;
   /** Family Sedan: collect road coins along this shot (muzzle → impact) */
@@ -81,7 +81,7 @@ export type VehicleSceneLayer = MapLayer & {
   plungeSplash: () => void;
   updateTargets: (vehicles: TargetVehicle[]) => void;
   flashTarget: (id: string, duration: number) => void;
-  damageTarget: (id: string, amount: number) => boolean;
+  damageTarget: (id: string, amount: number, reward?: boolean) => boolean;
   aliveTargetCount: () => number;
   isTargetAlive: (id: string) => boolean;
   targetHealth: () => TargetHealth[];

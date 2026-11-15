@@ -2,6 +2,13 @@ export type Position = [number, number];
 const radius = 6378137;
 export function offsetPosition(origin: Position, east: number, north: number): Position { return [origin[0]+east/(radius*Math.cos(origin[1]*Math.PI/180))*180/Math.PI, origin[1]+north/radius*180/Math.PI]; }
 export type VehicleBody = { position: Position; heading: number; speed: number; length: number };
+/** Long vehicles grow in length, not proportionally in width. */
+export function vehicleWidth(length: number) { return Math.min(2.6, Math.max(1.6, length * 0.45)); }
+
+export function vehicleImpact(a: { heading: number; speed: number; slip?: number }, b: { heading: number; speed: number; slip?: number }) {
+  const ah = a.heading - (a.slip ?? 0), bh = b.heading - (b.slip ?? 0);
+  return Math.hypot(Math.sin(ah) * a.speed - Math.sin(bh) * b.speed, Math.cos(ah) * a.speed - Math.cos(bh) * b.speed);
+}
 
 /**
  * Health a knock between two cars takes (out of 1000), from their speeds added up
@@ -25,8 +32,8 @@ export function resolveVehicleCollision(a: VehicleBody, b: VehicleBody, scale = 
   const axes = [forwardA, rightA, forwardB, rightB];
   const halfLengthA = a.length * scale * 0.5;
   const halfLengthB = b.length * scale * 0.5;
-  const halfWidthA = a.length * scale * 0.225;
-  const halfWidthB = b.length * scale * 0.225;
+  const halfWidthA = vehicleWidth(a.length) * scale * 0.5;
+  const halfWidthB = vehicleWidth(b.length) * scale * 0.5;
   let minimumOverlap = Infinity;
   let collisionAxis: [number, number] | null = null;
 
@@ -92,10 +99,13 @@ export class VehicleController {
   stopBeforeReverse = false;
   /** S is held since it was pressed rolling forward: stop, do not reverse */
   private braking = false;
+  private brakeHeld = false;
   constructor(position: Position, heading:number) { this.position=[...position]; this.heading=heading*Math.PI/180; }
   step(dt:number, keys:Set<string>, config:{maxSpeed:number; reverseSpeed:number; acceleration:number; braking:number; drag:number; handbrake:number; wheelbase:number; scale?:number}) {
     const scale=config.scale??1, maxSpeed=config.maxSpeed*scale, reverseSpeed=config.reverseSpeed*scale, acceleration=config.acceleration*scale, braking=config.braking*scale, drag=config.drag*scale, handbrakeForce=config.handbrake*scale;
     const gas=keys.has('KeyW'), brake=keys.has('KeyS');
+    const brakePressed = brake && !this.brakeHeld;
+    this.brakeHeld = brake;
     const handbrake=keys.has('ShiftLeft')||keys.has('ShiftRight');
 
     const boost=keys.has('Space') && !brake && !handbrake && this.speed>=0;
@@ -103,8 +113,8 @@ export class VehicleController {
     if(gas && !handbrake) this.speed+=(this.speed<0?braking:acceleration)*dt;
     if(gas && handbrake && this.speed < 1) this.speed=Math.min(this.speed, 0.5);
     if(!brake) this.braking=false;
-    else if(this.stopBeforeReverse && this.speed>0.1) this.braking=true;
-    if(brake && this.braking) this.speed=Math.max(0, this.speed-braking*dt);
+    else if(this.stopBeforeReverse && (this.speed>0.1 || (brakePressed && this.speed < -0.1))) this.braking=true;
+    if(brake && this.braking) this.speed=(Math.sign(this.speed)*Math.max(0, Math.abs(this.speed)-braking*dt)) || 0;
     else if(brake) this.speed-=(this.speed>0?braking:acceleration)*dt;
     const steerKey=Number(keys.has('KeyD'))-Number(keys.has('KeyA'));
     // handbrake + steering at speed: the tail comes round — the body spins (up to a full 180°)

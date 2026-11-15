@@ -8,8 +8,8 @@ export function roadDeckHalf(style: RoadStyle): number {
 }
 
 /**
- * Widths match what MapLibre drew at the chase zoom (paintCity: rank × pavement
- * × zoom factor, ≈ 25.6 px/m at zoom 20.55), so the city reads the same.
+ * Stylised widths, with two extra metres of carriageway so opposing vehicles
+ * (including buses) have clearance. These are not surveyed OSM lane widths.
  */
 export function roadStyle(cls: string, sub: string, ramp: boolean): RoadStyle | null {
   if (/^(rail|transit|ferry|aerialway|pier|bridge|bus_guideway|raceway)$/.test(cls)) return null;
@@ -18,7 +18,7 @@ export function roadStyle(cls: string, sub: string, ramp: boolean): RoadStyle | 
   const link = ramp || /service|track/.test(cls);
   const rank = pedestrian ? 0.5 : major ? 1.45 : link ? 0.82 : 1;
   const pavement = pedestrian ? 2.1 : 5;
-  const width = rank * pavement * 0.84;
+  const width = rank * pavement * 0.84 + (pedestrian ? 0 : 2);
   const fill = pedestrian ? '#c4c1ba' : major ? '#9d9e99' : /secondary|tertiary/.test(cls) ? '#aaaba5' : '#b5b5af';
   const casing = pedestrian ? '#d5d0c6' : major ? '#d2cec5' : /secondary|tertiary/.test(cls) ? '#d6d2c9' : '#dbd7ce';
   // each kind of road on its own level, and no casing at the height of another road's fill:

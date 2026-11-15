@@ -1,10 +1,16 @@
 import type { Car } from '@/config/vehicle.config';
 import type { MapFeature } from './WaterCollisionController.ts';
-import { VehicleController, type Position, metersBetween, METERS_PER_DEGREE } from './VehicleController.ts';
+import { VehicleController, type Position, metersBetween, METERS_PER_DEGREE, offsetPosition } from './VehicleController.ts';
 
 const ROAD_CLASSES = new Set(['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'minor', 'service']);
 const NODE_SNAP_METERS = 2.5;
 const SAMPLE_METERS = 10;
+
+/** Right-hand lane centre; reversing travel direction puts traffic on the other side. */
+export function trafficLanePoint(from: Position, to: Position, offset = 1.5): Position {
+  const h = headingTo(from, to);
+  return offsetPosition(to, Math.cos(h) * offset, -Math.sin(h) * offset);
+}
 
 type RoadNode = { id: string; position: Position; edges: Map<string, number> };
 type QueueEntry = { id: string; distance: number };
@@ -694,7 +700,8 @@ export function trafficBotKeys(bot: TrafficBot, network: TrafficRoadNetwork, hun
     return keys;
   }
   const target = bot.route[bot.routeIndex];
-  const desiredHeading = headingTo(bot.position, target);
+  const laneTarget = bot.cutting ? target : trafficLanePoint(bot.route[bot.routeIndex - 1] ?? bot.position, target);
+  const desiredHeading = headingTo(bot.position, laneTarget);
   const error = angleDifference(desiredHeading, bot.heading);
   let turnAngle = 0;
   if (bot.routeIndex + 1 < bot.route.length) {

@@ -107,6 +107,11 @@ export function gridWaterLevel(levels: Float32Array, grid: number, u: number, v:
   return best > -Infinity ? best : null;
 }
 
+/** The smoothed dry-bank grid must never become an invisible floor over water. */
+export function driveTerrainHeight(visual: number, drive: number, water: number | null) {
+  return water != null && visual < water - 0.1 ? water - 0.12 : drive;
+}
+
 /** floats per bridge deck piece */
 const BRIDGE_STRIDE = 7;
 
