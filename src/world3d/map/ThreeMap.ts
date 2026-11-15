@@ -1,3 +1,4 @@
+import { PostFx } from './postFx.ts';
 import * as THREE from 'three';
 import { MapCamera, latFrom01, lngFrom01, mercatorPerMeter, mercatorX01, mercatorY01 } from './camera.ts';
 import { WorldTiles, defaultWorldOptions } from './WorldTiles.ts';
@@ -173,6 +174,8 @@ export class ThreeMap {
   private gpuWarmQueue: THREE.Mesh[] = [];
   private gpuWarmScene = new THREE.Scene();
   private gpuWarmTarget: THREE.WebGLRenderTarget | null = null;
+  /** tone mapping, bloom and a vignette over the finished frame */
+  private postFx = new PostFx();
   private gpuWarmFence: WebGLSync | null = null;
   /** while the map is hidden: fill a full tile ring and drain GPU uploads faster */
   private streamBurst = true;
@@ -806,6 +809,13 @@ export class ThreeMap {
     this.uniforms.uFireCount.value = count;
   }
 
+  /** Tone mapping + bloom over the frame (off on low quality). */
+  setPostFx(on: boolean) {
+    if (this.postFx.enabled === on) return;
+    this.postFx.enabled = on;
+    this.triggerRepaint();
+  }
+
   setPixelRatio(ratio: number) {
     this.renderer.setPixelRatio(ratio);
     this.resize();
@@ -1056,7 +1066,12 @@ export class ThreeMap {
     for (const layer of this.layers) {
       if (!this.fused.includes(layer)) layer.render?.(gl, args);
     }
+    // the layers drew with their own renderers on this context: resync, then the post pass
     this.renderer.resetState();
+    if (this.postFx.enabled) {
+      this.postFx.render(this.renderer, this.lighting?.night ?? 0);
+      this.renderer.resetState();
+    }
     for (const marker of this.markers) this.placeMarker(marker);
     this.emit('render', {});
     this.perfMonitor?.reportStages({
@@ -1290,6 +1305,7 @@ export class ThreeMap {
     this.gpuWarmTarget?.dispose();
     this.removed = true;
     this.flare.dispose();
+    this.postFx.dispose();
     cancelAnimationFrame(this.frame);
     for (const fn of this.cleanups) fn();
     this.resizeObserver.disconnect();

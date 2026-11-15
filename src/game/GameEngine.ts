@@ -1105,6 +1105,8 @@ export class GameEngine {
     const dpr = window.devicePixelRatio || 1;
     const ratio = settings.quality === 'low' ? 0.85 : settings.quality === 'medium' ? 1 : Math.min(dpr, 1.25);
     this.map.setPixelRatio(ratio);
+    // the filmic pass costs a copy and three small passes: off on low quality
+    this.map.setPostFx(settings.quality !== 'low');
     if (terrainChanged) { this.collisionDirty = true; this.syncedAt = null; }
   }
 
