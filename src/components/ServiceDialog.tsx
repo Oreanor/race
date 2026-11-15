@@ -35,6 +35,8 @@ export default function ServiceDialog({ offer, onBuy, onLeave }: { offer: Servic
         <button type="button" className="ui-btn" autoFocus disabled={none} onClick={() => onBuy(amount)}>{t('fuelDlg.go')}</button>
         {leave}
       </>}>
+        <div className="fuel-slider">
+        <span>{t('fuelDlg.litres', { n: 1 })}</span>
         <input
           className="ui-slider"
           type="range"
@@ -46,6 +48,8 @@ export default function ServiceDialog({ offer, onBuy, onLeave }: { offer: Servic
           aria-label={t('fuelDlg.litres', { n: amount })}
           onChange={(e) => setLitres(Number(e.target.value))}
         />
+        <span>{t('fuelDlg.litres', { n: formatNumber(Math.max(1, most)) })}</span>
+        </div>
         <div className="ui-row fuel-cost">{none ? <span>{t('dialog.broke')}</span> : <Price value={amount * offer.price} />}</div>
       </Dialog>
     );
