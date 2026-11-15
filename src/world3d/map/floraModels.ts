@@ -104,26 +104,6 @@ class Shape {
     this.add(g, leaf);
   }
 
-  /**
-   * Closed one-sided triangles, each turned to face away from `inside(centroid)`,
-   * with flat face normals (clipped, built surfaces: hedges).
-   */
-  solid(tris: V[][], inside: (c: V) => V) {
-    const p: number[] = [], n: number[] = [];
-    const e1 = new THREE.Vector3(), e2 = new THREE.Vector3(), f = new THREE.Vector3(), c = new THREE.Vector3();
-    for (const tri of tris) {
-      let [a, b, d] = tri;
-      f.crossVectors(e1.subVectors(b, a), e2.subVectors(d, a)).normalize();
-      c.copy(a).add(b).add(d).divideScalar(3);
-      if (f.dot(c.clone().sub(inside(c))) < 0) { [b, d] = [d, b]; f.negate(); }
-      for (const q of [a, b, d]) { p.push(q.x, q.y, q.z); n.push(f.x, f.y, f.z); }
-    }
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(p, 3));
-    g.setAttribute('normal', new THREE.Float32BufferAttribute(n, 3));
-    this.add(g, true);
-  }
-
   /** A palm frond: a folded leaf arching out and down from `base`. */
   frond(base: V, yaw: number, length: number, lift: number, droop: number, width: number) {
     const dir = v(Math.cos(yaw), 0, Math.sin(yaw));
@@ -388,34 +368,34 @@ const BUILD: Record<FloraModel, () => THREE.BufferGeometry> = {
     t.blob(v(0.1, 1.12, -0.2), 0.6, 0.42, 0.6, c, 0.2);
     return t.build();
   },
-  // a clipped street hedge section: 3.8 m along +X (the road), a flat top with
-  // trimmed edges, a little wider at the foot. Sections 3.4 m apart overlap into
-  // one continuous hedge; the ends are exact so the joins do not show. ~38 triangles.
+  // a clipped street hedge section: a row of four leafy lumps along +X (the road), 3.8 m
+  // long with the next one overlapping, trimmed flat on top and a little on the sides —
+  // a sheared hedge, still foliage, not a painted block. ~80 triangles.
   hedge() {
     const t = new Shape(157);
-    const L = 3.8, segs = 3;
-    // cross-section (z across, y up), left foot over the top to the right foot
-    const profile: [number, number][] = [[-0.44, 0], [-0.4, 0.86], [-0.27, 1.06], [0.27, 1.06], [0.4, 0.86], [0.44, 0]];
-    const rings: V[][] = [];
-    for (let i = 0; i <= segs; i++) {
-      const x = -L / 2 + (L * i) / segs;
-      const end = i === 0 || i === segs;
-      // inner joins a touch uneven (a hand-clipped hedge, not a box); feet stay on the ground
-      rings.push(profile.map(([z, y]) => v(x, y + (end || y === 0 ? 0 : t.j() * 0.035), z * (end ? 1 : 1 + t.j() * 0.05))));
+    const c = v(0, 0.5, 0);
+    for (let i = 0; i < 4; i++) {
+      const x = -1.55 + i * 1.03 + t.j() * 0.08;
+      t.blob(v(x, 0.56 + t.j() * 0.04, t.j() * 0.05), 0.68 + t.j() * 0.05, 0.62, 0.5 + t.j() * 0.04, c, 0.26);
     }
-    const tris: V[][] = [];
-    for (let i = 0; i < segs; i++) {
-      for (let k = 0; k + 1 < profile.length; k++) {
-        const a = rings[i][k], b = rings[i + 1][k], c = rings[i + 1][k + 1], d = rings[i][k + 1];
-        tris.push([a, b, c], [a, c, d]);
-      }
+    const g = t.build();
+    // the shears: lumps cut level at the top and trimmed back at the sides
+    const TOP = 1.02, SIDE = 0.46;
+    const pos = g.getAttribute('position'), nrm = g.getAttribute('normal'), shade = g.getAttribute('aShade');
+    const n = new THREE.Vector3();
+    for (let i = 0; i < pos.count; i++) {
+      let y = pos.getY(i), z = pos.getZ(i);
+      n.set(nrm.getX(i), nrm.getY(i), nrm.getZ(i));
+      if (y > TOP) { y = TOP; n.lerp(UP, 0.7); }
+      if (Math.abs(z) > SIDE) { z = Math.sign(z) * SIDE; n.lerp(v(0, 0, Math.sign(z)), 0.5); }
+      y = Math.max(0, y);
+      pos.setY(i, y); pos.setZ(i, z);
+      n.normalize();
+      nrm.setXYZ(i, n.x, n.y, n.z);
+      shade.setX(i, y / TOP);
     }
-    // end caps: the profile as a fan
-    for (const ring of [rings[0], rings[segs]]) {
-      for (let k = 1; k + 1 < ring.length; k++) tris.push([ring[0], ring[k], ring[k + 1]]);
-    }
-    t.solid(tris, (c) => (Math.abs(Math.abs(c.x) - L / 2) < 1e-3 ? v(0, c.y, c.z) : v(c.x, 0.45, 0)));
-    return t.build();
+    g.computeBoundingSphere();
+    return g;
   },
   // rosemary, sagebrush, saltbush: twiggy, open, small grey tufts
   bush_dry() {
