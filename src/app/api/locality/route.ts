@@ -31,9 +31,9 @@ export async function GET(request: Request) {
     const row = await response.json() as { address?: Address };
     const a = row.address ?? {};
     // the smallest settlement wins: a village inside a big municipality is the village.
-    // A "hamlet" with a city district round it is a city quarter (Aveiro's Misericórdia):
-    // there the city is the answer.
-    const urban = !!(a.city_district || a.suburb || a.quarter || a.neighbourhood);
+    // A "hamlet" inside a city or town is a quarter of it (Aveiro's Misericórdia, Newark's
+    // Roseville): there the city is the answer. Out in the country it is the hamlet.
+    const urban = !!(a.city || a.town || a.city_district || a.suburb || a.quarter || a.neighbourhood);
     const hamlet = urban ? undefined : a.hamlet || a.isolated_dwelling;
     const name = a.village || hamlet || a.town || a.city || a.municipality || null;
     if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value!);
