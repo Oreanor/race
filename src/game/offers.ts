@@ -105,8 +105,8 @@ export type Settings = {
   theme: Theme;
   /** sound volume 0 … 1 (0: off) */
   volume: number;
-  /** ground textures: realistic or plain colours */
-  ground: 'realistic' | 'off';
+  /** ground textures: realistic, stylized or plain colours */
+  ground: 'realistic' | 'stylized' | 'off';
 };
 
 export type HudParticipant = {

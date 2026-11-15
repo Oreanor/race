@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { cars, carPrice, cities, GIFT_CARS, STARTING_CASH, type City } from '@/config/vehicle.config';
-
+import { SKINS } from '@/world3d/buildings/skins';
 import { NetHud, type NetFeed } from './NetHud';
 import ServerStatus from './ServerStatus';
 import { findPlaces } from '@/game/findPlaces';
@@ -10,7 +10,6 @@ import { healthColor } from '@/game/health';
 import { GameEngine } from '@/game/GameEngine';
 import type { BountyOffer, DealerOffer, EventOffer, EventResult, FuelHud, HudParticipant, PlayerCarry, BankOffer, RideOffer, ServiceOffer, Settings, Theme, TravelOffer } from '@/game/offers';
 import { EVACUATION_COST } from '@/game/Fuel';
-import { SKINS } from '@/world3d/buildings/skins';
 import { loadSave, wipeProgress, writeSave, type GameSave } from '@/game/save';
 import {
   loadMapLabelFilters,
@@ -387,7 +386,6 @@ export default function Game() {
       buildingDetail: 'high',
       architecture: 'auto',
       skin: 'original',
-
       theme,
       volume: 0.5,
       ground: 'realistic',
@@ -402,7 +400,8 @@ export default function Game() {
           // terrain is always on now — an old saved `false` must not switch it off
           if (key === 'theme' || key === 'terrain' || value == null || typeof value !== typeof defaults[key]) continue;
           if (key === 'skin' && !(SKINS as readonly string[]).includes(value as string)) continue;
-          if (key === 'ground' && !['realistic', 'off'].includes(value as string)) continue;
+          if (key === 'quality' && !['low', 'medium', 'high'].includes(value as string)) continue;
+          if (key === 'ground' && !['realistic', 'stylized', 'off'].includes(value as string)) continue;
           if (key === 'sensitivity' && !(Number.isFinite(value) && (value as number) >= 0.3 && (value as number) <= 2)) continue;
           if (key === 'volume' && !(Number.isFinite(value) && (value as number) >= 0 && (value as number) <= 1)) continue;
           out[key] = value;
@@ -843,6 +842,7 @@ export default function Game() {
       </div>
       <label>{t('settings.skin')}<select value={settings.skin} onChange={e => update({ skin: e.target.value as Settings['skin'] })}>{SKINS.map(id => <option key={id} value={id}>{t(`skin.${id}`)}</option>)}</select></label>
       <label>{t('settings.quality')}<select value={settings.quality} onChange={e => update({ quality: e.target.value as Settings['quality'] })}><option value="low">{t('quality.low')}</option><option value="medium">{t('quality.medium')}</option><option value="high">{t('quality.high')}</option></select></label>
+      <label>{t('settings.ground')}<select value={settings.ground} onChange={e => update({ ground: e.target.value as Settings['ground'] })}><option value="realistic">{t('ground.realistic')}</option><option value="stylized">{t('ground.stylized')}</option><option value="off">{t('ground.off')}</option></select></label>
       <label className="toggle">{t('settings.follow')}<input type="checkbox" checked={settings.follow} onChange={e => update({ follow: e.target.checked })} /></label>
       <label>{t('settings.sensitivity')}<input type="range" min="0.3" max="2" step="0.1" value={settings.sensitivity} onChange={e => update({ sensitivity: Number(e.target.value) })} /></label>
       <label>{settings.volume > 0 ? t('settings.volume') : t('settings.volumeOff')}<input type="range" min="0" max="1" step="0.05" value={settings.volume} onChange={e => update({ volume: Number(e.target.value) })} /></label>

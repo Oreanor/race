@@ -1116,7 +1116,7 @@ export class GameEngine {
     this.map.setPixelRatio(ratio);
     // the filmic pass costs a copy and three small passes: off on low quality
     this.map.setPostFx(settings.quality !== 'low');
-    this.map.setGroundLook('realistic');
+    this.map.setGroundLook(settings.ground ?? 'realistic');
     if (terrainChanged) { this.collisionDirty = true; this.syncedAt = null; }
   }
 
@@ -5304,10 +5304,6 @@ export class GameEngine {
     this.host.style.opacity = '1';
     this.onBoot(true);
     this.say(t('status.ready'));
-    // With the intro visible, keep streaming chase tiles around the car: the hidden-boot
-    // burst only warmed the intro's top-down ring, so "Drive" otherwise flies into blank fog.
-    this.map.beginStreamBurst();
-    this.bootBurstUntil = performance.now() + 2000;
   }
 
   private tickStreamBurst(now = performance.now()) {
