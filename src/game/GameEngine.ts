@@ -5955,9 +5955,10 @@ export class GameEngine {
             acceleration: bot.car.acceleration,
             maxSpeed: bot.car.maxSpeed,
           };
-          // the police really drive at their pace (it was capped by the town pace, ~70 km/h)
-          advanceTrafficBot(bot, 1 / 60, this.trafficNetwork, pace, police ? peers.slice(0, 1) : peers, [], this.botShortcut(bot, now), police ? pace.maxSpeed : null);
-          if (bot.mood === 'hunt') this.unstickHunter(bot, now);
+          // the police and racers really drive at their car's pace (the town pace was ~55–70 km/h)
+          const racer = this.mode === 'race' && bot.id.startsWith('race-');
+          advanceTrafficBot(bot, 1 / 60, this.trafficNetwork, pace, police ? peers.slice(0, 1) : peers, [], this.botShortcut(bot, now), police || racer ? pace.maxSpeed : null);
+          if (bot.mood === 'hunt' || racer) this.unstickHunter(bot, now);
           const building = this.collisions.resolve(previous, bot.position, bot.heading);
           if (building.stopped || building.slid) {
             bot.controller.position = building.position;
