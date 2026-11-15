@@ -1351,8 +1351,16 @@ export class GameEngine {
       if (!dry(spot) || metersBetween(spot, position) < 200) continue;
       return spot;
     }
-    // Empty network (boot edge): push along heading so the pin is not under the car.
-    return offsetMeters(position, Math.sin(heading) * 420, Math.cos(heading) * 420);
+    // Few roads round here: a ring of spots 0.5–0.9 km out, the first dry one clear of the
+    // other events (a single "420 m ahead" stacked every event on one spot)
+    const turn = (Math.abs(seed) % 360) * Math.PI / 180;
+    for (let n = 0; n < 24; n++) {
+      const angle = heading + turn + n * (Math.PI * 2 / 12);
+      const r = 500 + (n % 3) * 200;
+      const spot = offsetMeters(position, Math.sin(angle) * r, Math.cos(angle) * r) as [number, number];
+      if (dry(spot) && !avoid.some((other) => metersBetween(spot, other) < 150)) return spot;
+    }
+    return offsetMeters(position, Math.sin(heading + turn) * 420, Math.cos(heading + turn) * 420);
   }
 
   private nextMissionLabel(kind: MissionKind) {
@@ -1603,6 +1611,8 @@ export class GameEngine {
     this.missions = others;
     const fresh = this.createMission(stale.kind, here, this.vehicle.heading, seed ^ 0x5bd1, { min: 600, max: 2500 });
     this.missions = saved;
+    // a far-flung fallback spot would just move again in 5 s: keep the old one this time
+    if (metersBetween(fresh.position, here) > MISSION_STALE_M) return;
     this.missions[index] = fresh;
     this.syncMissionVisuals(true);
   }
