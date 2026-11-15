@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { cars, carPrice, cities, GIFT_CARS, STARTING_CASH, type City } from '@/config/vehicle.config';
-import { SKINS } from '@/world3d/buildings/skins';
+
 import { NetHud, type NetFeed } from './NetHud';
 import ServerStatus from './ServerStatus';
 import { findPlaces } from '@/game/findPlaces';
@@ -385,7 +385,7 @@ export default function Game() {
       quality: 'high',
       buildingDetail: 'high',
       architecture: 'auto',
-      skin: 'original',
+
       theme,
       volume: 0.5,
       ground: 'realistic',
@@ -399,9 +399,7 @@ export default function Game() {
           const value = saved[key];
           // terrain is always on now — an old saved `false` must not switch it off
           if (key === 'theme' || key === 'terrain' || value == null || typeof value !== typeof defaults[key]) continue;
-          if (key === 'skin' && !(SKINS as readonly string[]).includes(value as string)) continue;
-          if (key === 'quality' && !['low', 'medium', 'high'].includes(value as string)) continue;
-          if (key === 'ground' && !['realistic', 'stylized', 'off'].includes(value as string)) continue;
+          if (key === 'ground' && !['realistic', 'off'].includes(value as string)) continue;
           if (key === 'sensitivity' && !(Number.isFinite(value) && (value as number) >= 0.3 && (value as number) <= 2)) continue;
           if (key === 'volume' && !(Number.isFinite(value) && (value as number) >= 0 && (value as number) <= 1)) continue;
           out[key] = value;
@@ -658,25 +656,6 @@ export default function Game() {
         setSettingsOpen(open => !open);
         return;
       }
-      if (e.code === 'KeyY' && !e.repeat
-        && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement)) {
-        // Y: the next architecture style (remembered like the settings choice)
-        e.preventDefault();
-        setSettings((s) => {
-          const skin = SKINS[(SKINS.indexOf(s.skin) + 1) % SKINS.length];
-          const next = { ...s, skin };
-          try {
-            const { theme: _theme, ...rest } = next;
-            localStorage.setItem(SETTINGS_STORE, JSON.stringify(rest));
-          } catch { /* private mode */ }
-          const text = t('skin.switched', { name: t(`skin.${skin}` as MessageKey) });
-          setStatusToast(text);
-          if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-          toastTimerRef.current = setTimeout(() => { setStatusToast(''); toastTimerRef.current = null; }, 2500);
-          return next;
-        });
-        return;
-      }
       if (e.code === 'KeyK' && !e.repeat
         && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement)) {
         e.preventDefault();
@@ -840,9 +819,8 @@ export default function Game() {
           </button>
         </div>
       </div>
-      <label>{t('settings.skin')}<select value={settings.skin} onChange={e => update({ skin: e.target.value as Settings['skin'] })}>{SKINS.map(id => <option key={id} value={id}>{t(`skin.${id}`)}</option>)}</select></label>
       <label>{t('settings.quality')}<select value={settings.quality} onChange={e => update({ quality: e.target.value as Settings['quality'] })}><option value="low">{t('quality.low')}</option><option value="medium">{t('quality.medium')}</option><option value="high">{t('quality.high')}</option></select></label>
-      <label>{t('settings.ground')}<select value={settings.ground} onChange={e => update({ ground: e.target.value as Settings['ground'] })}><option value="realistic">{t('ground.realistic')}</option><option value="stylized">{t('ground.stylized')}</option><option value="off">{t('ground.off')}</option></select></label>
+      <label>{t('settings.ground')}<select value={settings.ground} onChange={e => update({ ground: e.target.value as Settings['ground'] })}><option value="realistic">{t('ground.realistic')}</option><option value="off">{t('ground.off')}</option></select></label>
       <label className="toggle">{t('settings.follow')}<input type="checkbox" checked={settings.follow} onChange={e => update({ follow: e.target.checked })} /></label>
       <label>{t('settings.sensitivity')}<input type="range" min="0.3" max="2" step="0.1" value={settings.sensitivity} onChange={e => update({ sensitivity: Number(e.target.value) })} /></label>
       <label>{settings.volume > 0 ? t('settings.volume') : t('settings.volumeOff')}<input type="range" min="0" max="1" step="0.05" value={settings.volume} onChange={e => update({ volume: Number(e.target.value) })} /></label>

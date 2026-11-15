@@ -16,7 +16,7 @@ export { facadeMask, farBuildingMaterial } from './facadeMaterial.ts';
 // Shaders of the base world (ground, roads, water). Facade lives in facadeMaterial.ts.
 
 /** the ground textures on offer (public/textures/ground-*.png, scripts/ground-textures.py) */
-export type GroundLook = 'realistic' | 'stylized' | 'off';
+export type GroundLook = 'realistic' | 'off';
 
 /** one tiling repeat of the detail map (m) */
 const DETAIL_REPEAT = 9;
