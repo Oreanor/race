@@ -199,12 +199,19 @@ export class TrafficRoadNetwork {
    * Places at the kerb every `spacing` m along the roads: `side` m right of the centre
    * line, facing along it. Ids come from the rounded spot, the same for everybody.
    */
-  kerbSpots(center: Position, radius = 600, spacing = 160, start = 55, side = 4.4): { id: string; position: Position; heading: number }[] {
-    const out: { id: string; position: Position; heading: number }[] = [];
+  /**
+   * Spots at the kerb every `spacing` m along each road, `side` m right of its centre;
+   * `on` is the centre point, for a narrower street to pull the spot in. Each road starts
+   * at its own stable offset — short ways (a city of short blocks, Tokyo) get spots too.
+   */
+  kerbSpots(center: Position, radius = 600, spacing = 90, side = 4.4): { id: string; position: Position; heading: number; on: Position }[] {
+    const out: { id: string; position: Position; heading: number; on: Position }[] = [];
     const ids = new Set<string>();
-    for (const line of this.lines.values()) {
+    for (const [key, line] of this.lines) {
       let traveled = 0;
-      let next = start;
+      let h = 2166136261;
+      for (let i = 0; i < key.length; i++) h = Math.imul(h ^ key.charCodeAt(i), 16777619);
+      let next = 12 + ((h >>> 0) % 1000) / 1000 * spacing;
       for (let index = 1; index < line.length; index++) {
         const from = line[index - 1];
         const to = line[index];
@@ -222,7 +229,7 @@ export class TrafficRoadNetwork {
           const id = `${Math.round(position[0] * this.scaleX / 10)}:${Math.round(position[1] * METERS_PER_DEGREE / 10)}`;
           if (ids.has(id)) continue;
           ids.add(id);
-          out.push({ id, position, heading });
+          out.push({ id, position, heading, on });
         }
         traveled += length;
       }

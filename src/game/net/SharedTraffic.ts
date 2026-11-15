@@ -11,7 +11,7 @@ import { METERS_PER_DEGREE, metersBetween, VehicleController, type Position } fr
 // replaced after a while. Playing alone, you drive your own.
 
 /** cars driven at a time */
-const COUNT = Math.min(2, TRAFFIC_MAX);
+const COUNT = Math.min(6, TRAFFIC_MAX);
 /** players closer than this share one driver */
 const LEAD_RANGE = 1500;
 /** new cars appear this far away (m), out of the way */
@@ -27,7 +27,7 @@ const TOP_SPEED = 14;
 /** parked cars: kept this close (m); new ones only farther than PARK_NEAR so none appears in view */
 const PARK_KEEP = 900;
 const PARK_NEAR = 250;
-const PARK_MAX = 14;
+const PARK_MAX = 18;
 /** new parked cars no farther than this (m) */
 const PARK_FAR = 700;
 /** about one kerb spot in three has a car */
@@ -257,7 +257,14 @@ export class SharedTraffic {
       this.parked.push({ id: `${me}:k${this.serial++}`, spot, car, controller: new VehicleController(position, heading * 180 / Math.PI) });
     };
     for (const spot of this.host.network.kerbSpots(here, PARK_FAR)) {
-      if (spotHash(spot.id) < PARK_SHARE) add(spot.id, spot.position, spot.heading);
+      if (spotHash(spot.id) >= PARK_SHARE) continue;
+      // a narrow street: the kerb is nearer the middle (else the spot lands in a house)
+      let position = spot.position;
+      for (const pull of [1, 3.4 / 4.4, 2.8 / 4.4]) {
+        position = [spot.on[0] + (spot.position[0] - spot.on[0]) * pull, spot.on[1] + (spot.position[1] - spot.on[1]) * pull];
+        if (this.host.canPark(position, spot.heading)) break;
+      }
+      add(spot.id, position, spot.heading);
     }
     // parking lots: two or three in a row
     this.host.lots().forEach((lot, n) => {
