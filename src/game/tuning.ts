@@ -33,8 +33,8 @@ export const BANK_CRACK_MS = 3000;
 
 /** police that far behind give up the chase (m) */
 export const POLICE_GIVE_UP_M = 1500;
-/** …and only after staying that far this long (ms) */
-export const POLICE_GIVE_UP_MS = 10_000;
+/** …after staying that far this long (ms): just enough not to count a blip — the hint says 1.5 km */
+export const POLICE_GIVE_UP_MS = 1500;
 
 /** how close to a mission marker the offer opens (m) */
 export const MISSION_PICKUP_M = 6;
