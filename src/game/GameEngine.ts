@@ -112,6 +112,7 @@ import {
   HAUL_COIN_PX,
   COIN_RESPAWN_M,
   COIN_SPACING_M,
+  BLACK_MARKET_SHARE,
   HAUL_COINS_MS,
   HAUL_DECK_BACK,
   HAUL_DECK_UP,
@@ -2614,9 +2615,10 @@ export class GameEngine {
     this.showEventBeacons();
     this.eventCooldown = performance.now() + 8000;
     if (stolen) {
-      // got away in a stolen car: the black market takes it for half its price; we're back in ours
+      // got away in a stolen car: the fence pays half its price and we split it with the crew —
+      // a quarter is ours; we're back in our own car
       const sold = carsConfig.find((car) => car.id === stolen.carId);
-      const price = sold ? Math.round(carPrice(sold) / 2) : 0;
+      const price = sold ? Math.round(carPrice(sold) * BLACK_MARKET_SHARE) : 0;
       this.playerMoney += price;
       const previous = carsConfig.find((car) => car.id === stolen.previousId);
       if (previous) { this.setCar(previous); this.onCarBought(previous); }

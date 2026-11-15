@@ -222,3 +222,6 @@ export function randomDriverNames(count: number) {
 export const COIN_SPACING_M = 40;
 /** a taken road coin comes back once we are this far from it (m) */
 export const COIN_RESPAWN_M = 1500;
+
+/** a stolen car we got away in: our share of its price (the fence pays half, the crew takes half of that) */
+export const BLACK_MARKET_SHARE = 0.25;

@@ -10,7 +10,7 @@ export const LANGS: { id: Lang; name: string; locale: string }[] = [
 
 const en = {
   'hijack.title': 'Black market',
-  'hijack.sold': 'You lost the police. The {car} went to the black market for half its price: +{cash} coins. You are back in your own car.',
+  'hijack.sold': 'You lost the police. The {car} went to the black market for half its price, split with the crew: +{cash} coins. You are back in your own car.',
   'hijack.won': 'The {car} went to the black market. You are back in your own car.',
   'hijack.hint': 'H — hijack the {car}',
   'hijack.none': 'No parked car beside you',
@@ -452,7 +452,7 @@ export type MessageKey = keyof typeof en;
 
 const pt: Partial<Record<MessageKey, string>> = {
   'hijack.title': 'Mercado negro',
-  'hijack.sold': 'Despistou a polícia. O {car} foi para o mercado negro por metade do preço: +{cash} moedas. Voltou ao seu carro.',
+  'hijack.sold': 'Despistou a polícia. O {car} foi para o mercado negro por metade do preço, dividida com o bando: +{cash} moedas. Voltou ao seu carro.',
   'hijack.won': 'O {car} foi para o mercado negro. Voltou ao seu carro.',
   'hijack.hint': 'H — roubar o {car}',
   'hijack.none': 'Nenhum carro estacionado ao lado',
@@ -883,7 +883,7 @@ const pt: Partial<Record<MessageKey, string>> = {
 
 const ru: Partial<Record<MessageKey, string>> = {
   'hijack.title': 'Чёрный рынок',
-  'hijack.sold': 'Вы ушли от полиции. {car} ушёл на чёрном рынке за полцены: +{cash} монет. Вы снова в своей машине.',
+  'hijack.sold': 'Вы ушли от полиции. {car} ушёл на чёрном рынке за полцены, поделились с подельниками: +{cash} монет. Вы снова в своей машине.',
   'hijack.won': '{car} ушёл на чёрный рынок. Вы снова в своей машине.',
   'hijack.hint': 'H — угнать {car}',
   'hijack.none': 'Рядом нет припаркованной машины',
