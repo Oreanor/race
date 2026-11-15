@@ -157,6 +157,8 @@ const wrapDegrees = (deg: number) => ((deg + 180) % 360 + 360) % 360 - 180;
 const CAMERA_STORE = 'race.camera';
 /** a racer looks this far (m) straight toward the flag: clear of houses and water → it cuts across */
 const RACE_LOOK_M = 400;
+/** on the run: how often a patrol in the traffic may join the chase (ms) */
+const POLICE_JOIN_MS = 20_000;
 /** an event left farther away than this (m) moves to a new spot near us */
 const MISSION_STALE_M = 3500;
 /** hit a wall faster than this (km/h) and coins jump out of it (3; 5 from 150, 10 from 200) */
@@ -480,7 +482,7 @@ export class GameEngine {
    * A bank job in progress (mode 'arena' for the guns and contacts): cash picked up so far,
    * police to send (a downed car calls two more), a touch or a wrecked car = arrest.
    */
-  private heist: { cash: number; reinforce: number; sent: number; caught: boolean; stolen?: { carId: string; previousId: string; owned: boolean; fuel: number } } | null = null;
+  private heist: { cash: number; reinforce: number; sent: number; caught: boolean; joined?: number; joinAt?: number; stolen?: { carId: string; previousId: string; owned: boolean; fuel: number } } | null = null;
   /** each chasing bot's last look at its target: is the way clear of houses (checked every 300 ms) */
   private botSight = new Map<string, { at: number; clear: boolean }>();
   /** hunters that got stuck: no cutting across until then (ms) */
@@ -730,10 +732,7 @@ export class GameEngine {
       this.combatLayer.onTargetDestroyed = (id, position) => {
         this.audio.explosion(position);
         this.dropCoins(position);
-        if (this.heist && id.startsWith('police')) {
-          this.heist.reinforce += 2;
-          this.say(t('heist.reinforce'), true);
-        }
+        // a wrecked police car is simply out of the chase (no reinforcements out of nowhere)
       };
       this.map.addLayer(this.combatLayer);
       this.applySettings(this.settings);
@@ -2717,6 +2716,19 @@ export class GameEngine {
       // reinforcements drive in from farther, not out of thin air beside us
       this.sendPolice(heist.reinforce, true);
       heist.reinforce = 0;
+    }
+    // on the run, a patrol out in the traffic may spot us and join in: every 20 s a coin
+    // toss, at most 3 cars after us at once and 3 such patrols in a chase
+    const nowJoin = performance.now();
+    heist.joinAt ??= nowJoin + POLICE_JOIN_MS;
+    if (nowJoin >= heist.joinAt) {
+      heist.joinAt = nowJoin + POLICE_JOIN_MS;
+      const after = this.trafficBots.filter((bot) => bot.id.startsWith('police') && this.combatLayer?.isTargetAlive(bot.id) !== false).length;
+      if (after > 0 && after < 3 && (heist.joined ?? 0) < 3 && Math.random() < 0.5) {
+        heist.joined = (heist.joined ?? 0) + 1;
+        this.sendPolice(1, true);
+        this.say(t('heist.joined'), true);
+      }
     }
     if (this.playerHp > 0 && this.playerHp <= this.playerMaxHp * 0.35) this.combatLayer?.burnPlayer();
     if (heist.caught || this.playerHp <= 0) {
