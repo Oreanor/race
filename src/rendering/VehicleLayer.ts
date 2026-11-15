@@ -61,7 +61,45 @@ type TargetState = TargetVehicle & {
   wreckRestY: number;
   /** the ground under it (m), its own: a bot under a bridge stays under it */
   altitude: number | null;
+  /** its model is in (the real one, or the stand-in if that failed) */
+  loaded: boolean;
+  /** fading in: since when (null until it has settled on its ground) */
+  shownAt: number | null;
+  /** materials being faded in, with what they were; null once fully there */
+  fadeMats: FadeMat[] | null;
 };
+
+type FadeMat = { material: THREE.Material; transparent: boolean; opacity: number; depthWrite: boolean };
+/** a car comes in out of thin air over this long (ms) */
+const FADE_IN_MS = 600;
+
+/** Make every own material of `root` see-through for a fade-in; beacons share theirs: left alone. */
+function startFade(root: THREE.Object3D): FadeMat[] {
+  const out: FadeMat[] = [];
+  root.traverse((child) => {
+    if (!(child instanceof THREE.Mesh) || child.userData.beacon) return;
+    for (const material of Array.isArray(child.material) ? child.material : [child.material]) {
+      out.push({ material, transparent: material.transparent, opacity: material.opacity, depthWrite: material.depthWrite });
+      material.transparent = true;
+      material.opacity = 0;
+      material.needsUpdate = true;
+    }
+  });
+  return out;
+}
+
+function stepFade(mats: FadeMat[], k: number) {
+  for (const f of mats) f.material.opacity = f.opacity * k;
+}
+
+function endFade(mats: FadeMat[]) {
+  for (const f of mats) {
+    f.material.transparent = f.transparent;
+    f.material.opacity = f.opacity;
+    f.material.depthWrite = f.depthWrite;
+    f.material.needsUpdate = true;
+  }
+}
 
 /** how long a taken coin hops and falls before it is gone (ms) */
 const POP_MS = 820;
@@ -583,8 +621,8 @@ export function vehicleLayer(
 
   function addTarget(spec: TargetVehicle) {
     {
+      // nothing until the model is in (a box first, then the car, was a jolt); then it fades in
       const root = new THREE.Group();
-      root.add(fallbackCar(spec.car.color));
       scene.add(root);
       const explosion = new THREE.Mesh(
         explosionGeometry,
@@ -598,6 +636,7 @@ export function vehicleLayer(
         destroyed: false, deathPhase: null, explodedAt: 0, flashUntil: 0, flashing: false,
         spinX: 0, spinY: 0, spinZ: 0, velUp: 0, blastsLeft: 0, nextBlastAt: 0, charMats: [],
         wreckQuat: null, wreckBakeHeading: 0, wreckRestY: 0.45, altitude: null,
+        loaded: false, shownAt: null, fadeMats: null,
       };
       targets.set(spec.id, target);
       loadCar(spec.car).then(model => {
@@ -608,6 +647,9 @@ export function vehicleLayer(
         root.add(model);
         // police lights only on the police after us (the chase); every other car's are off
         applyBeaconPower(root, chasingUs(spec.id));
+        target.loaded = true;
+        // already a wreck: no fade, it is there
+        if (!target.destroyed) target.fadeMats = startFade(root);
         if (target.destroyed) {
           target.charMats = captureCharMats(root);
           if (target.deathPhase === 'wreck') applyChar(target, 1, 0);
@@ -617,6 +659,10 @@ export function vehicleLayer(
       }).catch((error: unknown) => {
         if (disposed || targets.get(spec.id) !== target) return;
         console.error(`Failed to load target vehicle model ${spec.car.path}`, error);
+        // the stand-in box then, faded in like the real one
+        root.add(fallbackCar(spec.car.color));
+        target.loaded = true;
+        if (!target.destroyed) target.fadeMats = startFade(root);
       });
     }
   }
@@ -1384,6 +1430,18 @@ export function vehicleLayer(
         // a wreck or a car up on the hauler casts none on the road
         if (target.destroyed || held) target.shadow.visible = false;
         else layShadow(target.shadow, offset.x, offset.y, offset.z, heading - target.heading, 0);
+        // fade in once the model is in and it stands on its own ground; a wreck is just there
+        if (target.fadeMats && (target.destroyed || held)) { endFade(target.fadeMats); target.fadeMats = null; }
+        if (!target.destroyed && !held) {
+          let k = target.loaded ? 1 : 0;
+          if (target.fadeMats) {
+            if (target.shownAt == null && target.altitude != null) target.shownAt = now;
+            k = target.shownAt == null ? 0 : Math.min(1, (now - target.shownAt) / FADE_IN_MS);
+            if (k >= 1) { endFade(target.fadeMats); target.fadeMats = null; } else stepFade(target.fadeMats, k);
+          }
+          (target.shadow.material as THREE.MeshBasicMaterial).opacity *= k;
+          if (k <= 0) target.shadow.visible = false;
+        }
         if (target.destroyed) {
           const age = now - target.explodedAt;
           const tumbleMs = 1100;
