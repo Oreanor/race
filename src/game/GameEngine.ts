@@ -612,6 +612,8 @@ export class GameEngine {
     this.car = car;
     const startAt = carry?.at;
     this.vehicle = new VehicleController(startAt?.position ?? city.coords, startAt ? startAt.heading * 180 / Math.PI : city.heading);
+    // S: stop first, a second press backs up
+    this.vehicle.stopBeforeReverse = true;
     this.healthMeters = new HealthMeters(el);
     const engine = this;
     this.players = new NetPlayers({

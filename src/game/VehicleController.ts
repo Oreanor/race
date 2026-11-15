@@ -83,6 +83,13 @@ export class VehicleController {
   private launch = 0;
   /** last step: Shift + gas at a standstill (the clutch held in, revs building) */
   private clutched = false;
+  /**
+   * The player's brake: S held from moving forward stops the car and holds it there;
+   * reverse takes a fresh press at a standstill. Bots keep S as brake-into-reverse.
+   */
+  stopBeforeReverse = false;
+  /** S is held since it was pressed rolling forward: stop, do not reverse */
+  private braking = false;
   constructor(position: Position, heading:number) { this.position=[...position]; this.heading=heading*Math.PI/180; }
   step(dt:number, keys:Set<string>, config:{maxSpeed:number; reverseSpeed:number; acceleration:number; braking:number; drag:number; handbrake:number; wheelbase:number; scale?:number}) {
     const scale=config.scale??1, maxSpeed=config.maxSpeed*scale, reverseSpeed=config.reverseSpeed*scale, acceleration=config.acceleration*scale, braking=config.braking*scale, drag=config.drag*scale, handbrakeForce=config.handbrake*scale;
@@ -93,7 +100,10 @@ export class VehicleController {
     const limit=maxSpeed*(boost?1.5:1);
     if(gas && !handbrake) this.speed+=(this.speed<0?braking:acceleration)*dt;
     if(gas && handbrake && this.speed < 1) this.speed=Math.min(this.speed, 0.5);
-    if(brake) this.speed-=(this.speed>0?braking:acceleration)*dt;
+    if(!brake) this.braking=false;
+    else if(this.stopBeforeReverse && this.speed>0.1) this.braking=true;
+    if(brake && this.braking) this.speed=Math.max(0, this.speed-braking*dt);
+    else if(brake) this.speed-=(this.speed>0?braking:acceleration)*dt;
     const steerKey=Number(keys.has('KeyD'))-Number(keys.has('KeyA'));
     // handbrake + steering at speed: the tail comes round — the body spins (up to a full 180°)
     // while the car keeps sliding the way it was going

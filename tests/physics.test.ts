@@ -62,6 +62,17 @@ test('parallel vehicles outside each other width do not collide', () => {
   assert.equal(collision, null);
 });
 test('reverse reaches reverse speed',()=>{const v=new VehicleController([0,40],0);for(let i=0;i<300;i++)v.step(1/60,new Set(['KeyS']),config);assert.equal(v.speed,-config.reverseSpeed);});
+test('player brake: S held from forward stops and holds; a fresh press backs up',()=>{
+  const v=new VehicleController([0,40],0);v.stopBeforeReverse=true;
+  for(let i=0;i<300;i++)v.step(1/60,new Set(['KeyW']),config);
+  assert.ok(v.speed>5);
+  for(let i=0;i<600;i++)v.step(1/60,new Set(['KeyS']),config);
+  assert.equal(v.speed,0);
+  v.step(1/60,new Set(),config);
+  for(let i=0;i<300;i++)v.step(1/60,new Set(['KeyS']),config);
+  assert.equal(v.speed,-config.reverseSpeed);
+});
+test('bots keep S as brake into reverse',()=>{const v=new VehicleController([0,40],0);for(let i=0;i<120;i++)v.step(1/60,new Set(['KeyW']),config);for(let i=0;i<600;i++)v.step(1/60,new Set(['KeyS']),config);assert.ok(v.speed<0);});
 test('space holds a fifty percent faster cap',()=>{const v=new VehicleController([0,40],0);for(let i=0;i<800;i++)v.step(1/60,new Set(['KeyW']),config);assert.equal(v.speed,config.maxSpeed);for(let i=0;i<800;i++)v.step(1/60,new Set(['KeyW','Space']),config);assert.equal(v.speed,config.maxSpeed*1.5);v.step(1/60,new Set(['KeyW']),config);assert.equal(v.speed,config.maxSpeed);});
 test('clutch holds the car and builds revs at a standstill',()=>{
   const v=new VehicleController([0,40],0);
