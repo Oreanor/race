@@ -964,6 +964,9 @@ export class ThreeMap {
       screen ?? undefined,
       this.streamCalm,
     );
+    // the M map draws on demand: while its tiles are still coming (fetching, building or
+    // waiting to go up to the GPU) keep frames coming, or they trickle in a couple a second
+    if (mapView && this.world.busy()) this.triggerRepaint();
     const streamEnd = performance.now();
     worldTime.value = performance.now() / 1000;
     this.uniforms.uClock.value = worldTime.value;

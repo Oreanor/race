@@ -493,15 +493,16 @@ export class WorldTiles {
       // boot only (map still hidden / settled) — keep visible play under ~8
       budget = backlog > 24 ? 12 : backlog > 12 ? 9 : backlog > 5 ? 7 : 5;
     } else if (mapBurst) {
-      // M-map / top-down: drain a little, but never storm the GPU (was 5–7 FPS)
-      budget = 2;
+      // M-map / top-down: a still map can take more per frame than driving can (it used to
+      // trickle in at 2), but not a storm (that was 5–7 FPS)
+      budget = 6;
     } else {
       // chase: don't ramp with backlog — that was the mid-drive FPS dip while tiles stream in
       budget = 2;
     }
     if (this.mapLite) budget = Math.min(budget, 2);
     // wanted first; soft-kept only when not calm (otherwise M leftovers hitch the intro fly-in)
-    const uploadDeadline = performance.now() + (burst ? 8 : 2);
+    const uploadDeadline = performance.now() + (burst || mapBurst ? 8 : 2);
     for (const plan of wanted) {
       const live = this.tiles.get(plan.key);
       while (live && live.waiting.length && budget > 0 && performance.now() < uploadDeadline) { live.waiting.shift()!(); budget--; }
@@ -1776,6 +1777,13 @@ export class WorldTiles {
   loadedAround(focus: LngLat, radius: number) {
     const wanted = tilesAround(focus, radius, this.options.zoom);
     return wanted.length > 0 && wanted.every((t) => this.tiles.has(t.key) && !this.tiles.get(t.key)!.waiting.length);
+  }
+
+  /** Tiles still on their way in: fetched / built in a worker, or waiting to be uploaded. */
+  busy() {
+    if (this.pending.size) return true;
+    for (const live of this.tiles.values()) if (live.waiting.length) return true;
+    return false;
   }
 
   stats(): WorldTileStats {
