@@ -382,6 +382,7 @@ export default function Game() {
       architecture: 'auto',
       skin: 'original',
       theme,
+      volume: 0.5,
     };
     // the rest of the settings: remembered as a whole, each value checked against its default
     try {
@@ -395,6 +396,7 @@ export default function Game() {
           if (key === 'skin' && !(SKINS as readonly string[]).includes(value as string)) continue;
           if (key === 'quality' && !['low', 'medium', 'high'].includes(value as string)) continue;
           if (key === 'sensitivity' && !(Number.isFinite(value) && (value as number) >= 0.3 && (value as number) <= 2)) continue;
+          if (key === 'volume' && !(Number.isFinite(value) && (value as number) >= 0 && (value as number) <= 1)) continue;
           out[key] = value;
         }
         return out as Settings;
@@ -800,6 +802,7 @@ export default function Game() {
       <label>{t('settings.quality')}<select value={settings.quality} onChange={e => update({ quality: e.target.value as Settings['quality'] })}><option value="low">{t('quality.low')}</option><option value="medium">{t('quality.medium')}</option><option value="high">{t('quality.high')}</option></select></label>
       <label className="toggle">{t('settings.follow')}<input type="checkbox" checked={settings.follow} onChange={e => update({ follow: e.target.checked })} /></label>
       <label>{t('settings.sensitivity')}<input type="range" min="0.3" max="2" step="0.1" value={settings.sensitivity} onChange={e => update({ sensitivity: Number(e.target.value) })} /></label>
+      <label>{settings.volume > 0 ? t('settings.volume') : t('settings.volumeOff')}<input type="range" min="0" max="1" step="0.05" value={settings.volume} onChange={e => update({ volume: Number(e.target.value) })} /></label>
       <label className="toggle">{t('settings.stats')}<input type="checkbox" checked={perfOn} onChange={e => toggleStats(e.target.checked)} /></label>
       <ServerStatus />
       <div className="ui-form-buttons">

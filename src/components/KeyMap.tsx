@@ -112,6 +112,7 @@ const CALLOUTS: Callout[] = [
   { keys: ['KeyC'], rows: [['keys.swap', 'keys.swap.what']] },
   { keys: ['KeyH'], rows: [['keys.hijack', 'keys.hijack.what']] },
   { keys: ['KeyF'], rows: [['keys.beacons', 'keys.beacons.what']] },
+  { keys: ['KeyG'], rows: [['keys.horn', 'keys.horn.what']] },
   { keys: ['KeyK'], rows: [['keys.help', 'keys.help.what']], side: 'bottom' },
   { keys: ['KeyM'], rows: [['keys.map', 'keys.map.what']] },
   { keys: ['Enter'], rows: [['keys.chat', 'keys.chat.what']] },

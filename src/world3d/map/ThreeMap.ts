@@ -444,6 +444,10 @@ export class ThreeMap {
     this.triggerRepaint();
     return this;
   }
+  /** how dark it is now: 0 day … 1 night */
+  nightLevel() { return this.lighting?.night ?? 0; }
+  /** metres from the camera to the point it looks at (the car while driving): where we 'hear' from */
+  cameraRange() { this.camera.update(); return this.camera.cameraToCenterDistance / Math.max(1e-9, this.camera.pixelsPerMeter); }
   getCenter() { const [lng, lat] = this.camera.state.center; return { lng, lat }; }
   getZoom() { return this.camera.state.zoom; }
   getPitch() { return this.camera.state.pitch; }

@@ -6,6 +6,7 @@ import { WaterCollisionController, type MapFeature } from './WaterCollisionContr
 import { mapConfig, cars as carsConfig, carPrice, GIFT_CARS, STARTING_CASH, type City, type Car, vehicleConfig } from '@/config/vehicle.config';
 import { cameraConfig, lookAheadFor, zoomForDistance } from '@/config/camera.config';
 import { VehicleController, bumpDamage, offsetPosition, resolveVehicleCollision, type Position } from './VehicleController.ts';
+import { GameAudio } from '@/audio/GameAudio';
 import { DROP_MS, vehicleLayer, type PickupVisual, type TargetVehicle, type VehicleSceneLayer } from '@/rendering/VehicleLayer';
 import {
   completeFireCall,
@@ -382,6 +383,12 @@ export class GameEngine {
   /** our police car's lights (F) */
   /** our police lights (F): off by default */
   private beaconsOn = false;
+  /** all game sound (synthesised) */
+  private audio = new GameAudio();
+  /** trains' lead cars last frame: for their speed (Doppler, clack rate) */
+  private trainHeard = new Map<string, { at: number; front: [number, number] }>();
+  private urbanLevel = 0;
+  private urbanAt = 0;
   /** towed by a train on the cable: the car's own driving is off, the rope pulls it */
   private towed = false;
   private towSpeed = 0;
@@ -703,6 +710,7 @@ export class GameEngine {
       this.combatLayer.onTrainCoin = (point, altitude) => this.trainCoin(point, altitude);
       this.combatLayer.onShotCoins = (from, fromAlt, to, toAlt) => this.shotCollectCoins(from, fromAlt, to, toAlt);
       this.combatLayer.onFireWindowOut = (left) => this.onFireWindowOut(left);
+      this.combatLayer.onShot = (kind) => this.audio.shot(kind);
       this.combatLayer.onTargetDestroyed = (id, position) => {
         this.dropCoins(position);
         if (this.heist && id.startsWith('police')) {
@@ -726,7 +734,10 @@ export class GameEngine {
       target.addEventListener(event, fn, options);
       this.cleanups.push(() => target.removeEventListener(event, fn, options));
     };
+    // browsers keep audio locked until a key or a click
+    listen(window, 'pointerdown', (() => this.audio.unlock()) as EventListener);
     listen(window, 'keydown', ((e: KeyboardEvent) => {
+      this.audio.unlock();
       // M-map only while driving — intro camera stays put
       if (e.code === 'KeyM' && !e.repeat && !this.driving) {
         e.preventDefault();
@@ -744,10 +755,12 @@ export class GameEngine {
       if (e.code === 'KeyC' && !e.repeat) this.swapCar();
       if (e.code === 'KeyH' && !e.repeat) this.tryHijack();
       if (e.code === 'KeyF' && !e.repeat) { this.beaconsOn = !this.beaconsOn; this.combatLayer?.setBeacons(this.beaconsOn); }
+      if (e.code === 'KeyG' && !e.repeat) this.audio.hornOn(true);
       if (e.code === 'KeyM' && !e.repeat) this.toggleOverview();
     }) as EventListener);
     listen(window, 'keyup', ((e: KeyboardEvent) => {
       this.keys.delete(e.code);
+      if (e.code === 'KeyG') this.audio.hornOn(false);
       if (e.code === 'KeyJ') this.commitRamp();
     }) as EventListener);
     const clear = () => {
@@ -1063,6 +1076,7 @@ export class GameEngine {
     const skinChanged = settings.skin !== this.settings.skin;
     this.settings = settings;
     this.map.setSkin(settings.skin);
+    this.audio.setVolume(settings.volume);
     // mid-fire skin swap: snap flames onto the new window grid, keep ~the same burn %
     if (skinChanged && this.fire.active) this.remeshFireForSkin();
     if (!this.mapLoaded) return;
@@ -1651,6 +1665,7 @@ export class GameEngine {
       // every knock that flashes a car red takes health off it: the slower side takes
       // the knock, a hunting bot ramming at speed hurts whoever it rams, and harder
       const impact = Math.abs(a.controller.speed) + Math.abs(b.controller.speed);
+      if (a.id === 'player' || b.id === 'player') this.audio.crash(impact / 40);
       const hunting = (id: string) => this.findBot(id)?.mood === 'hunt';
       const ramming = (id: string) => impact > 6 && hunting(id);
       const hurt = (victim: Body, attacker: Body, slower: boolean) => {
@@ -1957,6 +1972,7 @@ export class GameEngine {
   /** Splash, sink under the surface, then appear on the nearest dry road. */
   private beginPlunge(waterAlt: number) {
     if (this.plunge) return;
+    this.audio.splash();
     this.plunge = { at: performance.now(), waterAlt };
     this.airborne = false;
     this.climb = 0;
@@ -2345,6 +2361,8 @@ export class GameEngine {
       if (Math.hypot(ux * t - dx, uy * t - dy, uu * t - du) > 2.8) continue;
       this.pickups.delete(id);
       if (!pickup.drop) this.collectedPickups.set(id, [...pickup.position] as Position);
+      this.audio.coin();
+      this.combatLayer?.popPickup(id);
       if (pickup.kind === 'cash') {
         money += CASH_BUNDLE;
         if (this.heist) this.heist.cash += CASH_BUNDLE;
@@ -2755,6 +2773,9 @@ export class GameEngine {
         if (metersBetween(position, pickup.position) > (pickup.kind === 'cash' ? 4.5 : 3.5)) continue;
         this.pickups.delete(id);
         if (!pickup.drop) this.collectedPickups.set(id, [...pickup.position] as Position); // gone until we drive away
+        // the coin hops up and falls as it is taken; we hear our own pickups
+        this.combatLayer?.popPickup(id);
+        if (player) this.audio.coin();
         if (pickup.kind === 'cash') {
           money += CASH_BUNDLE;
           if (this.heist) this.heist.cash += CASH_BUNDLE;
@@ -5966,6 +5987,7 @@ export class GameEngine {
           const building = this.collisions.resolve(previous, this.vehicle.position, this.vehicle.heading, 1, this.altitude);
           if (building.stopped) {
             this.vehicle.position = building.position;
+            if (Math.abs(this.vehicle.speed) > 3) this.audio.crash(Math.abs(this.vehicle.speed) / 35);
             this.vehicle.heading = oldHeading;
             this.vehicle.speed = 0;
             blocked = true;
@@ -6183,6 +6205,7 @@ export class GameEngine {
         this.updateSelfMarker();
       }
     }
+    this.soundFrame(now);
     if (now - this.hudTime > 100) {
       this.hudTime = now;
       if (!this.approachFrom) this.saveCamera(now);
@@ -6206,8 +6229,67 @@ export class GameEngine {
     }
   };
 
+  /** The scene as heard this frame: our car, the street, sirens, engines and trains around. */
+  private soundFrame(now: number) {
+    const velocityOf = (speed: number, heading: number): [number, number] => [Math.sin(heading) * speed, Math.cos(heading) * speed];
+    if (now - this.urbanAt > 2000) {
+      this.urbanAt = now;
+      // houses in the collision reach around us: a crowded street hums, a field is quiet
+      this.urbanLevel = Math.min(1, this.collisions.polygons.length / 400);
+    }
+    const alive = (id: string) => this.combatLayer?.isTargetAlive(id) !== false;
+    const police = this.heist
+      ? this.trafficBots.filter((bot) => bot.id.startsWith('police') && alive(bot.id))
+        .map((bot) => ({ id: bot.id, position: bot.position as [number, number], velocity: velocityOf(bot.controller.speed, bot.controller.heading) }))
+      : [];
+    const engines = [
+      ...this.trafficBots.filter((bot) => !bot.id.startsWith('police') && alive(bot.id)),
+      ...this.sharedTraffic.drivenBodies().map((body) => ({ id: body.id, position: body.controller.position, controller: body.controller })),
+    ].map((bot) => ({ id: bot.id, position: bot.position as [number, number], velocity: velocityOf(bot.controller.speed, bot.controller.heading) }));
+    // trains: the lead car of each, its speed from the last frame
+    const trains = [];
+    const seen = new Set<string>();
+    for (const car of this.trainTraffic.poses()) {
+      if (car.index !== 0) continue;
+      seen.add(car.trainId);
+      const last = this.trainHeard.get(car.trainId);
+      const dt = last ? (now - last.at) / 1000 : 0;
+      const velocity: [number, number] = last && dt > 0
+        ? [(car.front[0] - last.front[0]) * 111_319.49 * Math.cos(car.front[1] * Math.PI / 180) / dt, (car.front[1] - last.front[1]) * 111_319.49 / dt]
+        : [0, 0];
+      this.trainHeard.set(car.trainId, { at: now, front: [...car.front] as [number, number] });
+      trains.push({ id: car.trainId, position: [...car.front] as [number, number], velocity, kind: car.kind, vintage: isVintageTrain(car.trainId) });
+    }
+    for (const id of this.trainHeard.keys()) if (!seen.has(id)) this.trainHeard.delete(id);
+    // our own siren while our lights are on
+    const ownSiren = !this.beaconsOn ? null
+      : this.car.id === AMBULANCE_ID ? 'ambulance' as const
+        : POLICE_IDS.has(this.car.id) || this.car.id === FIRE_TRUCK_ID ? 'police' as const : null;
+    const travel = this.vehicle.heading - this.vehicle.slip;
+    this.audio.frame({
+      active: this.driving && !this.paused && !this.approachFrom && !this.plunge,
+      revs: this.vehicle.revs,
+      speed: this.vehicle.speed,
+      throttle: this.keys.has('KeyW') || this.keys.has('ArrowUp'),
+      boost: this.keys.has('Space') && !this.fuel.empty,
+      slip: this.vehicle.slip,
+      litres: this.car.engine,
+      position: this.vehicle.position as [number, number],
+      heading: this.vehicle.heading,
+      velocity: velocityOf(this.vehicle.speed, travel),
+      ear: this.map.cameraRange(),
+      night: this.map.nightLevel(),
+      urban: this.urbanLevel,
+      police,
+      ownSiren,
+      engines,
+      trains,
+    });
+  }
+
   dispose() {
     this.disposed = true;
+    this.audio.dispose();
     this.setMapViewUi(false);
     this.players.dispose();
     this.worldWork = null;

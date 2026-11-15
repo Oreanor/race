@@ -88,6 +88,10 @@ export type VehicleSceneLayer = MapLayer & {
   setPickups: (pickups: PickupVisual[]) => void;
   /** move a pickup already shown (the hauler's cable reels it in) */
   movePickup: (id: string, position: Position) => void;
+  /** a pickup just taken: it hops up, spins and falls, then is gone */
+  popPickup: (id: string) => void;
+  /** each shot of our guns (for its sound) */
+  onShot: (kind: 'gun' | 'water') => void;
   setMissionBeacons: (beacons: MissionBeaconSpec[]) => void;
   setRaceFinish: (goal: Position | null) => void;
   /** fire call: ignite these existing-façade panes; null clears */

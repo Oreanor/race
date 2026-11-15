@@ -63,6 +63,9 @@ type TargetState = TargetVehicle & {
   altitude: number | null;
 };
 
+/** how long a taken coin hops and falls before it is gone (ms) */
+const POP_MS = 820;
+
 export function vehicleLayer(
   car: Car,
   vehicle: Pose,
@@ -436,6 +439,9 @@ export function vehicleLayer(
   /** set by the game: our bullet hit a target */
   let targetHitHandler: (id: string) => void = () => {};
   let targetDestroyedHandler: (id: string, position: Position) => void = () => {};
+  let shotHandler: (kind: 'gun' | 'water') => void = () => {};
+  /** pickups just taken: hop up, spin, fall to the road and vanish */
+  const popping: { position: Position; mesh: THREE.Object3D; ground: number | null; born: number; phase: number }[] = [];
   let hoodSmokeAt = 0;
   let trainCoinHandler: (point: Position, altitude: number) => void = () => {};
   let shotCoinHandler: (from: Position, fromAlt: number, to: Position, toAlt: number) => void = () => {};
@@ -657,6 +663,7 @@ export function vehicleLayer(
     // hose drip / Simpsons pink MG / regular guns
     if (!aim || !map || now - lastShot < (water ? 14 : family ? 28 : 50)) return;
     lastShot = now;
+    shotHandler(water ? 'water' : 'gun');
     const carAlt = height();
 
     // Hose: mouse Y = launch elevation; azimuth toward the aim. No auto-hit —
@@ -1219,6 +1226,15 @@ export function vehicleLayer(
       maxHp: targetMaxHp,
     })),
     setPickups,
+    popPickup(id) {
+      const pickup = pickups.get(id);
+      if (!pickup) return;
+      pickups.delete(id);
+      popping.push({ position: [...pickup.position] as Position, mesh: pickup.mesh, ground: pickup.ground, born: performance.now(), phase: pickup.phase });
+      map?.triggerRepaint();
+    },
+    get onShot() { return shotHandler; },
+    set onShot(handler: (kind: 'gun' | 'water') => void) { shotHandler = handler; },
     movePickup(id, position) {
       const pickup = pickups.get(id);
       if (!pickup) return;
@@ -1456,6 +1472,24 @@ export function vehicleLayer(
           pickup.mesh.position.copy(scenePoint(here, pickup.position, heading, lift + 0.42 + Math.sin(now * 0.002 + pickup.phase) * 0.07));
           pickup.mesh.rotation.y = now * 0.0007;
         }
+      }
+      // a taken coin: jumps ~0.9 m up spinning fast, falls back past its hover onto the road
+      // and shrinks away there (POP_MS in all)
+      for (let i = popping.length - 1; i >= 0; i--) {
+        const pop = popping[i];
+        const t = (now - pop.born) / 1000;
+        if (t * 1000 >= POP_MS) {
+          scene.remove(pop.mesh);
+          popping.splice(i, 1);
+          continue;
+        }
+        if (pop.ground == null) pop.ground = map.groundAt(pop.position);
+        const lift = (pop.ground ?? height()) - height();
+        const up = Math.max(0.05, 0.78 + 5.5 * t - 9 * t * t);
+        pop.mesh.position.copy(scenePoint(here, pop.position, heading, lift + up));
+        pop.mesh.rotation.y = pop.phase + t * 22;
+        const fade = Math.min(1, Math.max(0, (POP_MS / 1000 - t) / 0.18));
+        pop.mesh.scale.setScalar(Math.max(0.001, fade));
       }
       if (ramp) {
         // grow in / shrink away over a quarter second instead of popping
