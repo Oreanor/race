@@ -339,7 +339,18 @@ export function planRoadNetwork(ways: Map<number, RoadWay>, extent: number, span
       const up = lifted(i); if (i + 1 < pts.length && up === lifted(i + 1)) continue;
       if (up) {
         planned.decks.push({ pts: pts.slice(start, i + 1), s: s.slice(start, i + 1).map(v => v - s[start]), h: h.slice(start, i + 1), bed: bed.slice(start, i + 1), length: s[i] - s[start], frame: frames.slice(start, i + 1), half: widths.slice(start, i + 1) });
-      } else planned.rest.push(pts.slice(start, i + 1).map(([x, z]) => ({ x: x / k, y: z / k })));
+      } else {
+        // The graph needs dense stations for solving approaches; the unchanged
+        // ground mesh does not. Keep real vertices and junctions, and remove
+        // only the extra collinear samples introduced by the solver.
+        const originals = new Set(r.pts.map(([x, z]) => `${Math.round(x * 1e6)},${Math.round(z * 1e6)}`));
+        const run = pts.slice(start, i + 1).filter(([x, z], j, ps) => {
+          if (j === 0 || j === ps.length - 1 || nodes[ids[start + j]].edges.length > 2 || originals.has(`${Math.round(x * 1e6)},${Math.round(z * 1e6)}`)) return true;
+          const a = ps[j - 1], b = ps[j + 1];
+          return Math.abs((x - a[0]) * (b[1] - z) - (z - a[1]) * (b[0] - x)) > 1e-7;
+        });
+        planned.rest.push(run.map(([x, z]) => ({ x: x / k, y: z / k })));
+      }
       start = i;
     }
     plan.set(r.id, planned);
