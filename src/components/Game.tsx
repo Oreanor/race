@@ -580,7 +580,25 @@ export default function Game() {
 
   useEffect(() => engine.current?.applySettings(settings), [settings]);
   useEffect(() => engine.current?.setMapLabelFilters(mapLabels), [mapLabels]);
-  useEffect(() => engine.current?.setDriving(driving), [driving]);
+  useEffect(() => {
+    const game = engine.current;
+    if (!game) return;
+    // the engine may refuse (the car not affordable after all): back to the intro, where
+    // its reason shows, instead of a hidden plaque and a camera waiting for nothing
+    if (!game.setDriving(driving) && driving) {
+      setDriving(false);
+      setApproaching(false);
+      return;
+    }
+    if (!driving) return;
+    // and should the fly-in never start or never report its end, do not hang on it
+    const timer = window.setTimeout(() => {
+      if (engine.current !== game) return;
+      if (!game.driving) { setDriving(false); setApproaching(false); }
+      else if (!game.approaching) setApproaching(false);
+    }, 4000);
+    return () => window.clearTimeout(timer);
+  }, [driving]);
 
   const toggleMapLabel = useCallback((kind: MapLabelKind) => {
     setMapLabels((prev) => {

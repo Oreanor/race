@@ -5413,7 +5413,8 @@ export class GameEngine {
   /** the camera is still flying in from the menu view (HUD waits for it) */
   get approaching() { return this.approachFrom != null; }
 
-  setDriving(value: boolean, approach = true) {
+  /** Into the car (or out). False when it could not start (the car is not affordable). */
+  setDriving(value: boolean, approach = true): boolean {
     // the view from above belongs to one mode; switching modes lands back on the ground
     this.overview = 0;
     this.overviewTarget = 0;
@@ -5462,7 +5463,7 @@ export class GameEngine {
       this.approachFrom = null;
       if (moving) this.onApproach(false);
       if (this.mapShown) this.showIntroMap();
-      return;
+      return true;
     }
     if (this.spawnMarker) {
       const el = this.spawnMarker.getElement();
@@ -5483,7 +5484,7 @@ export class GameEngine {
       if (price > this.playerMoney) {
         this.driving = false;
         this.say(t('event.broke', { fee: formatNumber(price) }), true);
-        return;
+        return false;
       }
       this.playerMoney -= price;
       this.garage.add(this.car.id);
@@ -5500,7 +5501,7 @@ export class GameEngine {
       this.approachFrom = { lng: center.lng, lat: center.lat, zoom: this.map.getZoom(), pitch: this.map.getPitch(), bearing: this.map.getBearing() };
       this.approachAt = performance.now();
       this.onApproach(true);
-      return;
+      return true;
     }
     // Save resume / arrive: sit in chase cam on the first frame (no intro fly-in)
     if (starting && this.mapShown) {
@@ -5523,6 +5524,10 @@ export class GameEngine {
       });
       this.bootBurstUntil = 0;
     }
+    // no fly-in this time (already driving, or straight into the chase cam): the page must
+    // not wait for one
+    if (this.approachFrom == null) this.onApproach(false);
+    return true;
   }
 
   noteFrame(now: number) {
