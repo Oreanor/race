@@ -159,6 +159,8 @@ const CAMERA_STORE = 'race.camera';
 const RACE_LOOK_M = 400;
 /** on the run: how often a patrol in the traffic may join the chase (ms) */
 const POLICE_JOIN_MS = 20_000;
+/** the odds of a patrol joining at each POLICE_JOIN_MS check */
+const POLICE_JOIN_CHANCE = 0.25;
 /** an event left farther away than this (m) moves to a new spot near us */
 const MISSION_STALE_M = 3500;
 /** hit a wall faster than this (km/h) and coins jump out of it (3; 5 from 150, 10 from 200) */
@@ -2719,14 +2721,14 @@ export class GameEngine {
       this.sendPolice(heist.reinforce, true);
       heist.reinforce = 0;
     }
-    // on the run, a patrol out in the traffic may spot us and join in: every 20 s a coin
-    // toss, 1–3 cars at a time, up to 6 after us at once (14 in a chase at most, see sendPolice)
+    // on the run, a patrol out in the traffic may spot us and join in: every 20 s one
+    // chance in four (a slow stolen car is a long chase), 1–3 cars at a time, up to 6 after us at once (14 in a chase at most, see sendPolice)
     const nowJoin = performance.now();
     heist.joinAt ??= nowJoin + POLICE_JOIN_MS;
     if (nowJoin >= heist.joinAt) {
       heist.joinAt = nowJoin + POLICE_JOIN_MS;
       const after = this.trafficBots.filter((bot) => bot.id.startsWith('police') && this.combatLayer?.isTargetAlive(bot.id) !== false).length;
-      if (after > 0 && after < 6 && Math.random() < 0.5) {
+      if (after > 0 && after < 6 && Math.random() < POLICE_JOIN_CHANCE) {
         heist.joined = (heist.joined ?? 0) + 1;
         // a patrol is one to three cars at a time
         this.sendPolice(Math.min(1 + Math.floor(Math.random() * 3), 6 - after), true);
