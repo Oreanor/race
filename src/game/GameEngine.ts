@@ -161,6 +161,10 @@ const RACE_LOOK_M = 400;
 const POLICE_JOIN_MS = 20_000;
 /** the odds of a patrol joining at each POLICE_JOIN_MS check */
 const POLICE_JOIN_CHANCE = 0.25;
+/** no patrol joins once the nearest police car is this far behind (m): we are getting away */
+const POLICE_JOIN_NEAR_M = 350;
+/** the patrol car's top speed (Fleetline, m/s): a stolen car slower than this draws one patrol car at a time */
+const POLICE_CAR_SPEED = 150 / 3.6;
 /** an event left farther away than this (m) moves to a new spot near us */
 const MISSION_STALE_M = 3500;
 /** hit a wall faster than this (km/h) and coins jump out of it (3; 5 from 150, 10 from 200) */
@@ -2727,11 +2731,16 @@ export class GameEngine {
     heist.joinAt ??= nowJoin + POLICE_JOIN_MS;
     if (nowJoin >= heist.joinAt) {
       heist.joinAt = nowJoin + POLICE_JOIN_MS;
-      const after = this.trafficBots.filter((bot) => bot.id.startsWith('police') && this.combatLayer?.isTargetAlive(bot.id) !== false).length;
-      if (after > 0 && after < 6 && Math.random() < POLICE_JOIN_CHANCE) {
+      const hunters = this.trafficBots.filter((bot) => bot.id.startsWith('police') && this.combatLayer?.isTargetAlive(bot.id) !== false);
+      const after = hunters.length;
+      // pulling away from them (the nearest well behind): nobody new takes it up
+      const nearest = Math.min(...hunters.map((bot) => metersBetween(this.vehicle.position, bot.position)));
+      if (after > 0 && after < 6 && nearest < POLICE_JOIN_NEAR_M && Math.random() < POLICE_JOIN_CHANCE) {
         heist.joined = (heist.joined ?? 0) + 1;
-        // a patrol is one to three cars at a time
-        this.sendPolice(Math.min(1 + Math.floor(Math.random() * 3), 6 - after), true);
+        // a patrol is one to three cars at a time; one in a car slower than theirs
+        const slow = this.car.maxSpeed < POLICE_CAR_SPEED;
+        const patrol = slow ? 1 : 1 + Math.floor(Math.random() * 3);
+        this.sendPolice(Math.min(patrol, 6 - after), true);
         this.say(t('heist.joined'), true);
       }
     }
