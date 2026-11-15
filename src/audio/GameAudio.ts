@@ -165,7 +165,7 @@ export class GameAudio {
     const a = ctx.createOscillator(); a.type = 'sawtooth';
     const b = ctx.createOscillator(); b.type = 'square';
     const mix = ctx.createGain(); mix.gain.value = 0.5;
-    const drive = ctx.createWaveShaper(); drive.curve = this.curve(1.5);
+    const drive = ctx.createWaveShaper(); drive.curve = this.curve(1.3);
     const filter = ctx.createBiquadFilter(); filter.type = 'lowpass'; filter.Q.value = 0.9;
     const gain = ctx.createGain(); gain.gain.value = 0;
     a.connect(mix); b.connect(mix); mix.connect(drive); drive.connect(filter); filter.connect(gain); gain.connect(out);
@@ -228,18 +228,19 @@ export class GameAudio {
     // the boost growls: a harder clip (swapped only when it changes)
     if (f.boost !== this.boosting) {
       this.boosting = f.boost;
-      this.engine.drive.curve = this.curve(f.boost ? 4 : 1.5);
+      this.engine.drive.curve = this.curve(f.boost ? 2.2 : 1.3);
     }
     const engineLevel = (0.09 + (f.throttle ? 0.07 : 0) + clamp(f.revs) * 0.06 + (f.boost ? 0.05 : 0)) * on;
     this.engine.gain.gain.setTargetAtTime(engineLevel, t, smooth);
     // ---- tyres: squeal on a big slide at speed
-    const squeal = clamp((Math.abs(f.slip) - 0.25) * 1.8) * clamp(Math.abs(f.speed) / 12);
+    // only a real slide: an everyday corner already drifts up to ~0.42 rad without a sound
+    const squeal = clamp((Math.abs(f.slip) - 0.46) * 2.5) * clamp(Math.abs(f.speed) / 12);
     this.tyres.gain.gain.setTargetAtTime(squeal * 0.16 * on, t, 0.04);
     this.tyres.filter.frequency.setTargetAtTime(2000 + squeal * 700, t, 0.05);
     // ---- wind with speed
     const rush = clamp(Math.abs(f.speed) / 70);
-    this.wind.gain.gain.setTargetAtTime(rush * rush * 0.22 * on, t, 0.2);
-    this.wind.filter.frequency.setTargetAtTime(400 + rush * 1600, t, 0.2);
+    this.wind.gain.gain.setTargetAtTime(rush * rush * 0.1 * on, t, 0.3);
+    this.wind.filter.frequency.setTargetAtTime(300 + rush * 700, t, 0.3);
     // ---- the town by day, softer at night; nearly nothing out in the fields
     this.town.gain.gain.setTargetAtTime(f.urban * (0.11 - 0.07 * f.night) * on, t, 0.8);
     // ---- sirens: the police after us, and ours
