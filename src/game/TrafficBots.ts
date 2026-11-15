@@ -67,6 +67,18 @@ class MinQueue {
   }
 }
 
+/** a line's lng/lat box, worked out once */
+const lineBoxes = new WeakMap<Position[], [number, number, number, number]>();
+function lineBox(line: Position[]) {
+  let box = lineBoxes.get(line);
+  if (!box) {
+    box = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const p of line) { box[0] = Math.min(box[0], p[0]); box[1] = Math.min(box[1], p[1]); box[2] = Math.max(box[2], p[0]); box[3] = Math.max(box[3], p[1]); }
+    lineBoxes.set(line, box);
+  }
+  return box;
+}
+
 export class TrafficRoadNetwork {
   private lines = new Map<string, Position[]>();
   private nodes = new Map<string, RoadNode>();
@@ -159,6 +171,26 @@ export class TrafficRoadNetwork {
     this.ensureBuilt();
     let best: RoadNode | null = null;
     let bestDistance = maxDistance;
+    // ring by ring through the 8 m cells round the point (a whole city of nodes took ~7 ms)
+    const rings = Math.ceil(maxDistance / 8) + 1;
+    if (rings <= 64) {
+      const cx = Math.floor(position[0] * this.scaleX / 8), cy = Math.floor(position[1] * METERS_PER_DEGREE / 8);
+      for (let r = 0; r <= rings; r++) {
+        // nothing in this ring can beat what we have
+        if ((r - 1) * 8 > bestDistance) break;
+        for (let dx = -r; dx <= r; dx++) for (let dy = -r; dy <= r; dy++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+          for (const node of this.spatialCells.get(`${cx + dx}:${cy + dy}`) ?? []) {
+            if (excluded.has(node.id)) continue;
+            const distance = metersBetween(node.position, position);
+            if (distance < separation || distance >= bestDistance) continue;
+            best = node;
+            bestDistance = distance;
+          }
+        }
+      }
+      return best;
+    }
     for (const node of this.nodes.values()) {
       if (excluded.has(node.id)) continue;
       const distance = metersBetween(node.position, position);
@@ -207,7 +239,11 @@ export class TrafficRoadNetwork {
   kerbSpots(center: Position, radius = 600, spacing = 90, side = 4.4): { id: string; position: Position; heading: number; on: Position }[] {
     const out: { id: string; position: Position; heading: number; on: Position }[] = [];
     const ids = new Set<string>();
+    // only roads whose box reaches the circle: a big city has tens of thousands of ways
+    const rx = radius / this.scaleX, ry = radius / METERS_PER_DEGREE;
     for (const [key, line] of this.lines) {
+      const box = lineBox(line);
+      if (box[0] > center[0] + rx || box[2] < center[0] - rx || box[1] > center[1] + ry || box[3] < center[1] - ry) continue;
       let traveled = 0;
       let h = 2166136261;
       for (let i = 0; i < key.length; i++) h = Math.imul(h ^ key.charCodeAt(i), 16777619);

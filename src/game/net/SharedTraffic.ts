@@ -10,12 +10,14 @@ import { METERS_PER_DEGREE, metersBetween, VehicleController, type Position } fr
 // Their bullets reach the driver, who keeps the cars' health; a car blown up is
 // replaced after a while. Playing alone, you drive your own.
 
-/** cars driven at a time */
-const COUNT = Math.min(6, TRAFFIC_MAX);
+/** cars driven at a time (only the nearest go out to the others: TRAFFIC_MAX a message) */
+const COUNT = 30;
 /** players closer than this share one driver */
 const LEAD_RANGE = 1500;
 /** new cars appear this far away (m), out of the way */
 const SPAWN = { min: 160, max: 520 };
+/** cars farther than this (m) are moved every third frame */
+const FAR_STEP = 350;
 /** a car this far behind is dropped for a new one nearby (m) */
 const DROP = 1100;
 /** a wreck stays this long before a new car comes (ms) */
@@ -88,6 +90,12 @@ export class SharedTraffic {
   private spent = new Map<string, Position>();
   private parkAt = 0;
   private parkedOnce = false;
+  /** where and when the kerb was last walked */
+  private parkedFrom: Position | null = null;
+  private parkedWhen = 0;
+  /** frames counted for the far cars, which move every third frame */
+  private frame = 0;
+  private farDt = new Map<string, number>();
   /** others' parked cars we took: hidden until their owner stops sending them */
   private taken = new Set<string>();
   /** the car of ours the hauler holds: nothing drives it, it stands where it is put */
@@ -237,6 +245,10 @@ export class SharedTraffic {
     if (now < this.parkAt) return;
     this.parkAt = now + 1000;
     const here = this.host.vehicle.position;
+    // the kerb is walked again only after 40 m on (or 3 s): standing still it changes nothing
+    if (this.parkedFrom && metersBetween(this.parkedFrom, here) < 40 && now - this.parkedWhen < 3000) return;
+    this.parkedFrom = [...here] as Position;
+    this.parkedWhen = now;
     const me = this.host.myId() ?? 'me';
     const layer = this.host.layer();
     this.parked = this.parked.filter((p) => {
@@ -288,7 +300,8 @@ export class SharedTraffic {
     // the police first: the server keeps only the first TRAFFIC_MAX
     const cars: TrafficCar[] = [
       ...this.host.extras().map((c) => ({ ...c, id: `${me}:${c.id}`, p: at(c.p), h: r(c.h), s: r(c.s, 100) })),
-      ...this.driven.map(({ bot }) => ({
+      // the nearest first: past TRAFFIC_MAX the server keeps none
+      ...[...this.driven].sort((a, b) => metersBetween(a.bot.position, this.host.vehicle.position) - metersBetween(b.bot.position, this.host.vehicle.position)).map(({ bot }) => ({
         id: bot.id, car: bot.car.id, p: at(bot.position), h: r(bot.heading), s: r(bot.controller.speed, 100),
         hp: Math.round(layer?.targetHp(bot.id) ?? 1000),
       })),
@@ -349,16 +362,25 @@ export class SharedTraffic {
     });
     // a new car now and then, out of sight down some road
     if (this.driven.length < COUNT && now >= this.spawnAt) {
-      this.spawnAt = now + 1500;
+      this.spawnAt = now + 600;
       const car = carsConfig[Math.floor(Math.random() * carsConfig.length)];
       const taken = new Set<string>();
       const bot = createTrafficBot(`${me}:t${this.serial++}`, car.name, car, this.host.network, here, this.host.vehicle.heading, taken, 'explore', Math.floor(Math.random() * 1e6), SPAWN);
       // no road found: it would sit on top of us
       if (metersBetween(bot.position, here) >= SPAWN.min * 0.6) this.driven.push({ bot, deadAt: 0 });
     }
+    this.frame++;
     for (const d of this.driven) {
       if (d.deadAt || d.bot.id === this.held) continue;
       const hunting = d.bot.mood === 'hunt';
+      let step = dt;
+      // far off (out of the way, mostly out of sight) a car moves every third frame, the time saved up
+      if (!hunting && metersBetween(d.bot.position, here) > FAR_STEP) {
+        const saved = (this.farDt.get(d.bot.id) ?? 0) + dt;
+        if (this.frame % 3 !== 0) { this.farDt.set(d.bot.id, saved); continue; }
+        this.farDt.delete(d.bot.id);
+        step = Math.min(saved, 0.1);
+      }
       // provoked cars push harder so they can catch up and return fire
       const config = hunting
         ? { ...vehicleConfig, acceleration: Math.max(d.bot.car.acceleration, 11), maxSpeed: Math.max(Math.min(d.bot.car.maxSpeed, 22), 18) }
@@ -373,7 +395,7 @@ export class SharedTraffic {
       const direct = hunting && metersBetween(d.bot.position, here) < 120
         ? ([...here] as Position)
         : null;
-      advanceTrafficBot(d.bot, dt, this.host.network, config, peers, obstacles, direct);
+      advanceTrafficBot(d.bot, step, this.host.network, config, peers, obstacles, direct);
       // never through a house (going round us or turning about it may leave the road)
       const hit = this.host.hitWalls(before, d.bot.controller.position, d.bot.controller.heading);
       if (hit.stopped || hit.slid) {

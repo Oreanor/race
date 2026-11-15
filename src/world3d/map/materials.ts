@@ -19,7 +19,7 @@ export { facadeMask, farBuildingMaterial } from './facadeMaterial.ts';
 export type GroundLook = 'realistic' | 'stylized' | 'off';
 
 /** one tiling repeat of the detail map (m) */
-const DETAIL_REPEAT = 2.6;
+const DETAIL_REPEAT = 9;
 
 /**
  * The ground's detail map, shared by the ground, land-use and road shaders: R grass,
