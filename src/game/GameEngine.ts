@@ -5297,6 +5297,9 @@ export class GameEngine {
 
   revealMap() {
     if (this.mapShown || this.disposed) return;
+    // never an intro before the run's purse and garage are in (whatever way the spawn
+    // was settled): the intro and the engine must agree on what we own
+    if (!this.runReady) this.setTargetVehicles([...this.vehicle.position] as [number, number], this.vehicle.heading);
     this.mapShown = true;
     // The ring is prepared while hidden. Visible frames use the normal upload budget.
     this.map.endStreamBurst();
@@ -5327,6 +5330,9 @@ export class GameEngine {
         else {
           this.spawnResolved = true;
           this.defaultSpawn = { position: [...this.vehicle.position], heading: this.vehicle.heading };
+          // the run's purse and garage too: without them the intro offers a car the engine
+          // then will not start ("not enough money"), the page left waiting for nothing
+          this.setTargetVehicles(this.defaultSpawn.position, this.defaultSpawn.heading);
           this.placeSpawnMarker(this.defaultSpawn.position);
         }
       }
