@@ -5304,6 +5304,10 @@ export class GameEngine {
     this.host.style.opacity = '1';
     this.onBoot(true);
     this.say(t('status.ready'));
+    // With the intro visible, keep streaming chase tiles around the car: the hidden-boot
+    // burst only warmed the intro's top-down ring, so "Drive" otherwise flies into blank fog.
+    this.map.beginStreamBurst();
+    this.bootBurstUntil = performance.now() + 2000;
   }
 
   private tickStreamBurst(now = performance.now()) {
