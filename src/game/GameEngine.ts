@@ -157,6 +157,8 @@ const wrapDegrees = (deg: number) => ((deg + 180) % 360 + 360) % 360 - 180;
 const CAMERA_STORE = 'race.camera';
 /** a racer looks this far (m) straight toward the flag: clear of houses and water → it cuts across */
 const RACE_LOOK_M = 400;
+/** hit a wall faster than this (km/h) and three coins jump out of it */
+const WALL_COIN_KMH = 100;
 /** coin grids on open fields: one candidate per this big square of the world (m) */
 const FIELD_CELL_M = 1000;
 /** …coins this far apart (m) */
@@ -2760,6 +2762,28 @@ export class GameEngine {
   }
 
   /** Coins fly out (ten from a wreck, one from a tree) and roll a couple of metres before they lie still. */
+  /**
+   * Coins jumping out of a wall we hit hard, the way bundles fly out of a bank's door:
+   * from the wall at the bumper they bounce out 1.5–4.5 m, anywhere on our side of it.
+   */
+  private wallCoins(at: [number, number], heading: number) {
+    const now = performance.now();
+    const nose = this.car.length * 0.55;
+    const wall = offsetPosition(at, Math.sin(heading) * nose, Math.cos(heading) * nose) as [number, number];
+    for (let i = 0; i < 3; i++) {
+      // away from the wall: the half-circle behind the bumper
+      const angle = heading + Math.PI + (Math.random() - 0.5) * Math.PI;
+      let r = 1.5 + Math.random() * 3;
+      let rest = offsetPosition(wall, Math.sin(angle) * r, Math.cos(angle) * r) as [number, number];
+      while (r > 0.6 && this.collisions.sightBlocked(wall, rest)) {
+        r *= 0.5;
+        rest = offsetPosition(wall, Math.sin(angle) * r, Math.cos(angle) * r) as [number, number];
+      }
+      this.pickups.set(`drop:${this.dropSerial++}`, { position: rest, color: '#f2c230', kind: 'coin', drop: { from: wall, at: now } });
+    }
+    this.combatLayer?.setPickups(this.pickupVisuals());
+  }
+
   private dropCoins(at: [number, number], count = 10) {
     const now = performance.now();
     for (let i = 0; i < count; i++) {
@@ -6003,6 +6027,8 @@ export class GameEngine {
           if (building.stopped) {
             this.vehicle.position = building.position;
             if (Math.abs(this.vehicle.speed) > 3) this.audio.crash(Math.abs(this.vehicle.speed) / 35);
+            // a wall taken faster than 100 km/h coughs up three coins
+            if (Math.abs(this.vehicle.speed) > WALL_COIN_KMH / 3.6) this.wallCoins(building.position as [number, number], oldHeading);
             this.vehicle.heading = oldHeading;
             this.vehicle.speed = 0;
             blocked = true;
