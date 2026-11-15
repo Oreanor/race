@@ -227,15 +227,19 @@ export function buildVegetation(
   const fell: number[] = [];
   const inside = (x: number, z: number) => x >= 0 && z >= 0 && x < span && z < span;
 
-  /** Plant one specimen of a species. `w`/`h` stretch it (hedges), `s` is its size. */
-  const plant = (id: string, x: number, z: number, yaw: number, s: number, seed: number, w = 1, h = 1) => {
+  /**
+   * Plant one specimen of a species. `w`/`h` stretch it, `s` is its size; `shape`
+   * puts the species' colours on another base shape (a hedge of boxwood).
+   */
+  const plant = (id: string, x: number, z: number, yaw: number, s: number, seed: number, w = 1, h = 1, shape?: FloraModel) => {
     const variant = VARIANTS[id];
     if (!variant) return;
-    const m = FLORA_MODELS.indexOf(variant.model);
+    const m = FLORA_MODELS.indexOf(shape ?? variant.model);
     const set = flora[m];
     const ground = groundAt(x, z);
     const r1 = hash(Math.round(x * 97), Math.round(z * 97), 5), r2 = hash(Math.round(x * 89), Math.round(z * 89), 9);
-    const lean = (5 * Math.PI / 180) * (variant.model.startsWith('tree') ? 1 : 0.4);
+    // a hedge stands straight: tilted sections would break the line
+    const lean = shape === 'hedge' ? 0 : (5 * Math.PI / 180) * (variant.model.startsWith('tree') ? 1 : 0.4);
     set.tree(x, z, yaw, (r1 - 0.5) * 2 * lean, (r2 - 0.5) * 2 * lean, variant.w * s * w, variant.h * s * h, toMerc, ground);
     // each specimen its own shade of the species' colour
     const light = 1 + (seed - 0.5) * 0.24, warm = (r1 - 0.5) * 0.08;
@@ -268,8 +272,8 @@ export function buildVegetation(
   const slot = { plane: 0, jacaranda: 1, pine: 2, cypress: 3 } as const;
   for (const p of streets.plants) {
     if (p.species === 'hedge') {
-      // one clipped section ~4 m long, overlapping the next: reads as a continuous hedge
-      if (preset.hedge) plant(preset.hedge, p.x, p.z, p.yaw, 1, 0.5, 2.1, 0.75);
+      // one clipped section 3.8 m long, overlapping the next: reads as a continuous hedge
+      if (preset.hedge) plant(preset.hedge, p.x, p.z, p.yaw, 1, 0.5, 1, 1, 'hedge');
       continue;
     }
     if (!preset.street.length) continue;

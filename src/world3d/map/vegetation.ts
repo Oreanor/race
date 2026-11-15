@@ -11,7 +11,7 @@ import { instanceGroups } from './instanceGroups.ts';
 export const FLORA_FAR = 450;
 /** and beyond this, shrubs, grass and succulents are not drawn at all */
 export const FLORA_SMALL_HIDE = 700;
-const SMALL = new Set(FLORA_MODELS.map((id, i) => (/^(bush|grass|succulent)/.test(id) ? i : -1)).filter((i) => i >= 0));
+const SMALL = new Set(FLORA_MODELS.map((id, i) => (/^(bush|grass|succulent|hedge)/.test(id) ? i : -1)).filter((i) => i >= 0));
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 const pieces = createPieceGeometries();

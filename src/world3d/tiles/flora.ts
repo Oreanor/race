@@ -8,7 +8,7 @@
 export const FLORA_MODELS = [
   'tree_round', 'tree_spreading', 'tree_columnar', 'tree_birch_airy', 'tree_spruce', 'tree_pine',
   'tree_pine_umbrella', 'tree_gnarled', 'tree_acacia', 'tree_palm', 'tree_tropical', 'tree_eucalyptus',
-  'bush_round', 'bush_dry', 'grass_tuft', 'succulent',
+  'bush_round', 'bush_dry', 'grass_tuft', 'succulent', 'hedge',
 ] as const;
 export type FloraModel = typeof FLORA_MODELS[number];
 
@@ -16,7 +16,7 @@ export type FloraModel = typeof FLORA_MODELS[number];
 export const MODEL_HEIGHT: Record<FloraModel, number> = {
   tree_round: 9, tree_spreading: 10, tree_columnar: 13, tree_birch_airy: 12, tree_spruce: 15, tree_pine: 16,
   tree_pine_umbrella: 12, tree_gnarled: 6, tree_acacia: 8, tree_palm: 11, tree_tropical: 20, tree_eucalyptus: 17,
-  bush_round: 1.5, bush_dry: 1.1, grass_tuft: 0.7, succulent: 1.1,
+  bush_round: 1.5, bush_dry: 1.1, grass_tuft: 0.7, succulent: 1.1, hedge: 1.08,
 };
 
 /** 0 evergreen, 1 deciduous (bare in winter), 2 semi / drought deciduous (thins out), 3 seasonal grass. */
