@@ -209,10 +209,6 @@ export class ThreeMap {
     // contrast. Done by the compositor, so it costs next to nothing
     this.canvas.style.filter = 'saturate(1.12) contrast(1.06)';
     this.container.appendChild(this.canvas);
-    // a soft vignette: the corners a touch darker, the eye goes to the middle (free: CSS)
-    const vignette = document.createElement('div');
-    vignette.style.cssText = 'position:absolute;inset:0;pointer-events:none;z-index:1;background:radial-gradient(ellipse at 50% 55%, rgba(0,0,0,0) 55%, rgba(0,0,0,0.26) 100%)';
-    this.container.appendChild(vignette);
     this.markerLayer = document.createElement('div');
     this.markerLayer.style.cssText = 'position:absolute;inset:0;overflow:hidden;pointer-events:none;z-index:2';
     this.container.appendChild(this.markerLayer);

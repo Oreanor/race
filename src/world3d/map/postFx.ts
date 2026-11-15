@@ -78,7 +78,7 @@ export class PostFx {
   private readonly blur = this.material(BLUR, { uSource: { value: null }, uStep: { value: new THREE.Vector2() } });
   private readonly final = this.material(FINAL, {
     uFrame: { value: null }, uBloom: { value: null },
-    uExposure: { value: 0.92 }, uBloomStrength: { value: 0.3 }, uVignette: { value: 0.16 },
+    uExposure: { value: 0.92 }, uBloomStrength: { value: 0.3 }, uVignette: { value: 0.06 },
   });
 
   constructor() {
