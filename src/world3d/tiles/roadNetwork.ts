@@ -313,10 +313,16 @@ export function planRoadNetwork(ways: Map<number, RoadWay>, extent: number, span
     const miter = Math.min(2, 2 / len);
     return [-sumZ / len * miter, sumX / len * miter];
   };
+  const routeFrame = (ids: number[], i: number): RoadPoint => {
+    const closed = ids.length > 2 && ids[0] === ids[ids.length - 1];
+    const prev = i > 0 ? ids[i - 1] : closed ? ids[ids.length - 2] : undefined;
+    const next = i + 1 < ids.length ? ids[i + 1] : closed ? ids[1] : undefined;
+    return frame(ids[i], prev, next);
+  };
   // Cross slopes matter too: checking the axis alone lets the ground cut
   // through a wide deck, which looks like holes inside an otherwise sound span.
   for (const route of routes) if (route.way.bridge && route.nodes.length >= 2) route.nodes.forEach((id, i, ids) => {
-    const n = nodes[id], f = frame(id, ids[i - 1], ids[i + 1]);
+    const n = nodes[id], f = routeFrame(ids, i);
     for (const side of [-1, 1]) n.floor = Math.max(n.floor, at.driveAt(n.p[0] + f[0] * n.half * side, n.p[1] + f[1] * n.half * side));
   });
   solveHeights(nodes, arcs);
@@ -326,7 +332,7 @@ export function planRoadNetwork(ways: Map<number, RoadWay>, extent: number, span
     if (ids.length < 2) continue;
     for (let i = 1; i < pts.length; i++) s.push(s[i - 1] + distance(pts[i - 1], pts[i]));
     const h = ids.map(id => nodes[id].h), bed = pts.map(p => at.groundAt(...p));
-    const frames = ids.map((id, i) => frame(id, ids[i - 1], ids[i + 1]));
+    const frames = ids.map((_, i) => routeFrame(ids, i));
     const native = (r.way.half ?? (r.way.foot ? 1 : r.way.rail ? 3.4 : 4.2)) * at.toMerc;
     // A width change tapers along the approach, rather than jumping at a split
     // feature. The station at a join takes the larger connected half width.
@@ -335,7 +341,11 @@ export function planRoadNetwork(ways: Map<number, RoadWay>, extent: number, span
     for (let i = 1; i < widths.length; i++) widths[i] = Math.max(widths[i], widths[i - 1] - taper * (s[i] - s[i - 1]));
     for (let i = widths.length - 2; i >= 0; i--) widths[i] = Math.max(widths[i], widths[i + 1] - taper * (s[i + 1] - s[i]));
     const planned = plan.get(r.id) ?? { decks: [], rest: [] };
-    const lifted = (i: number) => r.way.bridge || h[i - 1] - at.driveAt(...pts[i - 1]) > 0.03 || h[i] - at.driveAt(...pts[i]) > 0.03;
+    // Small changes from snapping a junction are pavement tolerances, not an
+    // elevated structure. Otherwise a 4 cm correction made isolated flat slabs
+    // on a sloping roundabout, with different edges from the draped carriageway.
+    const elevated = r.way.bridge || h.some((height, i) => height - at.driveAt(...pts[i]) > 0.15);
+    const lifted = (i: number) => elevated && (r.way.bridge || h[i - 1] - at.driveAt(...pts[i - 1]) > 0.03 || h[i] - at.driveAt(...pts[i]) > 0.03);
     let start = 0;
     for (let i = 1; i < pts.length; i++) {
       const up = lifted(i); if (i + 1 < pts.length && up === lifted(i + 1)) continue;

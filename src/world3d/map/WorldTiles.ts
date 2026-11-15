@@ -904,12 +904,11 @@ export class WorldTiles {
     const [cx, cy] = live.data.corner;
     const x = mercatorX(lng) - cx, z = cy - mercatorY(lat);
     const u = x / span, v = z / span;
-    // driveHeights keep the dry bank; visual `heights` are dipped for the shore mesh
-    const drive = live.data.ground.driveHeights ?? live.data.ground.heights;
-    let ground = gridGround(drive, this.options.grid, u, v);
-    // carved baths are only visual — don't drop the car into a 2 m hole (launches on the way out)
+    // The visible terrain is the support. A separate smoothed dry-bank grid
+    // could sit metres above it and create invisible floors and floating roads.
+    const visual = gridGround(live.data.ground.heights, this.options.grid, u, v);
     const water = gridWaterLevel(live.data.ground.waterLevel, this.options.grid, u, v);
-    ground = driveTerrainHeight(gridGround(live.data.ground.heights, this.options.grid, u, v), ground, water);
+    const ground = driveTerrainHeight(visual, water);
     // The exact triangles drawn as pavement, including their shoulder widths and
     // bends. Select a storey with the car's height rather than always the top deck.
     const deck = surfaceHeight(live.data.roadSurface, x, z, atAltitude ?? ground + ROAD_TOP);

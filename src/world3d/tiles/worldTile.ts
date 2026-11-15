@@ -108,8 +108,8 @@ export function gridWaterLevel(levels: Float32Array, grid: number, u: number, v:
 }
 
 /** The smoothed dry-bank grid must never become an invisible floor over water. */
-export function driveTerrainHeight(visual: number, drive: number, water: number | null) {
-  return water != null && visual < water - 0.1 ? water - 0.12 : drive;
+export function driveTerrainHeight(visual: number, water: number | null) {
+  return water != null && visual < water - 0.1 ? water - 0.12 : visual;
 }
 
 /** floats per bridge deck piece */
@@ -1331,7 +1331,7 @@ export function buildWorldTile(buffer: ArrayBuffer, tile: TileId, options: World
   const ROAD_CLEAR = 0.18;
   const driveAt = (x: number, z: number) => {
     const { ground: sample, u, v } = terrainAt(x, z);
-    const g = gridGround(sample.driveHeights, options.grid, u, v);
+    const g = gridGround(sample.heights, options.grid, u, v);
     const water = gridWaterLevel(sample.waterLevel, options.grid, u, v);
     return water == null ? g : Math.max(g, water + ROAD_CLEAR);
   };

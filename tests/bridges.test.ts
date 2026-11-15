@@ -15,9 +15,9 @@ const flat = {
 };
 
 test('smoothed bank heights cannot support cars above open water', () => {
-  assert.equal(driveTerrainHeight(-2.4, 15, 0), -0.12);
-  assert.equal(driveTerrainHeight(10, 10, null), 10);
-  assert.equal(driveTerrainHeight(5, 5, 0), 5, 'dry embankment stays solid');
+  assert.equal(driveTerrainHeight(-2.4, 0), -0.12);
+  assert.equal(driveTerrainHeight(10, null), 10);
+  assert.equal(driveTerrainHeight(5, 0), 5, 'dry embankment stays solid');
 });
 
 function midHeight(plan: ReturnType<typeof planBridges>, id: number) {
