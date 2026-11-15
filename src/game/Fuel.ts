@@ -7,6 +7,8 @@ export const EVACUATION_COST = 100; // coins
 /** what the tow truck leaves in the tank, as a share of capacity, so nobody gets stuck broke */
 const REFUEL_RATE = 12; // litres per second at the pump
 const IDLE_BURN = 1 / 3600; // litres per second with the engine running (~1 L/h, a real idle)
+/** game pace: everything burns this many times the real figures (cars keep their real L/100 km) */
+export const FUEL_BURN_SCALE = 3;
 
 /** coins per point of health at a car service */
 export const REPAIR_PRICE = 0.5;
@@ -31,7 +33,7 @@ export class FuelTank {
 
   /** Burn fuel for `meters` driven in `seconds`; boost (Space) costs more. */
   burn(meters: number, seconds: number, boost: boolean) {
-    const used = Math.abs(meters) / 1000 * this.spec.perKm * (boost ? 1.8 : 1) + IDLE_BURN * seconds;
+    const used = (Math.abs(meters) / 1000 * this.spec.perKm * (boost ? 1.8 : 1) + IDLE_BURN * seconds) * FUEL_BURN_SCALE;
     this.level = Math.max(0, this.level - used);
   }
 

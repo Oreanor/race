@@ -3,14 +3,15 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { VectorTile } from '@mapbox/vector-tile';
 import { PbfReader } from 'pbf';
-import { FuelTank, stationsFromFeatures, nearestStation, atStation, FUEL_PRICE, policeFromFeatures, prisonsFromFeatures, courtsFromFeatures, hospitalsFromFeatures } from '../src/game/Fuel.ts';
+import { FuelTank, FUEL_BURN_SCALE, stationsFromFeatures, nearestStation, atStation, FUEL_PRICE, policeFromFeatures, prisonsFromFeatures, courtsFromFeatures, hospitalsFromFeatures } from '../src/game/Fuel.ts';
 
 test('tank burns by distance, more with boost, never below zero', () => {
   const tank = new FuelTank({ tank: 40, perKm: 2 });
+  // game pace: FUEL_BURN_SCALE × the car's figure
   tank.burn(1000, 0, false);
-  assert.ok(Math.abs(tank.level - 38) < 1e-9);
+  assert.ok(Math.abs(tank.level - (40 - 2 * FUEL_BURN_SCALE)) < 1e-9);
   tank.burn(1000, 0, true);
-  assert.ok(Math.abs(tank.level - 34.4) < 1e-9);
+  assert.ok(Math.abs(tank.level - (40 - 2 * FUEL_BURN_SCALE - 3.6 * FUEL_BURN_SCALE)) < 1e-9);
   tank.burn(1e6, 0, false);
   assert.equal(tank.level, 0);
   assert.ok(tank.empty);
