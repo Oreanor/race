@@ -29,7 +29,7 @@ import {
   loadCar,
 } from './vehicleLayer/carModel.ts';
 import { eastNorth, puffMesh, smokeTexture } from './vehicleLayer/geo.ts';
-import { colorsForBeacon, makeBeacon, makeBox, makeCash, makeCoin } from './vehicleLayer/missionVisuals.ts';
+import { colorsForBeacon, makeBeacon, makeBox, makeCash, makeCoinInstances } from './vehicleLayer/missionVisuals.ts';
 
 export type { PickupVisual, TargetVehicle, VehicleSceneLayer } from './vehicleLayer/types.ts';
 export { DROP_MS } from './vehicleLayer/types.ts';
@@ -159,7 +159,7 @@ export function vehicleLayer(
   let lastFrame = 0;
   const tireTracks = new TireTracks(scene);
   const targets = new Map<string, TargetState>();
-  const pickups = new Map<string, { position: Position; mesh: THREE.Object3D; phase: number; coin: boolean; ground: number | null; drop?: { from: Position; at: number; up?: number } }>();
+  const pickups = new Map<string, { position: Position; mesh: THREE.Object3D; phase: number; coin: boolean; instanced: boolean; ground: number | null; drop?: { from: Position; at: number; up?: number } }>();
   const pickupGeometry = new THREE.SphereGeometry(0.38, 16, 12);
   const pickupMaterials = new Map<string, THREE.MeshStandardMaterial>();
   const missionBeacons = new Map<string, {
@@ -236,6 +236,11 @@ export function vehicleLayer(
     return material;
   }
 
+  /** all road coins in three instanced meshes; each coin pickup keeps a bare transform */
+  const COIN_CAPACITY = 2048;
+  const coinParts = makeCoinInstances(COIN_CAPACITY);
+  for (const part of coinParts) scene.add(part);
+
   function setPickups(next: PickupVisual[]) {
     const active = new Set(next.map(pickup => pickup.id));
     for (const [id, pickup] of pickups) {
@@ -247,15 +252,21 @@ export function vehicleLayer(
       if (pickups.has(pickup.id)) continue;
       // coins and cash bundles share the hover / bounce; balls are the old score orbs
       const coin = pickup.kind === 'coin' || pickup.kind === 'cash' || pickup.kind === 'box';
-      const mesh = pickup.kind === 'cash' ? makeCash() : pickup.kind === 'box' ? makeBox() : coin ? makeCoin() : new THREE.Mesh(pickupGeometry, pickupMaterial(pickup.color));
-      mesh.frustumCulled = false;
-      mesh.renderOrder = 8;
-      scene.add(mesh);
+      // a coin is drawn by the shared instances: here only its transform (not in the scene)
+      const instanced = pickup.kind === 'coin';
+      const mesh = instanced ? new THREE.Object3D()
+        : pickup.kind === 'cash' ? makeCash() : pickup.kind === 'box' ? makeBox() : new THREE.Mesh(pickupGeometry, pickupMaterial(pickup.color));
+      if (!instanced) {
+        mesh.frustumCulled = false;
+        mesh.renderOrder = 8;
+        scene.add(mesh);
+      }
       pickups.set(pickup.id, {
         position: [...pickup.position],
         mesh,
         phase: Math.random() * Math.PI * 2,
         coin,
+        instanced,
         ground: null,
         drop: pickup.drop ? { from: [...pickup.drop.from] as Position, at: pickup.drop.at, up: pickup.drop.up } : undefined,
       });
@@ -441,7 +452,7 @@ export function vehicleLayer(
   let targetDestroyedHandler: (id: string, position: Position) => void = () => {};
   let shotHandler: (kind: 'gun' | 'water') => void = () => {};
   /** pickups just taken: hop up, spin, fall to the road and vanish */
-  const popping: { position: Position; mesh: THREE.Object3D; ground: number | null; born: number; phase: number }[] = [];
+  const popping: { position: Position; mesh: THREE.Object3D; ground: number | null; born: number; phase: number; instanced: boolean }[] = [];
   let hoodSmokeAt = 0;
   let trainCoinHandler: (point: Position, altitude: number) => void = () => {};
   let shotCoinHandler: (from: Position, fromAlt: number, to: Position, toAlt: number) => void = () => {};
@@ -1230,7 +1241,7 @@ export function vehicleLayer(
       const pickup = pickups.get(id);
       if (!pickup) return;
       pickups.delete(id);
-      popping.push({ position: [...pickup.position] as Position, mesh: pickup.mesh, ground: pickup.ground, born: performance.now(), phase: pickup.phase });
+      popping.push({ position: [...pickup.position] as Position, mesh: pickup.mesh, ground: pickup.ground, born: performance.now(), phase: pickup.phase, instanced: pickup.instanced });
       map?.triggerRepaint();
     },
     get onShot() { return shotHandler; },
@@ -1490,6 +1501,20 @@ export function vehicleLayer(
         pop.mesh.rotation.y = pop.phase + t * 22;
         const fade = Math.min(1, Math.max(0, (POP_MS / 1000 - t) / 0.18));
         pop.mesh.scale.setScalar(Math.max(0.001, fade));
+      }
+      // the coins' transforms into the shared instances
+      let coinCount = 0;
+      const writeCoin = (holder: THREE.Object3D) => {
+        if (coinCount >= COIN_CAPACITY) return;
+        holder.updateMatrix();
+        for (const part of coinParts) part.setMatrixAt(coinCount, holder.matrix);
+        coinCount++;
+      };
+      for (const pickup of pickups.values()) if (pickup.instanced) writeCoin(pickup.mesh);
+      for (const pop of popping) if (pop.instanced) writeCoin(pop.mesh);
+      for (const part of coinParts) {
+        part.count = coinCount;
+        part.instanceMatrix.needsUpdate = true;
       }
       if (ramp) {
         // grow in / shrink away over a quarter second instead of popping

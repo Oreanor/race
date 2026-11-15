@@ -1,6 +1,33 @@
 import * as THREE from 'three';
 import type { MissionBeaconSpec } from './types.ts';
 
+/**
+ * Every road coin drawn at once: the coin's three parts (disc, rim, star) as three
+ * InstancedMeshes sharing one transform per coin — a few draw calls however many coins.
+ */
+export function makeCoinInstances(capacity: number) {
+  const gold = new THREE.MeshStandardMaterial({ color: '#ffd54a', emissive: '#c88a10', emissiveIntensity: 0.45, metalness: 0.25, roughness: 0.3 });
+  const deep = new THREE.MeshStandardMaterial({ color: '#f0b62a', emissive: '#a06c08', emissiveIntensity: 0.4, metalness: 0.2, roughness: 0.35 });
+  const disc = new THREE.CylinderGeometry(0.5, 0.5, 0.09, 40).rotateX(Math.PI / 2);
+  const rim = new THREE.TorusGeometry(0.46, 0.045, 8, 40);
+  const star = new THREE.Shape();
+  for (let i = 0; i < 10; i++) {
+    const r = i % 2 ? 0.12 : 0.27;
+    const a = Math.PI / 2 + i * Math.PI / 5;
+    if (i) star.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+    else star.moveTo(Math.cos(a) * r, Math.sin(a) * r);
+  }
+  const starGeometry = new THREE.ExtrudeGeometry(star, { depth: 0.13, bevelEnabled: false }).translate(0, 0, -0.065);
+  const parts = [new THREE.InstancedMesh(disc, deep, capacity), new THREE.InstancedMesh(rim, gold, capacity), new THREE.InstancedMesh(starGeometry, gold, capacity)];
+  for (const part of parts) {
+    part.frustumCulled = false;
+    part.renderOrder = 8;
+    part.count = 0;
+    part.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  }
+  return parts;
+}
+
 export function makeCoin() {
   const gold = new THREE.MeshStandardMaterial({ color: '#ffd54a', emissive: '#c88a10', emissiveIntensity: 0.45, metalness: 0.25, roughness: 0.3 });
   const deep = new THREE.MeshStandardMaterial({ color: '#f0b62a', emissive: '#a06c08', emissiveIntensity: 0.4, metalness: 0.2, roughness: 0.35 });

@@ -157,6 +157,12 @@ const wrapDegrees = (deg: number) => ((deg + 180) % 360 + 360) % 360 - 180;
 const CAMERA_STORE = 'race.camera';
 /** a racer looks this far (m) straight toward the flag: clear of houses and water → it cuts across */
 const RACE_LOOK_M = 400;
+/** coin grids on open fields: one candidate per this big square of the world (m) */
+const FIELD_CELL_M = 1000;
+/** …coins this far apart in the rows (m) */
+const FIELD_STEP_M = 3;
+/** …in these sizes (columns × rows): squares and long strips, 10 × 15 at most */
+const FIELD_GRIDS: [number, number][] = [[10, 10], [10, 15], [6, 10], [4, 12], [3, 15], [2, 15]];
 /** a race nobody finishes is called off after this long from the start (ms) */
 const RACE_TIME_LIMIT_MS = 5 * 60_000;
 /** never a race / arena rival: the police, the emergency and work vehicles, the robot, the monster truck */
@@ -387,6 +393,9 @@ export class GameEngine {
   private audio = new GameAudio();
   /** trains' lead cars last frame: for their speed (Doppler, clack rate) */
   private trainHeard = new Map<string, { at: number; front: [number, number] }>();
+  /** coin grids on open fields, one candidate per km² cell: its coins, or null (no room there) */
+  private fieldCells = new Map<string, [number, number][] | null>();
+  private fieldAt = 0;
   private urbanLevel = 0;
   private urbanAt = 0;
   /** towed by a train on the cable: the car's own driving is off, the rope pulls it */
@@ -6211,6 +6220,7 @@ export class GameEngine {
       }
     }
     this.soundFrame(now);
+    this.updateFieldCoins(now);
     if (now - this.hudTime > 100) {
       this.hudTime = now;
       if (!this.approachFrom) this.saveCamera(now);
@@ -6233,6 +6243,84 @@ export class GameEngine {
       if (this.map.perfMonitor) this.map.reportUpdateCpu(performance.now() - cpuStart);
     }
   };
+
+  /**
+   * Coin grids on big open fields: every 1 km cell of the world has one candidate spot,
+   * size and turn (the same for everybody); when we come within 700 m it is checked once —
+   * no houses, water or roads over the grid and a margin round it — and if clear, its coins
+   * are laid in rows 3 m apart. Taken coins come back like road coins (1.5 km away).
+   */
+  private updateFieldCoins(now: number) {
+    if (now - this.fieldAt < 1500 || !this.driving || this.mode !== 'roam') return;
+    this.fieldAt = now;
+    const here = this.vehicle.position as [number, number];
+    const kx = 111_319.49 * Math.cos(here[1] * Math.PI / 180), ky = 111_319.49;
+    const cx = Math.floor(here[0] * kx / FIELD_CELL_M), cy = Math.floor(here[1] * ky / FIELD_CELL_M);
+    const hash = (a: number, b: number, salt: number) => {
+      let h = (Math.imul(a, 73856093) ^ Math.imul(b, 19349663) ^ Math.imul(salt, 83492791)) >>> 0;
+      h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0;
+      return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+    };
+    let added = false;
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        const gx = cx + dx, gy = cy + dy;
+        const key = `${gx}:${gy}`;
+        const center: [number, number] = [
+          (gx + 0.15 + hash(gx, gy, 1) * 0.7) * FIELD_CELL_M / kx,
+          (gy + 0.15 + hash(gx, gy, 2) * 0.7) * FIELD_CELL_M / ky,
+        ];
+        if (metersBetween(here, center) > 700) continue;
+        let spots = this.fieldCells.get(key);
+        if (spots === undefined) {
+          // ground not in yet: look again later
+          if (this.map.groundAt(center) == null) continue;
+          const [cols, rows] = FIELD_GRIDS[Math.floor(hash(gx, gy, 3) * FIELD_GRIDS.length)];
+          const turn = hash(gx, gy, 4) * Math.PI;
+          spots = this.layFieldGrid(center, cols, rows, turn);
+          this.fieldCells.set(key, spots);
+        }
+        if (!spots) continue;
+        spots.forEach((at, i) => {
+          const id = `field:${key}:${i}`;
+          if (this.pickups.has(id) || this.collectedPickups.has(id) || metersBetween(here, at) > 800) return;
+          this.pickups.set(id, { position: at, color: '#f2c230', kind: 'coin' });
+          added = true;
+        });
+      }
+    }
+    if (added) this.combatLayer?.setPickups(this.pickupVisuals());
+  }
+
+  /** The grid's coin spots if the field is clear (houses, water, roads), else null. */
+  private layFieldGrid(center: [number, number], cols: number, rows: number, turn: number): [number, number][] | null {
+    const width = (cols - 1) * FIELD_STEP_M, depth = (rows - 1) * FIELD_STEP_M;
+    const ux = [Math.cos(turn), -Math.sin(turn)], uy = [Math.sin(turn), Math.cos(turn)];
+    const at = (u: number, v: number) => offsetPosition(center, ux[0] * u + uy[0] * v, ux[1] * u + uy[1] * v) as [number, number];
+    // the area with a margin, sampled every ~6 m — against the houses round the grid itself
+    // (our collision set only reaches 260 m round the car) and the water (900 m)
+    const margin = 10;
+    const none = new Set<string>();
+    const houses = new BuildingCollisions();
+    houses.update(center, this.map.world.buildingsNear(center, Math.hypot(width, depth) / 2 + margin + 20, this.map.exaggeration));
+    for (let u = -width / 2 - margin; u <= width / 2 + margin; u += 6) {
+      for (let v = -depth / 2 - margin; v <= depth / 2 + margin; v += 6) {
+        const p = at(u, v);
+        if (houses.blocked(p, p, turn) || this.water.covers(p, true)) return null;
+      }
+    }
+    // no road through or right beside it (a field, not a car park or a junction)
+    for (let u = -width / 2; u <= width / 2 + 0.1; u += 9) {
+      for (let v = -depth / 2; v <= depth / 2 + 0.1; v += 9) {
+        if (this.trafficNetwork.nearest(at(u, v), none, 0, 14)) return null;
+      }
+    }
+    const out: [number, number][] = [];
+    for (let i = 0; i < cols; i++) {
+      for (let j = 0; j < rows; j++) out.push(at(-width / 2 + i * FIELD_STEP_M, -depth / 2 + j * FIELD_STEP_M));
+    }
+    return out;
+  }
 
   /** The scene as heard this frame: our car, the street, sirens, engines and trains around. */
   private soundFrame(now: number) {
