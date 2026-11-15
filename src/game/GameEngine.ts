@@ -4974,11 +4974,11 @@ export class GameEngine {
     this.onServiceOffer(this.serviceState(kind));
   }
 
-  /** Fill the tank (or as much as the coins allow) at the station. */
-  buyFuel() {
+  /** Buy `want` litres at the station (default: fill up), never past the tank or the purse. */
+  buyFuel(want = Infinity) {
     if (this.serviceOpen !== 'fuel') return;
     const room = this.fuel.spec.tank - this.fuel.level;
-    const litres = Math.max(0, Math.min(room, Math.floor(this.playerMoney / FUEL_PRICE)));
+    const litres = Math.max(0, Math.min(room, want, Math.floor(this.playerMoney / FUEL_PRICE)));
     this.fuel.level += litres;
     this.playerMoney -= litres * FUEL_PRICE;
     this.onServiceOffer(this.serviceState('fuel'));

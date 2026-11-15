@@ -1032,7 +1032,7 @@ export default function Game() {
       {serviceOffer && driving && !fuelOut && (
         <ServiceDialog
           offer={serviceOffer}
-          onBuy={() => (serviceOffer.kind === 'fuel' ? engine.current?.buyFuel() : engine.current?.repairCar())}
+          onBuy={(litres) => (serviceOffer.kind === 'fuel' ? engine.current?.buyFuel(litres) : engine.current?.repairCar())}
           onLeave={() => engine.current?.leaveService()}
         />
       )}
