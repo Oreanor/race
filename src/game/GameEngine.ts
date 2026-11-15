@@ -5574,7 +5574,11 @@ export class GameEngine {
   }
 
   /** Height of the ramp surface under this point (driving onto it head-on), or null. */
-  private rampLift(position: [number, number]) {
+  /**
+   * `margin`: also count this many meters short of its foot and past its lip (the water
+   * looks ahead of the car; the flight starts a step after the lip)
+   */
+  private rampLift(position: [number, number], margin = 0) {
     const ramp = this.ramp;
     if (!ramp || ramp.usedAt) return null;
     if (Math.cos(this.vehicle.heading - ramp.heading) < 0.5) return null;
@@ -5582,8 +5586,8 @@ export class GameEngine {
     const north = (position[1] - ramp.start[1]) * METERS_PER_DEGREE;
     const along = east * Math.sin(ramp.heading) + north * Math.cos(ramp.heading);
     const side = east * Math.cos(ramp.heading) - north * Math.sin(ramp.heading);
-    if (along < 0 || along > ramp.length || Math.abs(side) > ramp.width / 2 + 0.3) return null;
-    return along / ramp.length * ramp.height;
+    if (along < -margin || along > ramp.length + margin || Math.abs(side) > ramp.width / 2 + 0.3) return null;
+    return Math.max(0, Math.min(ramp.length, along)) / ramp.length * ramp.height;
   }
 
   /** Grow the preview while J is held; clear the ramp after a jump or when left behind. */
@@ -6127,14 +6131,13 @@ export class GameEngine {
             this.vehicle.position = building.position;
             // light skim only — heavy damping made corners feel sticky
             this.vehicle.speed *= 0.97;
+          } else if (this.rampLift(previous, 3) != null || this.rampLift(this.vehicle.position as [number, number], 3) != null) {
+            // on a ramp out over a river: no shore, no water under the wheels — up it and off
+            // its lip into the air (from there the jump decides: the far bank, or a splash)
           } else {
-            // either end of the step on the deck → water must not wall or drown us.
-            // A ramp out over a river is a deck too: up it and off its lip into the air
-            // (from there the jump decides: the far bank, or a splash).
+            // either end of the step on the deck → water must not wall or drown us
             const elevated = this.onBridgeDeck(this.vehicle.position, this.altitude)
-              || this.onBridgeDeck(previous, this.altitude)
-              || this.rampLift(previous as [number, number]) != null
-              || this.rampLift(this.vehicle.position as [number, number]) != null;
+              || this.onBridgeDeck(previous, this.altitude);
             const hit = this.water.resolve(previous, this.vehicle.position, this.vehicle.heading, 1, elevated);
             this.vehicle.position = hit.position;
             if (hit.stopped) {
