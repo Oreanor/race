@@ -26,9 +26,9 @@ type Style = { species: StreetPlant['species'] | null; spacing: number };
 // district × road-class choice; weights per class group
 // Most streets stay bare; planted ones are spaced generously (not a forest).
 const TABLE: Record<'major' | 'mid' | 'minor', [number, Style][]> = {
-  major: [[0.18, { species: 'plane', spacing: 26 }], [0.12, { species: 'pine', spacing: 34 }], [0.06, { species: 'jacaranda', spacing: 22 }], [0.09, { species: 'hedge', spacing: 3.4 }], [0.55, { species: null, spacing: 0 }]],
-  mid: [[0.14, { species: 'plane', spacing: 24 }], [0.05, { species: 'jacaranda', spacing: 20 }], [0.08, { species: 'cypress', spacing: 15 }], [0.08, { species: 'hedge', spacing: 3.4 }], [0.65, { species: null, spacing: 0 }]],
-  minor: [[0.05, { species: 'hedge', spacing: 3.4 }], [0.05, { species: 'plane', spacing: 28 }], [0.04, { species: 'cypress', spacing: 16 }], [0.86, { species: null, spacing: 0 }]],
+  major: [[0.18, { species: 'plane', spacing: 26 }], [0.12, { species: 'pine', spacing: 34 }], [0.06, { species: 'jacaranda', spacing: 22 }], [0.09, { species: 'hedge', spacing: 6.8 }], [0.55, { species: null, spacing: 0 }]],
+  mid: [[0.14, { species: 'plane', spacing: 24 }], [0.05, { species: 'jacaranda', spacing: 20 }], [0.08, { species: 'cypress', spacing: 15 }], [0.08, { species: 'hedge', spacing: 6.8 }], [0.65, { species: null, spacing: 0 }]],
+  minor: [[0.05, { species: 'hedge', spacing: 6.8 }], [0.05, { species: 'plane', spacing: 28 }], [0.04, { species: 'cypress', spacing: 16 }], [0.86, { species: null, spacing: 0 }]],
 };
 
 function hash(a: number, b: number, salt: number) {

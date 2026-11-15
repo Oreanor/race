@@ -272,7 +272,7 @@ export function buildVegetation(
   const slot = { plane: 0, jacaranda: 1, pine: 2, cypress: 3 } as const;
   for (const p of streets.plants) {
     if (p.species === 'hedge') {
-      // one clipped section 3.8 m long, overlapping the next: reads as a continuous hedge
+      // one clipped section 7.2 m long, overlapping the next: reads as a continuous hedge
       if (preset.hedge) plant(preset.hedge, p.x, p.z, p.yaw, 1, 0.5, 1, 1, 'hedge');
       continue;
     }

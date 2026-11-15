@@ -1601,6 +1601,9 @@ function roadMesh(vt: VectorTile, span: number, grid: number, at: Surfaces, brid
           } else pushDeck(bridges, deck, edge);
           deckRibbon(builder, deck, half, y, rgb, steps);
         }
+        // footpaths on the ground: the fill alone — a casing round a path a metre wide
+        // was a second ribbon (and a fifth of the road triangles) for a hairline edge
+        if (pass === 'casing' && style.width < 1.5) continue;
         for (const line of drawn.get(i) ?? planned?.rest ?? way.lines) {
           for (let j = 0; j + 1 < line.length; j++) {
             const c = clipSegment(line[j].x, line[j].y, line[j + 1].x, line[j + 1].y, layer.extent);

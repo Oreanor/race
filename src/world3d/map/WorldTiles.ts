@@ -66,8 +66,9 @@ export const defaultWorldOptions: WorldTilesOptions = {
   maxInFlight: 6,
   // base GPU uploads/frame; bursts higher when a backlog would hitch the first lap
   uploadsPerFrame: 3,
-  // ~20 m terrain cells: fine enough for real (unflattened) relief
-  grid: 96,
+  // ~25-35 m terrain cells: relief still reads; every road ribbon is cut along these
+  // cells, so a finer grid multiplied the road triangles (96 was ~1.6x the road mesh)
+  grid: 64,
   demTemplate: null,
   region: '',
 };

@@ -368,34 +368,11 @@ const BUILD: Record<FloraModel, () => THREE.BufferGeometry> = {
     t.blob(v(0.1, 1.12, -0.2), 0.6, 0.42, 0.6, c, 0.2);
     return t.build();
   },
-  // a clipped street hedge section: a row of four leafy lumps along +X (the road), 3.8 m
-  // long with the next one overlapping, trimmed flat on top and a little on the sides —
-  // a sheared hedge, still foliage, not a painted block. ~80 triangles.
+  // a clipped street hedge section: a row of leafy lumps along +X (the road), 7.2 m long
+  // with the next (6.8 m on) overlapping, trimmed flat on top and a little at the sides —
+  // a sheared hedge, still foliage, not a painted block. 80 triangles.
   hedge() {
-    const t = new Shape(157);
-    const c = v(0, 0.5, 0);
-    for (let i = 0; i < 4; i++) {
-      const x = -1.55 + i * 1.03 + t.j() * 0.08;
-      t.blob(v(x, 0.56 + t.j() * 0.04, t.j() * 0.05), 0.68 + t.j() * 0.05, 0.62, 0.5 + t.j() * 0.04, c, 0.26);
-    }
-    const g = t.build();
-    // the shears: lumps cut level at the top and trimmed back at the sides
-    const TOP = 1.02, SIDE = 0.46;
-    const pos = g.getAttribute('position'), nrm = g.getAttribute('normal'), shade = g.getAttribute('aShade');
-    const n = new THREE.Vector3();
-    for (let i = 0; i < pos.count; i++) {
-      let y = pos.getY(i), z = pos.getZ(i);
-      n.set(nrm.getX(i), nrm.getY(i), nrm.getZ(i));
-      if (y > TOP) { y = TOP; n.lerp(UP, 0.7); }
-      if (Math.abs(z) > SIDE) { z = Math.sign(z) * SIDE; n.lerp(v(0, 0, Math.sign(z)), 0.5); }
-      y = Math.max(0, y);
-      pos.setY(i, y); pos.setZ(i, z);
-      n.normalize();
-      nrm.setXYZ(i, n.x, n.y, n.z);
-      shade.setX(i, y / TOP);
-    }
-    g.computeBoundingSphere();
-    return g;
+    return hedgeShape(4);
   },
   // rosemary, sagebrush, saltbush: twiggy, open, small grey tufts
   bush_dry() {
@@ -445,6 +422,37 @@ const BUILD: Record<FloraModel, () => THREE.BufferGeometry> = {
   },
 };
 
+/**
+ * A hedge section of `lumps` lumps over 7.2 m, cut by the shears: level at the top,
+ * back at the sides. One lump makes the far stand-in (20 triangles), the same length.
+ */
+function hedgeShape(lumps: number) {
+  const t = new Shape(157);
+  const c = v(0, 0.5, 0);
+  const L = 7.2, step = L / lumps;
+  for (let i = 0; i < lumps; i++) {
+    const x = -L / 2 + step * (i + 0.5) + (lumps > 1 ? t.j() * 0.12 : 0);
+    t.blob(v(x, 0.56 + t.j() * 0.04, t.j() * 0.05), step * 0.62 + t.j() * 0.05, 0.62, 0.5 + t.j() * 0.04, c, lumps > 1 ? 0.26 : 0.12);
+  }
+  const g = t.build();
+  const TOP = 1.02, SIDE = 0.46;
+  const pos = g.getAttribute('position'), nrm = g.getAttribute('normal'), shade = g.getAttribute('aShade');
+  const n = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i++) {
+    let y = pos.getY(i), z = pos.getZ(i);
+    n.set(nrm.getX(i), nrm.getY(i), nrm.getZ(i));
+    if (y > TOP) { y = TOP; n.lerp(UP, 0.7); }
+    if (Math.abs(z) > SIDE) { z = Math.sign(z) * SIDE; n.lerp(v(0, 0, Math.sign(z)), 0.5); }
+    y = Math.max(0, y);
+    pos.setY(i, y); pos.setZ(i, z);
+    n.normalize();
+    nrm.setXYZ(i, n.x, n.y, n.z);
+    shade.setX(i, y / TOP);
+  }
+  g.computeBoundingSphere();
+  return g;
+}
+
 /** Geometry of every base shape, in FLORA_MODELS order. */
 export function createFloraModels(): THREE.BufferGeometry[] {
   return FLORA_MODELS.map((id) => BUILD[id]());
@@ -457,8 +465,8 @@ export function createFloraModels(): THREE.BufferGeometry[] {
  */
 export function createFarFloraModels(near: THREE.BufferGeometry[]): THREE.BufferGeometry[] {
   return near.map((geometry, index) => {
-    // already as plain as a stand-in would be
-    if (FLORA_MODELS[index] === 'hedge') return geometry;
+    // far off a hedge is one long sheared lump: the same length, height and colour
+    if (FLORA_MODELS[index] === 'hedge') return hedgeShape(1);
     const position = geometry.getAttribute('position'), part = geometry.getAttribute('aPart');
     const leaf = new THREE.Box3(), bark = new THREE.Box3();
     const p = new THREE.Vector3();
