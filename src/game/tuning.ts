@@ -78,7 +78,7 @@ export const AMBULANCE_VICTIM_MAX = 3;
 /** how close to the crash / burned house the pickup modal opens (m) */
 export const AMBULANCE_ARRIVE_M = 22;
 /** hospital drop-off reach (m) */
-export const AMBULANCE_HOSPITAL_M = 28;
+export const AMBULANCE_HOSPITAL_M = 14;
 /** parked wreck props at an ambulance call (one or two cars) */
 export const AMBULANCE_WRECK_ID = 'ambulance-wreck';
 export const ambulanceWreckId = (index: number) => `${AMBULANCE_WRECK_ID}-${index}`;
@@ -87,7 +87,7 @@ export const isAmbulanceWreckId = (id: string) => id === AMBULANCE_WRECK_ID || i
 /** how close to the taxi pickup the fare starts (m) */
 export const TAXI_ARRIVE_M = 14;
 /** drop-off reach (m) */
-export const TAXI_REACH_M = 18;
+export const TAXI_REACH_M = 9;
 /** passenger drop-off distance band (m) */
 export const TAXI_MIN_M = 900;
 export const TAXI_MAX_M = 3200;
@@ -97,7 +97,7 @@ export const TAXI_PER_KM = 100;
 export const taxiFareReward = (meters: number) => Math.max(TAXI_PER_KM, Math.round((meters / 1000) * TAXI_PER_KM));
 
 /** how close to an OSM bus stop the board/alight modal fires (m) */
-export const BUS_STOP_REACH_M = 28;
+export const BUS_STOP_REACH_M = 14;
 /** coins at a stop: 10…100 in steps of 10 */
 export const BUS_FARE_MIN = 10;
 export const BUS_FARE_MAX = 100;
@@ -108,7 +108,7 @@ export const busFareCoins = (stepIndex: number) =>
 
 /** bus tour: pick up a group, drop at a named hotel/museum */
 export const BUS_TOUR_ARRIVE_M = 16;
-export const BUS_TOUR_REACH_M = 28;
+export const BUS_TOUR_REACH_M = 14;
 /** destination band from pickup (m) — within ~10 km */
 export const BUS_TOUR_MIN_M = 400;
 export const BUS_TOUR_MAX_M = 10_000;

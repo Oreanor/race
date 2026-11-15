@@ -11,7 +11,7 @@ export const DELIVERY_ITEMS = ['box', 'suitcase', 'parcel', 'bag'] as const;
 export type DeliveryItem = typeof DELIVERY_ITEMS[number];
 
 /** how close to the address counts as delivered (m) */
-export const DELIVERY_REACH_M = 18;
+export const DELIVERY_REACH_M = 9;
 /** how far the address may be (m) */
 export const DELIVERY_MIN_M = 900;
 export const DELIVERY_MAX_M = 2600;

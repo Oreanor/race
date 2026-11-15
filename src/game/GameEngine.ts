@@ -158,6 +158,8 @@ const CAMERA_STORE = 'race.camera';
 /** a racer looks this far (m) straight toward the flag: clear of houses and water → it cuts across */
 const RACE_LOOK_M = 400;
 /** on the run: how often a patrol in the traffic may join the chase (ms) */
+/** how close to the finish flag counts as across the line (m) */
+const RACE_FINISH_M = 14;
 const POLICE_JOIN_MS = 20_000;
 /** the odds of a patrol joining at each POLICE_JOIN_MS check */
 const POLICE_JOIN_CHANCE = 0.25;
@@ -3004,12 +3006,12 @@ export class GameEngine {
         this.say(t('race.hurry'), true);
       }
       // Generous radius — flag is a point; cars need room to count as finished.
-      if (metersBetween(this.vehicle.position, this.raceGoal) <= 28) {
+      if (metersBetween(this.vehicle.position, this.raceGoal) <= RACE_FINISH_M) {
         this.endRace('player', t('you'));
         return;
       }
       const winner = this.trafficBots.find(bot =>
-        this.combatLayer?.isTargetAlive(bot.id) && metersBetween(bot.position, this.raceGoal!) <= 28,
+        this.combatLayer?.isTargetAlive(bot.id) && metersBetween(bot.position, this.raceGoal!) <= RACE_FINISH_M,
       );
       if (winner) this.endRace(winner.id, winner.driver);
       return;
