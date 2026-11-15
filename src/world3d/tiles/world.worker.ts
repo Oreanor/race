@@ -18,6 +18,13 @@ type Job = {
   demUrl: string | null;
   /** the 8 neighbours' DEMs: w, e, n, s, nw, ne, sw, se (their edges stitch the seams) */
   demNeighbours?: (string | null)[];
+  /**
+   * The bytes the main thread already has (one fetch per url for the whole page — every
+   * worker used to fetch and decode the same neighbours again): vector tiles, and DEM
+   * images (null: no relief there). Anything not in here is fetched as before.
+   */
+  vectors?: Record<string, ArrayBuffer>;
+  demBytes?: Record<string, ArrayBuffer | null>;
   options: Omit<WorldBuildOptions, 'dem'>;
 };
 type Request = Job | { type: 'cancel'; id: number };
@@ -28,7 +35,11 @@ const running = new Map<number, AbortController>();
 async function loadDem(url: string, signal: AbortSignal): Promise<Float32Array | null> {
   const response = await fetch(url, { signal });
   if (!response.ok) return null; // sea / no data: flat ground
-  const bitmap = await createImageBitmap(await response.blob(), { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
+  return decodeDem(await response.blob());
+}
+
+async function decodeDem(image: Blob): Promise<Float32Array | null> {
+  const bitmap = await createImageBitmap(image, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
   const canvas = new OffscreenCanvas(DEM_SIZE, DEM_SIZE);
   const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
   ctx.drawImage(bitmap, 0, 0, DEM_SIZE, DEM_SIZE);
@@ -78,6 +89,15 @@ scope.onmessage = async (event: MessageEvent<Request>) => {
   const controller = new AbortController();
   running.set(message.id, controller);
   const started = performance.now();
+  // what the main thread brought along goes into this worker's caches first
+  for (const [url, bytes] of Object.entries(message.vectors ?? {})) {
+    if (!vectors.has(url)) vectors.set(url, Promise.resolve(bytes));
+  }
+  for (const [url, bytes] of Object.entries(message.demBytes ?? {})) {
+    if (!dems.has(url)) dems.set(url, bytes ? decodeDem(new Blob([bytes])).catch(() => null) : Promise.resolve(null));
+  }
+  while (vectors.size > 48) vectors.delete(vectors.keys().next().value!);
+  while (dems.size > 64) dems.delete(dems.keys().next().value!);
   try {
     const [buffer, center, neighbourDems] = await Promise.all([
       cachedVector(message.vectorUrl),

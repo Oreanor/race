@@ -291,7 +291,8 @@ export class WorldTiles {
     this.waterMat = waterMaterial(uniforms);
     this.vegetation = new VegetationRenderer(uniforms);
     tileTemplate().then((t) => { this.template = t; });
-    const size = Math.min(3, Math.max(1, (navigator.hardwareConcurrency || 4) - 2));
+    // one core for the page, the rest build tiles (a 4-core laptop had 2, a 2-core one 1)
+    const size = Math.min(4, Math.max(2, (navigator.hardwareConcurrency || 4) - 1));
     for (let i = 0; i < size; i++) {
       this.load.push(0);
       this.workerRestarts.push(0);
@@ -391,7 +392,20 @@ export class WorldTiles {
     // pull the load centre a few hundred metres forward so hitching stays behind the car
     // (boot: stay on the spawn so the whole first-lap ring is warm, not just ahead)
     const cosLat = Math.cos(focus[1] * Math.PI / 180);
-    const aheadM = burst || screen ? 0 : 520;
+    // fast, the load centre runs further ahead: 520 m plus six seconds of travel (the
+    // speed from how far the focus moved), so 500 km/h has ~4 km loaded ahead, not ~3
+    const nowMove = performance.now();
+    if (this.moveAt && this.moveFrom) {
+      const dt = (nowMove - this.moveAt) / 1000;
+      if (dt > 0.05) {
+        const moved = Math.hypot((focus[0] - this.moveFrom[0]) * METERS_PER_DEGREE * cosLat, (focus[1] - this.moveFrom[1]) * METERS_PER_DEGREE);
+        // a jump (teleport, a new city) is not a speed
+        const v = moved / dt < 200 ? moved / dt : 0;
+        this.speed += (v - this.speed) * Math.min(1, dt / 1.5);
+        this.moveAt = nowMove; this.moveFrom = [...focus];
+      }
+    } else { this.moveAt = nowMove; this.moveFrom = [...focus]; }
+    const aheadM = burst || screen ? 0 : 520 + Math.min(1300, this.speed * 6);
     const stream: LngLat = [
       focus[0] + Math.sin(heading) * aheadM / (METERS_PER_DEGREE * cosLat),
       focus[1] + Math.cos(heading) * aheadM / METERS_PER_DEGREE,
@@ -423,6 +437,7 @@ export class WorldTiles {
         o.zoom, player ?? focus,
       );
       wanted = [...ring, ...rect.filter((t) => !inRing.has(t.key))];
+      this.ringKeys = inRing;
       for (const t of wanted) keep.add(t.key);
     } else {
       wanted = tilesAround(stream, o.loadRadius, o.zoom);
@@ -501,6 +516,13 @@ export class WorldTiles {
       const failed = this.failures.get(plan.key);
       if (failed && now < failed.at) continue;
       if (this.pending.size >= flightCap) break;
+      // the map's far rectangle takes at most half the slots: the other half is always free
+      // for the tiles round the player (the rectangle kept them all, the car drove into black)
+      if (screen && this.ringKeys.size && !this.ringKeys.has(plan.key)) {
+        let far = 0;
+        for (const k of this.pending.keys()) if (!this.ringKeys.has(k)) far++;
+        if (far >= Math.ceil(flightCap / 2)) continue;
+      }
       this.request(plan.key, plan.tile);
     }
     let backlog = 0;
@@ -547,6 +569,35 @@ export class WorldTiles {
     return template.replace('{z}', String(tile.z)).replace('{x}', String(tile.x)).replace('{y}', String(tile.y));
   }
 
+  /**
+   * Bytes by url for the whole page: a tile, its eight neighbours and their reliefs are
+   * fetched once here and handed to whichever worker builds (each worker used to fetch
+   * and decode the same neighbours itself — every tile again and again). Vector tiles:
+   * an empty buffer for none; a failed one throws. DEM images: null for none.
+   */
+  private bytes = new Map<string, Promise<ArrayBuffer | null>>();
+  /** on the map: the tiles round the player (they always get slots) */
+  private ringKeys = new Set<string>();
+  /** how fast the focus moves (m/s, smoothed): the faster, the further ahead tiles load */
+  private speed = 0;
+  private moveAt = 0;
+  private moveFrom: LngLat | null = null;
+  private fetchBytes(url: string, kind: 'vector' | 'dem') {
+    let hit = this.bytes.get(url);
+    if (hit) { this.bytes.delete(url); this.bytes.set(url, hit); return hit; }
+    hit = fetch(url, { signal: AbortSignal.timeout(15000) }).then((response) => {
+      if (kind === 'dem') return response.ok ? response.arrayBuffer() : null;
+      if (response.status === 204 || response.status === 404) return new ArrayBuffer(0);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.arrayBuffer();
+    });
+    // a failure is not kept: the next ask tries again
+    hit.catch(() => { if (this.bytes.get(url) === hit) this.bytes.delete(url); });
+    this.bytes.set(url, hit);
+    while (this.bytes.size > 160) this.bytes.delete(this.bytes.keys().next().value!);
+    return hit;
+  }
+
   private request(key: string, tile: TileId) {
     let worker = -1;
     for (let i = 0; i < this.workers.length; i++) {
@@ -557,19 +608,42 @@ export class WorldTiles {
     this.load[worker]++;
     this.jobs.set(id, { key, worker });
     this.pending.set(key, { id, key, tile });
+    const size = 2 ** tile.z;
+    const around = [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]].map(([dx, dy]) => {
+      const y = tile.y + dy;
+      return y < 0 || y >= size ? null : { ...tile, x: ((tile.x + dx) % size + size) % size, y };
+    });
+    const vectorUrl = this.url(this.template!, tile);
+    const demUrl = this.options.demTemplate ? this.url(this.options.demTemplate, tile) : null;
+    const demNeighbours = this.options.demTemplate ? around.map((t) => (t ? this.url(this.options.demTemplate!, t) : null)) : null;
+    const vectorUrls = [vectorUrl, ...around.flatMap((t) => (t ? [this.url(this.template!, t)] : []))];
+    const demUrls = [demUrl, ...(demNeighbours ?? [])].filter((u): u is string => !!u);
+    // the bytes first (one fetch per url for the page), then the job; a neighbour that
+    // fails is left to the worker, the tile's own failure fails the job as before
+    const vectors: Record<string, ArrayBuffer> = {}, demBytes: Record<string, ArrayBuffer | null> = {};
+    const gathered = Promise.all([
+      ...vectorUrls.map((url) => this.fetchBytes(url, 'vector').then((b) => { if (b) vectors[url] = b.slice(0); }, () => {})),
+      ...demUrls.map((url) => this.fetchBytes(url, 'dem').then((b) => { demBytes[url] = b ? b.slice(0) : null; }, () => {})),
+    ]);
+    void gathered.then(() => {
+      // dropped (cancelled or the tile left the plan) while its bytes came: nothing to build
+      if (this.disposed || this.pending.get(key)?.id !== id || this.workers[worker] == null) return;
+      this.post(worker, id, key, tile, vectorUrl, demUrl, demNeighbours, vectors, demBytes);
+    });
+  }
+
+  private post(worker: number, id: number, key: string, tile: TileId, vectorUrl: string, demUrl: string | null, demNeighbours: (string | null)[] | null, vectors: Record<string, ArrayBuffer>, demBytes: Record<string, ArrayBuffer | null>) {
     try {
+    const transfer = [...Object.values(vectors), ...Object.values(demBytes).filter((b): b is ArrayBuffer => !!b)];
     this.workers[worker].postMessage({
       type: 'world', id, tile,
-      vectorUrl: this.url(this.template!, tile),
+      vectorUrl,
       vectorTemplate: this.template!,
-      demUrl: this.options.demTemplate ? this.url(this.options.demTemplate, tile) : null,
-      demNeighbours: this.options.demTemplate ? [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]].map(([dx, dy]) => {
-        const size = 2 ** tile.z, y = tile.y + dy;
-        if (y < 0 || y >= size) return null;
-        return this.url(this.options.demTemplate!, { ...tile, x: ((tile.x + dx) % size + size) % size, y });
-      }) : null,
+      demUrl,
+      demNeighbours,
+      vectors, demBytes,
       options: { chunks: 4, inset: 0, grid: this.options.grid, region: this.options.region },
-    });
+    }, transfer);
     } catch (error) {
       this.restartWorker(worker, String(error));
     }
