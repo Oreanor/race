@@ -327,6 +327,7 @@ export class WorldTiles {
     if (this.disposed || this.restartTimers.has(index)) return;
     this.workerReady[index] = false;
     this.workers[index]?.terminate();
+    for (const [id, job] of this.jobs) if (job.worker === index) this.releaseFetches(id);
     const released = releaseWorkerJobs(index, this.jobs, this.pending);
     this.load[index] = 0;
     const attempts = this.workerRestarts[index]++;
@@ -386,6 +387,7 @@ export class WorldTiles {
     calm = false,
     /** where the player is: on the map, the tiles round them load first */
     player?: LngLat,
+    destination?: { at: LngLat; radius: number },
   ) {
     if (this.disposed || !this.template) return;
     const o = this.options;
@@ -413,7 +415,8 @@ export class WorldTiles {
     const planKey = [o.zoom, o.loadRadius, o.unloadRadius, burst, calm,
       Math.floor(mercatorX(focus[0]) * cosLat / 20), Math.floor(mercatorY(focus[1]) * cosLat / 20),
       Math.round(heading / 0.08), screen ? `${screen.west},${screen.south},${screen.east},${screen.north}` : '',
-      player ? `${Math.round(player[0] * 2000)},${Math.round(player[1] * 2000)}` : ''].join(':');
+      player ? `${Math.round(player[0] * 2000)},${Math.round(player[1] * 2000)}` : '',
+      destination ? `${destination.at}:${destination.radius}` : ''].join(':');
     let wanted: PlannedTile[];
     let keep: Set<string>;
     if (this.streamPlan?.key === planKey) {
@@ -459,6 +462,12 @@ export class WorldTiles {
         });
       }
       for (const t of tilesAround(focus, o.unloadRadius, o.zoom)) keep.add(t.key);
+    }
+    if (destination) {
+      const priority = tilesAround(destination.at, destination.radius, o.zoom);
+      const keys = new Set(priority.map(t => t.key));
+      wanted = [...priority, ...wanted.filter(t => !keys.has(t.key))];
+      for (const key of keys) this.ringKeys.add(key);
     }
     for (const p of wanted) keep.add(p.key);
     this.streamPlan = { key: planKey, wanted, keep: new Set(keep) };
@@ -576,26 +585,48 @@ export class WorldTiles {
    * an empty buffer for none; a failed one throws. DEM images: null for none.
    */
   private bytes = new Map<string, Promise<ArrayBuffer | null>>();
+  private fetching = new Map<string, { controller: AbortController; users: Set<number>; promise: Promise<ArrayBuffer | null> }>();
   /** on the map: the tiles round the player (they always get slots) */
   private ringKeys = new Set<string>();
   /** how fast the focus moves (m/s, smoothed): the faster, the further ahead tiles load */
   private speed = 0;
   private moveAt = 0;
   private moveFrom: LngLat | null = null;
-  private fetchBytes(url: string, kind: 'vector' | 'dem') {
-    let hit = this.bytes.get(url);
-    if (hit) { this.bytes.delete(url); this.bytes.set(url, hit); return hit; }
-    hit = fetch(url, { signal: AbortSignal.timeout(15000) }).then((response) => {
+  private fetchBytes(url: string, kind: 'vector' | 'dem', job: number) {
+    const running = this.fetching.get(url);
+    let hit = running?.promise ?? this.bytes.get(url);
+    if (hit) {
+      running?.users.add(job);
+      this.bytes.delete(url); this.bytes.set(url, hit);
+      while (this.bytes.size > 160) this.bytes.delete(this.bytes.keys().next().value!);
+      return hit;
+    }
+    const controller = new AbortController();
+    hit = fetch(url, { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(15000)]) }).then((response) => {
       if (kind === 'dem') return response.ok ? response.arrayBuffer() : null;
       if (response.status === 204 || response.status === 404) return new ArrayBuffer(0);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return response.arrayBuffer();
     });
-    // a failure is not kept: the next ask tries again
-    hit.catch(() => { if (this.bytes.get(url) === hit) this.bytes.delete(url); });
+    const complete = () => { if (this.fetching.get(url)?.promise === hit) this.fetching.delete(url); };
+    // A failure is not kept; completed data remains shared by neighbouring jobs.
+    hit.then(complete, () => { complete(); if (this.bytes.get(url) === hit) this.bytes.delete(url); });
+    this.fetching.set(url, { controller, users: new Set([job]), promise: hit });
     this.bytes.set(url, hit);
     while (this.bytes.size > 160) this.bytes.delete(this.bytes.keys().next().value!);
     return hit;
+  }
+
+  private releaseFetches(job: number) {
+    for (const [url, entry] of this.fetching) {
+      entry.users.delete(job);
+      if (entry.users.size) continue;
+      // Closing M must release actual network capacity, as well as worker slots.
+      // A neighbour still needed by a driving tile keeps its shared request.
+      entry.controller.abort();
+      this.fetching.delete(url);
+      if (this.bytes.get(url) === entry.promise) this.bytes.delete(url);
+    }
   }
 
   private request(key: string, tile: TileId) {
@@ -622,8 +653,8 @@ export class WorldTiles {
     // fails is left to the worker, the tile's own failure fails the job as before
     const vectors: Record<string, ArrayBuffer> = {}, demBytes: Record<string, ArrayBuffer | null> = {};
     const gathered = Promise.all([
-      ...vectorUrls.map((url) => this.fetchBytes(url, 'vector').then((b) => { if (b) vectors[url] = b.slice(0); }, () => {})),
-      ...demUrls.map((url) => this.fetchBytes(url, 'dem').then((b) => { demBytes[url] = b ? b.slice(0) : null; }, () => {})),
+      ...vectorUrls.map((url) => this.fetchBytes(url, 'vector', id).then((b) => { if (b) vectors[url] = b.slice(0); }, () => {})),
+      ...demUrls.map((url) => this.fetchBytes(url, 'dem', id).then((b) => { demBytes[url] = b ? b.slice(0) : null; }, () => {})),
     ]);
     void gathered.then(() => {
       // dropped (cancelled or the tile left the plan) while its bytes came: nothing to build
@@ -652,6 +683,7 @@ export class WorldTiles {
   private cancel(id: number) {
     const job = this.jobs.get(id);
     if (!job) return;
+    this.releaseFetches(id);
     this.workers[job.worker]?.postMessage({ type: 'cancel', id });
     this.jobs.delete(id);
     this.load[job.worker] = Math.max(0, this.load[job.worker] - 1);
@@ -1889,10 +1921,21 @@ export class WorldTiles {
     return wanted.length > 0 && wanted.every((t) => this.tiles.has(t.key) && !this.tiles.get(t.key)!.waiting.length);
   }
 
+  /** Includes hidden meshes still waiting for their first GPU upload. */
+  groupsAround(focus: LngLat, radius: number) {
+    return tilesAround(focus, radius, this.options.zoom).flatMap(t => {
+      const live = this.tiles.get(t.key);
+      return live ? [live.group] : [];
+    });
+  }
+
   /** Tiles still on their way in: fetched / built in a worker, or waiting to be uploaded. */
   busy() {
     if (this.pending.size) return true;
     for (const live of this.tiles.values()) if (live.waiting.length) return true;
+    // Failed requests have a retry deadline. Keep waking the streamer even when
+    // no request is currently in flight (a still map must recover on its own).
+    if (this.streamPlan?.wanted.some(t => !this.tiles.has(t.key))) return true;
     return false;
   }
 
@@ -1910,6 +1953,9 @@ export class WorldTiles {
 
   dispose() {
     this.disposed = true;
+    for (const entry of this.fetching.values()) entry.controller.abort();
+    this.fetching.clear();
+    this.bytes.clear();
     for (const timer of this.restartTimers.values()) clearTimeout(timer);
     this.restartTimers.clear();
     for (const [key, live] of [...this.tiles]) this.unload(key, live);

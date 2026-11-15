@@ -63,7 +63,7 @@ export type RideOffer = {
 export type MissionKind = 'arena' | 'race' | 'delivery' | 'collect';
 
 export type EventResult = {
-  kind: MissionKind | 'heist' | 'hijack' | 'fire' | 'impound' | 'taxi' | 'bus' | 'ambulance' | 'bounty';
+  kind: MissionKind | 'arrest' | 'heist' | 'hijack' | 'fire' | 'impound' | 'taxi' | 'bus' | 'ambulance' | 'bounty';
   won: boolean;
   name?: string;
   cash?: number;

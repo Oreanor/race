@@ -4,6 +4,7 @@ import { MapCamera, latFrom01, lngFrom01, mercatorPerMeter, mercatorX01, mercato
 import { WorldTiles, defaultWorldOptions } from './WorldTiles.ts';
 import { baseUniforms, facadeMask, setGroundDetailOrigin, useGroundTexture, type BaseUniforms } from './materials.ts';
 import type { GeoFeature } from '../tiles/worldTile.ts';
+import type { LngLat } from '../mercator.ts';
 import { seasonWeights, snowCover, worldTime, type SimpleLitUniforms } from './simpleLit.ts';
 import { computeLighting, timeFor, TIME_MODES, type Lighting, type TimeMode } from './lighting.ts';
 import { placeClock, placeMoment, placeZone } from '../placeTime.ts';
@@ -180,10 +181,12 @@ export class ThreeMap {
   /** tone mapping, bloom and a vignette over the finished frame */
   private postFx = new PostFx();
   private gpuWarmFence: WebGLSync | null = null;
+  private gpuWarmSubmitted: THREE.Mesh[] = [];
   /** while the map is hidden: fill a full tile ring and drain GPU uploads faster */
   private streamBurst = true;
   /** intro fly-in / M blend: tiny upload budget so the lerp stays at 60 */
   private streamCalm = false;
+  private streamDestination: { at: LngLat; radius: number } | undefined;
   /** reused each frame — avoid Matrix4 alloc in the render path */
   private clipScratch = new THREE.Matrix4();
   /** M-map open / blending: keep screen-rectangle streaming so pitch lerp doesn't dump tiles */
@@ -408,8 +411,22 @@ export class ThreeMap {
   }
   /** Tiles + GPU uploads done around a point (not only the current camera). */
   areTilesLoadedAround(at: [number, number], radius = this.loadRadius) {
-    return this.world.loadedAround(at, radius) && !this.gpuWarmQueue.length && !this.gpuWarmFence;
+    if (!this.world.loadedAround(at, radius)) return false;
+    let warming = false;
+    for (const group of this.world.groupsAround(at, radius)) group.traverse(o => {
+      if (o instanceof THREE.Mesh && (this.gpuWarmLayers.has(o) || this.gpuWarmSubmitted.includes(o))) warming = true;
+    });
+    return !warming;
   }
+
+  /** Load a transfer destination while keeping the old camera and car visible. */
+  setStreamDestination(at: LngLat | null, radius = this.loadRadius) {
+    this.streamDestination = at ? { at: [...at], radius } : undefined;
+    this.triggerRepaint();
+  }
+
+  /** The entire visible map, also used to distribute activities. */
+  visibleGroundBounds() { return this.screenGroundBounds(); }
 
   /** Ground lng/lat rectangle under the screen corners (top-down map streaming). */
   private screenGroundBounds(): { west: number; south: number; east: number; north: number } | null {
@@ -428,23 +445,13 @@ export class ThreeMap {
       north = Math.max(north, ll[1]);
     }
     if (hits < 3 || !(east > west) || !(north > south)) return this.lastScreenBounds;
-    // cap insane spans from near-horizon hits
-    const cosLat = Math.cos(((south + north) / 2) * Math.PI / 180);
-    const spanE = (east - west) * METERS_PER_DEGREE * cosLat;
-    const spanN = (north - south) * METERS_PER_DEGREE;
-    // zoomed far out: the middle 12 × 12 km of the screen (a stale rectangle stayed behind)
-    if (spanE > 12000 || spanN > 12000) {
-      const [cx, cy] = s.center;
-      const hx = Math.min(spanE, 12000) / 2 / (METERS_PER_DEGREE * cosLat), hy = Math.min(spanN, 12000) / 2 / METERS_PER_DEGREE;
-      west = cx - hx; east = cx + hx; south = cy - hy; north = cy + hy;
-    }
     this.lastScreenBounds = { west, south, east, north };
     return this.lastScreenBounds;
   }
 
   /** GeoJSON features of a tile layer near the view (all loaded layers, incl. poi…). */
-  features(layer: string): GeoFeature[] {
-    return this.world.features(layer, this.camera.state.center);
+  features(layer: string, focus: LngLat = this.camera.state.center): GeoFeature[] {
+    return this.world.features(layer, focus);
   }
 
   /** Layer names present in loaded tiles: everything we can visualise later. */
@@ -926,8 +933,18 @@ export class ThreeMap {
       if (status === gl.TIMEOUT_EXPIRED) return;
       gl.deleteSync(this.gpuWarmFence);
       this.gpuWarmFence = null;
+      this.gpuWarmSubmitted = [];
     }
-    if (this.streamCalm || !this.gpuWarmQueue.length) return;
+    if (this.streamingCalm() || !this.gpuWarmQueue.length) return;
+    if (this.streamDestination) {
+      const groups = new Set(this.world.groupsAround(this.streamDestination.at, this.streamDestination.radius));
+      const near = (mesh: THREE.Mesh) => {
+        for (let p: THREE.Object3D | null = mesh; p; p = p.parent) if (groups.has(p as THREE.Group)) return true;
+        return false;
+      };
+      const priority = this.gpuWarmQueue.filter(near);
+      if (priority.length) this.gpuWarmQueue = [...priority, ...this.gpuWarmQueue.filter(mesh => !near(mesh))];
+    }
     const target = renderer.getRenderTarget();
     this.gpuWarmTarget ??= new THREE.WebGLRenderTarget(1, 1, { depthBuffer: false });
     const deadline = performance.now() + (this.streamBurst ? 5 : 1.5);
@@ -960,6 +977,7 @@ export class ThreeMap {
           renderer.render(this.gpuWarmScene, this.sceneCamera);
           source.layers.mask = this.gpuWarmLayers.get(source) ?? 1;
           this.gpuWarmLayers.delete(source);
+          this.gpuWarmSubmitted.push(source);
         } finally {
           geometry.setDrawRange(start, count);
           this.gpuWarmScene.remove(proxy);
@@ -972,6 +990,12 @@ export class ThreeMap {
     }
     this.gpuWarmFence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
     gl.flush(); // poll completion on a later frame, never block with finish/readPixels
+  }
+
+  private streamingCalm() {
+    // A modal may pause the engine mid-blend. Once the map is flat, it must
+    // continue filling even if the engine's animation no longer advances.
+    return this.streamCalm && !this.streamDestination && !(this.screenStream && this.camera.state.pitch < 1);
   }
 
   private render() {
@@ -995,10 +1019,11 @@ export class ThreeMap {
     this.world.update(
       cam.state.center,
       streamHeading,
-      this.streamBurst && !this.streamCalm,
+      this.streamBurst && !this.streamingCalm(),
       screen ?? undefined,
-      this.streamCalm,
+      this.streamingCalm(),
       this.focusCar?.at,
+      this.streamDestination,
     );
     // the M map draws on demand: while its tiles are still coming (fetching, building or
     // waiting to go up to the GPU) keep frames coming, or they trickle in a couple a second

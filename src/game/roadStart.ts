@@ -14,7 +14,7 @@ export function roadStart(
   const scaleY = METERS_PER_DEGREE;
   let best: { position: Position; heading: number; distance: number } | undefined;
 
-  for (const feature of map.features('transportation')) {
+  for (const feature of map.features('transportation', origin)) {
     const roadClass = String(feature.properties?.class ?? '');
     // paved pedestrian streets and plazas look like streets and the car drives them fine
     const pedestrian = roadClass === 'path' && /^(pedestrian|living_street)$/.test(String(feature.properties?.subclass ?? ''));

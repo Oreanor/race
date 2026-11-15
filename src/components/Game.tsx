@@ -260,6 +260,7 @@ export default function Game() {
   const placeFlashTimer = useRef(0);
   const [eventOffer, setEventOffer] = useState<EventOffer | null>(null);
   const [eventResult, setEventResult] = useState<EventResult | null>(null);
+  const [transfer, setTransfer] = useState<'loading' | 'failed' | null>(null);
   const [status, setStatus] = useState(() => t('loading.city'));
   const [statusToast, setStatusToast] = useState('');
   // performance stats: off by default, switched on in the settings (remembered)
@@ -524,6 +525,7 @@ export default function Game() {
       game.onRideOffer = (offer) => setRideOffer(offer);
       game.onEventOffer = (offer) => setEventOffer(offer);
       game.onEventResult = (result) => setEventResult(result);
+      game.onTransfer = setTransfer;
       game.onFuel = (fuel) => fuelListener.current?.(fuel);
       game.onOnline = (players) => netFeed.current?.online(players);
       game.onChat = (line) => netFeed.current?.chat(line);
@@ -619,8 +621,8 @@ export default function Game() {
     });
   }, []);
   useEffect(() => {
-    engine.current?.setPaused((settingsOpen || exitConfirm || Boolean(eventOffer) || Boolean(eventResult) || Boolean(bountyOffer) || Boolean(rideOffer) || fuelOut || Boolean(travelOffer) || Boolean(serviceOffer) || Boolean(dealerOffer) || towAsk || keysOpen || Boolean(bankOffer)) && driving);
-  }, [settingsOpen, exitConfirm, eventOffer, eventResult, bountyOffer, rideOffer, fuelOut, travelOffer, serviceOffer, dealerOffer, towAsk, keysOpen, bankOffer, driving]);
+    engine.current?.setPaused((settingsOpen || exitConfirm || Boolean(eventOffer) || Boolean(eventResult) || Boolean(bountyOffer) || Boolean(rideOffer) || fuelOut || Boolean(travelOffer) || Boolean(serviceOffer) || Boolean(dealerOffer) || towAsk || keysOpen || Boolean(bankOffer) || Boolean(transfer)) && driving);
+  }, [settingsOpen, exitConfirm, eventOffer, eventResult, bountyOffer, rideOffer, fuelOut, travelOffer, serviceOffer, dealerOffer, towAsk, keysOpen, bankOffer, transfer, driving]);
   useEffect(() => {
     drivingRef.current = driving;
     if (!driving) {
@@ -629,6 +631,7 @@ export default function Game() {
       setStatusToast('');
       setEventOffer(null);
       setEventResult(null);
+      setTransfer(null);
       setRideOffer(null);
       // menu: keep the player plaque in the corner (purse + full HP)
       if (rosterRef.current) {
@@ -1052,7 +1055,16 @@ export default function Game() {
         </Dialog>
       )}
 
-      {fuelOut && driving && (
+      {transfer && driving && (
+        <Dialog title={t('transfer.title')} actions={transfer === 'failed' ? <>
+          <button type="button" className="ui-btn" autoFocus onClick={() => engine.current?.retryTransfer()}>{t('transfer.retry')}</button>
+          <button type="button" className="ui-btn is-ghost" onClick={() => engine.current?.cancelTransfer()}>{t('tow.cancel')}</button>
+        </> : undefined}>
+          <p className="ui-text" role="status">{t(transfer === 'loading' ? 'transfer.loading' : 'transfer.failed')}</p>
+        </Dialog>
+      )}
+
+      {fuelOut && driving && !transfer && (
         <Dialog
           tone="alert"
           title={t('fuel.out.title')}
@@ -1199,12 +1211,13 @@ export default function Game() {
         </Dialog>
       )}
 
-      {eventResult && driving && !settingsOpen && (() => {
+      {eventResult && driving && !settingsOpen && !transfer && (() => {
         const busParts = eventResult.kind === 'bus' ? (eventResult.name ?? '').split(':') : null;
         const busStop = Boolean(busParts && busParts[0] !== 'tour');
         const cash = eventResult.cash ?? 0;
         const title =
-          eventResult.kind === 'hijack' ? t('hijack.title')
+          eventResult.kind === 'arrest' ? t('arrest.title')
+            : eventResult.kind === 'hijack' ? t('hijack.title')
             : eventResult.kind === 'heist' ? t('heist.title')
               : eventResult.kind === 'bounty' ? t('bounty.title')
                 : eventResult.kind === 'fire' ? t('event.fire')
@@ -1213,7 +1226,7 @@ export default function Game() {
                       : eventResult.kind === 'bus' ? t('event.bus')
                         : eventResult.kind === 'ambulance' ? t('event.ambulance')
                           : t(`event.${eventResult.kind}`);
-        const text = busStop
+        const text = eventResult.kind === 'arrest' ? eventResult.name ?? t('heist.arrested', { fine: formatNumber(cash) }) : busStop
           ? t(busParts![0] === 'alight' ? 'bus.alight' : 'bus.board', {
               n: busParts![1] || String(Math.max(1, Math.round(cash / 10))),
             })
