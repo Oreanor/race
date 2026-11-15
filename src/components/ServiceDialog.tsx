@@ -22,6 +22,14 @@ export default function ServiceDialog({ offer, onBuy, onLeave }: { offer: Servic
     // slider, its price, fill up, drive on — nothing else
     const amount = Math.min(Math.max(1, litres), Math.max(1, most));
     const none = most < 1;
+    // a full tank: just say so — no slider, no Fill up
+    if (offer.tank - offer.level < 1) {
+      return (
+        <Dialog title={<>⛽ {t('fuelDlg.title')}</>} actions={leave}>
+          <div className="ui-row fuel-cost"><span>{t('fuelDlg.full')}</span></div>
+        </Dialog>
+      );
+    }
     return (
       <Dialog title={<>⛽ {t('fuelDlg.title')}</>} actions={<>
         <button type="button" className="ui-btn" autoFocus disabled={none} onClick={() => onBuy(amount)}>{t('fuelDlg.go')}</button>
@@ -38,7 +46,7 @@ export default function ServiceDialog({ offer, onBuy, onLeave }: { offer: Servic
           aria-label={t('fuelDlg.litres', { n: amount })}
           onChange={(e) => setLitres(Number(e.target.value))}
         />
-        <div className="ui-row fuel-cost">{none ? <span>{offer.tank - offer.level < 0.5 ? t('fuelDlg.full') : t('dialog.broke')}</span> : <Price value={amount * offer.price} />}</div>
+        <div className="ui-row fuel-cost">{none ? <span>{t('dialog.broke')}</span> : <Price value={amount * offer.price} />}</div>
       </Dialog>
     );
   }
