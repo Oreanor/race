@@ -378,6 +378,8 @@ export class WorldTiles {
     burst = false,
     screen?: { west: number; south: number; east: number; north: number },
     calm = false,
+    /** where the player is: on the map, the tiles round them load first */
+    player?: LngLat,
   ) {
     if (this.disposed || !this.template) return;
     const o = this.options;
@@ -391,7 +393,8 @@ export class WorldTiles {
     ];
     const planKey = [o.zoom, o.loadRadius, o.unloadRadius, burst, calm,
       Math.floor(mercatorX(focus[0]) * cosLat / 20), Math.floor(mercatorY(focus[1]) * cosLat / 20),
-      Math.round(heading / 0.08), screen ? `${screen.west},${screen.south},${screen.east},${screen.north}` : ''].join(':');
+      Math.round(heading / 0.08), screen ? `${screen.west},${screen.south},${screen.east},${screen.north}` : '',
+      player ? `${Math.round(player[0] * 2000)},${Math.round(player[1] * 2000)}` : ''].join(':');
     let wanted: PlannedTile[];
     let keep: Set<string>;
     if (this.streamPlan?.key === planKey) {
@@ -405,11 +408,16 @@ export class WorldTiles {
       const pad = calm ? 500 : 800;
       const dLng = pad / (METERS_PER_DEGREE * cosLat);
       const dLat = pad / METERS_PER_DEGREE;
-      wanted = tilesCovering(
+      // the player's own surroundings first (what they see on the road), then the rest of
+      // the rectangle, nearest to them first — not nearest the middle of the map
+      const ring = player ? tilesAround(player, o.loadRadius, o.zoom) : [];
+      const inRing = new Set(ring.map((t) => t.key));
+      const rect = tilesCovering(
         screen.west - dLng, screen.south - dLat,
         screen.east + dLng, screen.north + dLat,
-        o.zoom, focus,
+        o.zoom, player ?? focus,
       );
+      wanted = [...ring, ...rect.filter((t) => !inRing.has(t.key))];
       for (const t of wanted) keep.add(t.key);
     } else {
       wanted = tilesAround(stream, o.loadRadius, o.zoom);
@@ -435,6 +443,8 @@ export class WorldTiles {
     for (const p of wanted) keep.add(p.key);
     this.streamPlan = { key: planKey, wanted, keep: new Set(keep) };
     }
+    // what driving needs right now, before the map's rectangle is added to `keep`
+    const need = screen ? null : new Set(keep);
     const nowKeep = performance.now();
     if (screen) {
       // sticky rectangle: reopen M in the same area must not refetch the sides
@@ -465,8 +475,10 @@ export class WorldTiles {
       dropped++;
     }
     if (!calm) {
+      // the map rectangle keeps its loaded tiles, not its unfinished loads: those took every
+      // slot (each with its eight neighbours) and the tiles round the car waited behind them
       for (const [key, job] of this.pending) {
-        if (keep.has(key) || this.softKeep.has(key)) continue;
+        if ((need ?? keep).has(key)) continue;
         this.cancel(job.id);
         this.pending.delete(key);
       }

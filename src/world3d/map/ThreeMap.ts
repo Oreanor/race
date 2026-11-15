@@ -432,7 +432,12 @@ export class ThreeMap {
     const cosLat = Math.cos(((south + north) / 2) * Math.PI / 180);
     const spanE = (east - west) * METERS_PER_DEGREE * cosLat;
     const spanN = (north - south) * METERS_PER_DEGREE;
-    if (spanE > 12000 || spanN > 12000) return this.lastScreenBounds;
+    // zoomed far out: the middle 12 × 12 km of the screen (a stale rectangle stayed behind)
+    if (spanE > 12000 || spanN > 12000) {
+      const [cx, cy] = s.center;
+      const hx = Math.min(spanE, 12000) / 2 / (METERS_PER_DEGREE * cosLat), hy = Math.min(spanN, 12000) / 2 / METERS_PER_DEGREE;
+      west = cx - hx; east = cx + hx; south = cy - hy; north = cy + hy;
+    }
     this.lastScreenBounds = { west, south, east, north };
     return this.lastScreenBounds;
   }
@@ -993,6 +998,7 @@ export class ThreeMap {
       this.streamBurst && !this.streamCalm,
       screen ?? undefined,
       this.streamCalm,
+      this.focusCar?.at,
     );
     // the M map draws on demand: while its tiles are still coming (fetching, building or
     // waiting to go up to the GPU) keep frames coming, or they trickle in a couple a second
