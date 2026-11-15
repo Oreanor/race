@@ -255,6 +255,9 @@ export default function Game() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [mapLabels, setMapLabels] = useState<MapLabelFilters>(() => loadMapLabelFilters());
   const [mapViewOpen, setMapViewOpen] = useState(false);
+  /** a new town or village: the place plaque shows on the road for a few seconds */
+  const [placeFlash, setPlaceFlash] = useState(false);
+  const placeFlashTimer = useRef(0);
   const [eventOffer, setEventOffer] = useState<EventOffer | null>(null);
   const [eventResult, setEventResult] = useState<EventResult | null>(null);
   const [status, setStatus] = useState(() => t('loading.city'));
@@ -442,7 +445,14 @@ export default function Game() {
             clockAt = now;
             const { at, timeZone } = game.map.localTime();
             locality.update(game.vehicle.position);
-            if (placeRef.current) placeRef.current.textContent = locality.name ?? place.name;
+            const shown = locality.name ?? place.name;
+            // a new place on the road: the plaque comes up for a moment, then fades
+            if (placeRef.current && placeRef.current.textContent && placeRef.current.textContent !== shown && drivingRef.current) {
+              setPlaceFlash(true);
+              window.clearTimeout(placeFlashTimer.current);
+              placeFlashTimer.current = window.setTimeout(() => setPlaceFlash(false), 4000);
+            }
+            if (placeRef.current) placeRef.current.textContent = shown;
             if (districtRef.current) {
               districtRef.current.textContent = locality.district ?? '';
               districtRef.current.hidden = !locality.district;
@@ -692,6 +702,7 @@ export default function Game() {
   }, [booted, car]);
   useEffect(() => () => {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    window.clearTimeout(placeFlashTimer.current);
   }, []);
 
   // stats panel: wraps the world's GL context only while it is shown
@@ -966,7 +977,7 @@ export default function Game() {
       )}
       {booted && (
         // on the intro and the M map only: on the road it would hide the view
-        <div className={`clock-hud${driving && !mapViewOpen ? ' is-hidden' : ''}`} aria-hidden="true">
+        <div className={`clock-hud${driving && !mapViewOpen && !placeFlash ? ' is-hidden' : ''}`} aria-hidden="true">
           <span className="local-place" ref={placeRef} />
           <span className="local-district" ref={districtRef} hidden />
           <span className="local-clock" ref={clockRef} />
