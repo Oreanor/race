@@ -81,6 +81,8 @@ export class VehicleController {
   /** Engine revs 0..1 (idle ≈ 0.08, redline = 1). */
   revs = 0.08;
   private launch = 0;
+  /** last step: Shift + gas at a standstill (the clutch held in, revs building) */
+  private clutched = false;
   constructor(position: Position, heading:number) { this.position=[...position]; this.heading=heading*Math.PI/180; }
   step(dt:number, keys:Set<string>, config:{maxSpeed:number; reverseSpeed:number; acceleration:number; braking:number; drag:number; handbrake:number; wheelbase:number; scale?:number}) {
     const scale=config.scale??1, maxSpeed=config.maxSpeed*scale, reverseSpeed=config.reverseSpeed*scale, acceleration=config.acceleration*scale, braking=config.braking*scale, drag=config.drag*scale, handbrakeForce=config.handbrake*scale;
@@ -100,6 +102,14 @@ export class VehicleController {
     // only the rear wheels lock: it slows gently and mostly breaks the tail loose (the brake stops)
     if(handbrake && Math.abs(this.speed) > 0.1) this.speed-=Math.sign(this.speed)*handbrakeForce*(spinning?SPIN_SCRUB:HANDBRAKE_SCRUB)*dt;
     if(handbrake && Math.abs(this.speed) <= 0.1 && !gas) this.speed=0;
+    // clutch launch: Shift + gas standing still revs the engine up; let go of Shift with the gas
+    // still down and the car leaps off — the harder, the higher the revs were
+    const clutching=gas && handbrake && Math.abs(this.speed)<1;
+    if(this.clutched && !clutching && gas && !handbrake && this.speed>=0 && this.revs>0.3){
+      this.launch=this.revs;
+      this.speed+=this.revs*acceleration*0.7;
+    }
+    this.clutched=clutching;
     if(this.launch>0){
       this.speed+=this.launch*acceleration*3.8*dt;
       this.launch=Math.max(0, this.launch-dt*2.6);
@@ -107,7 +117,7 @@ export class VehicleController {
     if(!gas&&!brake&&!handbrake&&this.launch<=0){ const loss=drag*dt; this.speed=Math.sign(this.speed)*Math.max(0,Math.abs(this.speed)-loss); }
     this.speed=Math.max(-reverseSpeed,Math.min(limit,this.speed));
     const drive=Math.abs(this.speed)/(maxSpeed*(boost?1.5:1));
-    const wanted=gas&&!handbrake?0.12+drive*0.78+(boost?0.08:0):0.08+drive*0.4;
+    const wanted=clutching?0.95:gas&&!handbrake?0.12+drive*0.78+(boost?0.08:0):0.08+drive*0.4;
     this.revs+=(wanted-this.revs)*(1-Math.exp(-dt*7));
     if(this.launch>0.05) this.revs=Math.max(this.revs, this.launch*0.85);
     this.throttle=((gas&&!handbrake)&&this.speed>0.35)||Math.abs(this.slip)>0.35?1:0;
