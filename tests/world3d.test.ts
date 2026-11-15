@@ -326,6 +326,28 @@ test('coplanar walls: the taller keeps the shared stretch, the rest of the lower
   assert.ok(Math.abs(of(low)[0].t0 - 0.4) < 0.02 && of(low)[0].t1 === 1, 'only 10..16 of the low wall remains');
 });
 
+test('road smoothing keeps an even grade exact at a road end and evens out DEM noise', async () => {
+  const { flattenUnderRoads, roadMask } = await import('../src/world3d/tiles/groundVector.ts');
+  const grid = 20, n = grid + 1, cs = 10;
+  const plane = (i: number, j: number) => i * 0.6 + j * 0.25;
+  // a road from the west edge that stops halfway: an average would pull its end downhill
+  const mask = roadMask(grid, cs, [0, 100, 100, 100, 3]);
+  const H = new Float32Array(n * n);
+  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) H[j * n + i] = plane(i, j);
+  flattenUnderRoads(H, grid, mask, new Uint8Array(n * n), 3);
+  for (let i = 1; i <= 10; i++) assert.ok(Math.abs(H[10 * n + i] - plane(i, 10)) < 1e-3, `grade kept at ${i}: ${H[10 * n + i]} vs ${plane(i, 10)}`);
+  // DEM noise of ±2 m along a long road: much smaller after
+  let seed = 7;
+  const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647 - 0.5) * 4;
+  const long = roadMask(grid, cs, [0, 100, 200, 100, 3]);
+  const N = new Float32Array(n * n);
+  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) N[j * n + i] = plane(i, j) + rnd();
+  const err = () => { let e = 0; for (let i = 3; i <= 17; i++) e += Math.abs(N[10 * n + i] - plane(i, 10)); return e / 15; };
+  const before = err();
+  flattenUnderRoads(N, grid, long, new Uint8Array(n * n), 3);
+  assert.ok(err() < before * 0.6, `noise ${before.toFixed(2)} -> ${err().toFixed(2)}`);
+});
+
 test('grid under a road is smoothed, slopes and tile borders are kept', async () => {
   const { flattenUnderRoads, roadMask } = await import('../src/world3d/tiles/groundVector.ts');
   const grid = 10, n = grid + 1, cs = 10;

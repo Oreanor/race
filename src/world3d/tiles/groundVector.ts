@@ -164,25 +164,39 @@ export function roadMask(grid: number, cs: number, segs: number[]): Uint8Array {
 }
 
 /**
- * DEM noise makes the grid lumpy under the pavement. Grid points under roads are
- * eased toward their neighbours (a plane averages to itself, so slopes stay).
- * Tile borders and water stay as they are, so tiles still meet.
+ * DEM noise makes the grid lumpy under the pavement (±1–3 m from one 30-odd m cell to
+ * the next: humps and dips a road never has). Each grid point under a road is set on
+ * the plane that best fits the road points round it (2 cells each way, the nearer the
+ * more) and, lightly, its eight neighbours (so a road's line alone never leaves the
+ * plane loose across it). A plane fits itself: an even grade stays exact even at a
+ * road's end or in a bend, where an average would pull it off. Water and the tile's
+ * edge stay as they are, so tiles still meet.
  */
 export function flattenUnderRoads(H: Float32Array, grid: number, mask: Uint8Array, wet: Uint8Array, passes = 2) {
-  const n = grid + 1;
-  const next = Float32Array.from(H);
+  const n = grid + 1, R = 2;
   for (let pass = 0; pass < passes; pass++) {
+    const next = Float32Array.from(H);
     for (let j = 1; j < grid; j++) for (let i = 1; i < grid; i++) {
       const k = j * n + i;
       if (!mask[k] || wet[k]) continue;
-      let sum = 0, count = 0;
-      for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
-        const kk = k + dj * n + di;
+      // weighted least squares h = a + b·di + c·dj, solved at the point (a)
+      let sw = 0, sx = 0, sy = 0, sxx = 0, sxy = 0, syy = 0, sh = 0, sxh = 0, syh = 0;
+      for (let dj = -R; dj <= R; dj++) for (let di = -R; di <= R; di++) {
+        const ii = i + di, jj = j + dj;
+        if (ii < 0 || jj < 0 || ii > grid || jj > grid) continue;
+        const kk = jj * n + ii;
         if (wet[kk]) continue; // the carved bed would drag the road down
-        sum += H[kk];
-        count++;
+        const near = Math.abs(di) <= 1 && Math.abs(dj) <= 1;
+        const w = mask[kk] ? 1 / (1 + di * di + dj * dj) : near ? 0.15 : 0;
+        if (!w) continue;
+        const h = H[kk];
+        sw += w; sx += w * di; sy += w * dj; sxx += w * di * di; sxy += w * di * dj; syy += w * dj * dj;
+        sh += w * h; sxh += w * di * h; syh += w * dj * h;
       }
-      if (count) next[k] = sum / count;
+      // Cramer on [[sw sx sy] [sx sxx sxy] [sy sxy syy]] · [a b c] = [sh sxh syh]
+      const det = sw * (sxx * syy - sxy * sxy) - sx * (sx * syy - sxy * sy) + sy * (sx * sxy - sxx * sy);
+      if (Math.abs(det) < 1e-6) continue;
+      next[k] = (sh * (sxx * syy - sxy * sxy) - sx * (sxh * syy - sxy * syh) + sy * (sxh * sxy - sxx * syh)) / det;
     }
     H.set(next);
   }
@@ -417,7 +431,7 @@ export function buildGround(vt: VectorTile, span: number, grid: number, dem: Flo
     H.set(soft);
   }
 
-  flattenUnderRoads(H, grid, onRoad, wet);
+  flattenUnderRoads(H, grid, onRoad, wet, 3);
 
   // drive grid: same as the shore mesh's dry bank (not the dipped visual H)
   const driveHeights = Float32Array.from(H);
