@@ -445,7 +445,8 @@ export default function Game() {
             clockAt = now;
             const { at, timeZone } = game.map.localTime();
             locality.update(game.vehicle.position);
-            const shown = locality.name ?? place.name;
+            const shown = locality.title ?? place.name;
+            const context = locality.context ?? place.country;
             // a new place on the road: the plaque comes up for a moment, then fades
             if (placeRef.current && placeRef.current.textContent && placeRef.current.textContent !== shown && drivingRef.current) {
               setPlaceFlash(true);
@@ -454,8 +455,8 @@ export default function Game() {
             }
             if (placeRef.current) placeRef.current.textContent = shown;
             if (districtRef.current) {
-              districtRef.current.textContent = locality.district ?? '';
-              districtRef.current.hidden = !locality.district;
+              districtRef.current.textContent = context;
+              districtRef.current.hidden = !context;
             }
             if (clockRef.current) clockRef.current.textContent = localClock(at, timeZone);
           }

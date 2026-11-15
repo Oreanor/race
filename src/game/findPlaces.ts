@@ -65,8 +65,8 @@ export function placesFromSearch(rows: PlaceHit[], lang: Lang = 'en'): City[] {
     const kind = kindKey ? KIND_NAME[lang][kindKey] : '';
     const parents = [address.city, address.town, address.village, address.municipality, address.county, address.state ?? address.region]
       .filter((part): part is string => Boolean(part) && part !== name)
-      .filter((part, index, list) => list.indexOf(part) === index)
-      .slice(0, 2);
+      .filter((part, index, list) => list.indexOf(part) === index);
+    if (address.country && !parents.includes(address.country)) parents.push(address.country);
     const area = parents.length ? parents.join(', ') : address.country ?? '';
     const note = kind ? [kind, area].filter(Boolean).join(' · ') : [address.state, address.country].filter(Boolean).join(' · ');
     places.push({ name, country, coords: [lng, lat], heading: 0, road: '', note });

@@ -10,6 +10,7 @@ export async function GET(request: Request) {
   url.searchParams.set('format', 'jsonv2');
   url.searchParams.set('limit', '6');
   url.searchParams.set('addressdetails', '1');
+  url.searchParams.set('accept-language', lang === 'en' ? 'en' : `${lang},en`);
   try {
     const response = await fetch(url, {
       headers: {

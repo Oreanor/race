@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { placesFromSearch } from '../src/game/findPlaces.ts';
+import { localityFromAddress } from '../src/game/placeLabel.ts';
 
 test('a searched city becomes a drivable place', () => {
   const [kazan] = placesFromSearch([{
@@ -35,5 +36,33 @@ test('search hits say what and where they are', () => {
     lat: '41.09', lon: '-7.8', name: 'Figueira', addresstype: 'village',
     address: { village: 'Figueira', city: 'Lamego', county: 'Viseu', country: 'Portugal', country_code: 'pt' },
   }], 'ru');
-  assert.equal(village.note, 'Деревня · Lamego, Viseu');
+  assert.equal(village.note, 'Деревня · Lamego, Viseu, Portugal');
+});
+
+test('the HUD distinguishes a Newark neighbourhood from its city and state', () => {
+  const place = localityFromAddress({ neighbourhood: 'Розвилл', city: 'Ньюарк', state: 'Нью-Джерси', country: 'Соединённые Штаты', country_code: 'us' }, 'ru')!;
+  assert.equal(place.title, 'район Розвилл, г. Ньюарк');
+  assert.equal(place.context, 'штат Нью-Джерси, США');
+});
+
+test('a town remains its own settlement rather than becoming a city district', () => {
+  const place = localityFromAddress({ town: 'Харрисон', state: 'Нью-Джерси', country_code: 'us' }, 'ru')!;
+  assert.equal(place.title, 'г. Харрисон');
+  assert.equal(place.context, 'штат Нью-Джерси, США');
+});
+
+test('Manhattan retains both New York city and New York state', () => {
+  const place = localityFromAddress({ suburb: 'Манхэттен', city: 'Нью-Йорк', state: 'Нью-Йорк', country_code: 'us' }, 'ru')!;
+  assert.equal(place.title, 'район Манхэттен, г. Нью-Йорк');
+  assert.equal(place.context, 'штат Нью-Йорк, США');
+});
+
+test('a rural hamlet keeps its type and receives the region and country', () => {
+  const place = localityFromAddress({ hamlet: 'Lugar', state: 'Viseu', country: 'Portugal' }, 'pt')!;
+  assert.equal(place.label, 'Lugar Lugar, Viseu, Portugal');
+});
+
+test('all useful administrative parents survive, without duplicating the city', () => {
+  const place = localityFromAddress({ neighbourhood: 'Розвилл', city: 'Ньюарк', municipality: 'Ньюарк', county: 'Эссекс', state: 'Нью-Джерси', country_code: 'us' }, 'ru')!;
+  assert.equal(place.context, 'штат Нью-Джерси, округ Эссекс, США');
 });
