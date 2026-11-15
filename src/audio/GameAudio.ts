@@ -173,7 +173,7 @@ export class GameAudio {
     this.engine = { a, b, drive, filter, gain };
     // tyres: band-passed noise
     const tyreSrc = this.loop(this.noise!);
-    const tf = ctx.createBiquadFilter(); tf.type = 'bandpass'; tf.frequency.value = 2300; tf.Q.value = 9;
+    const tf = ctx.createBiquadFilter(); tf.type = 'bandpass'; tf.frequency.value = 1900; tf.Q.value = 6;
     const tg = ctx.createGain(); tg.gain.value = 0;
     tyreSrc.connect(tf); tf.connect(tg); tg.connect(out);
     this.tyres = { filter: tf, gain: tg };
@@ -233,10 +233,11 @@ export class GameAudio {
     const engineLevel = (0.09 + (f.throttle ? 0.07 : 0) + clamp(f.revs) * 0.06 + (f.boost ? 0.05 : 0)) * on;
     this.engine.gain.gain.setTargetAtTime(engineLevel, t, smooth);
     // ---- tyres: squeal on a big slide at speed
-    // only a real slide: an everyday corner already drifts up to ~0.42 rad without a sound
-    const squeal = clamp((Math.abs(f.slip) - 0.46) * 2.5) * clamp(Math.abs(f.speed) / 12);
-    this.tyres.gain.gain.setTargetAtTime(squeal * 0.16 * on, t, 0.04);
-    this.tyres.filter.frequency.setTargetAtTime(2000 + squeal * 700, t, 0.05);
+    // a hard corner at speed whimpers (the everyday drift tops out at ~0.42 rad), a real
+    // slide or a spin screams; the pitch wavers a little like rubber does
+    const squeal = clamp((Math.abs(f.slip) - 0.34) * 2.2) * clamp(Math.abs(f.speed) / 10);
+    this.tyres.gain.gain.setTargetAtTime(squeal * 0.75 * on, t, 0.04);
+    this.tyres.filter.frequency.setTargetAtTime(1700 + squeal * 600 + Math.sin(t * 23) * 90, t, 0.03);
     // ---- wind with speed
     const rush = clamp(Math.abs(f.speed) / 70);
     this.wind.gain.gain.setTargetAtTime(rush * rush * 0.1 * on, t, 0.3);
