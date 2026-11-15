@@ -6376,8 +6376,9 @@ export class GameEngine {
         if (metersBetween(here, center) > 700) continue;
         let spots = this.fieldCells.get(key);
         if (spots === undefined) {
-          // ground not in yet: look again later
-          if (this.map.groundAt(center) == null) continue;
+          // ground or water not in yet: look again later. A tile whose water is still
+          // waiting to be read would pass the open sea off as a field.
+          if (this.map.groundAt(center) == null || this.pendingIngest.size > 0 || !this.water.near(here, 200)) continue;
           const [cols, rows] = FIELD_GRIDS[Math.floor(hash(gx, gy, 3) * FIELD_GRIDS.length)];
           const turn = hash(gx, gy, 4) * Math.PI;
           spots = this.layFieldGrid(center, cols, rows, turn);
@@ -6387,6 +6388,8 @@ export class GameEngine {
         spots.forEach((at, i) => {
           const id = `field:${key}:${i}`;
           if (this.pickups.has(id) || this.collectedPickups.has(id) || metersBetween(here, at) > 800) return;
+          // and each coin once more, against the water as it stands now: never on the sea
+          if (this.water.inSea(at, this.cachedWater)) return;
           this.pickups.set(id, { position: at, color: '#f2c230', kind: 'coin' });
           added = true;
         });
