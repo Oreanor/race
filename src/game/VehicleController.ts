@@ -92,6 +92,8 @@ export class VehicleController {
   private clutched = false;
   /** Visual intensity while holding the engine against the brake at a stop. */
   get staging() { return this.clutched ? Math.max(0, (this.revs - 0.15) / 0.8) : 0; }
+  /** 0..1 while a clutch launch is still pushing the car off (its tyres spin and smoke) */
+  get launching() { return Math.min(1, this.launch); }
   /**
    * The player's brake: S held from moving forward stops the car and holds it there;
    * reverse takes a fresh press at a standstill. Bots keep S as brake-into-reverse.
@@ -129,12 +131,13 @@ export class VehicleController {
     const clutching=gas && handbrake && Math.abs(this.speed)<1;
     if(this.clutched && !clutching && gas && !handbrake && this.speed>=0 && this.revs>0.3){
       this.launch=this.revs;
-      this.speed+=this.revs*acceleration*0.7;
+      // the clutch bites at once: a hard shove, then the tyres keep hauling for ~half a second
+      this.speed+=this.revs*acceleration*1.2;
     }
     this.clutched=clutching;
     if(this.launch>0){
-      this.speed+=this.launch*acceleration*3.8*dt;
-      this.launch=Math.max(0, this.launch-dt*2.6);
+      this.speed+=this.launch*acceleration*5.5*dt;
+      this.launch=Math.max(0, this.launch-dt*2.2);
     }
     if(!gas&&!brake&&!handbrake&&this.launch<=0){ const loss=drag*dt; this.speed=Math.sign(this.speed)*Math.max(0,Math.abs(this.speed)-loss); }
     this.speed=Math.max(-reverseSpeed,Math.min(limit,this.speed));

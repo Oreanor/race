@@ -195,6 +195,7 @@ export function vehicleLayer(
   let lastSpawn = 0;
   let lastDust = 0;
   let lastStagingSmoke = 0;
+  let lastLaunchSmoke = 0;
   let stagingHeat = 0;
   let lastHouseFx = 0;
   let surface: Surface = 'paved';
@@ -1396,6 +1397,14 @@ export function vehicleLayer(
         const rear = offsetPosition(here, -Math.sin(heading) * currentCar.length * 0.36, -Math.cos(heading) * currentCar.length * 0.36);
         fx.altitude = height();
         fx.stagingSmoke(here, heading, currentCar.length, staging * (0.25 + stagingHeat * 0.75), now, map?.surfaceAt(rear) ?? 'paved');
+      }
+      // a clutch launch: the rear tyres light up — puffs twice as big, twice as often
+      const launching = vehicle.launching ?? 0;
+      if (launching > 0.05 && now - lastLaunchSmoke > 22) {
+        lastLaunchSmoke = now;
+        const rear = offsetPosition(here, -Math.sin(heading) * currentCar.length * 0.36, -Math.cos(heading) * currentCar.length * 0.36);
+        fx.altitude = height();
+        fx.launchSmoke(here, heading, currentCar.length, launching, now, map?.surfaceAt(rear) ?? 'paved');
       }
       const slip = Math.abs(drift);
       if (slip > 0.28 && Math.abs(speed) > 3) {

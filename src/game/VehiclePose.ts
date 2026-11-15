@@ -1,6 +1,6 @@
 import type { Position } from './VehicleController.ts';
 
-export type Pose = { position: Position; heading: number; throttle: number; slip?: number; speed?: number; staging?: number };
+export type Pose = { position: Position; heading: number; throttle: number; slip?: number; speed?: number; staging?: number; launching?: number };
 
 // Rendering stays one physics step behind, so it never predicts through a wall.
 export class VehiclePose {
@@ -10,6 +10,7 @@ export class VehiclePose {
   slip = 0;
   speed = 0;
   staging = 0;
+  launching = 0;
   private previous: Position = [0, 0];
   private previousHeading = 0;
 
@@ -34,5 +35,6 @@ export class VehiclePose {
     this.slip = vehicle.slip ?? 0;
     this.speed = vehicle.speed ?? 0;
     this.staging = vehicle.staging ?? 0;
+    this.launching = vehicle.launching ?? 0;
   }
 }

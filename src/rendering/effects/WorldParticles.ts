@@ -371,6 +371,27 @@ export class WorldParticles {
     }
   }
 
+  /**
+   * A clutch launch: thick tyre smoke from both rear wheels — twice the size of the revving
+   * puffs, two a wheel, thrown back off the spinning tyres and left hanging behind.
+   */
+  launchSmoke(here: Position, heading: number, carLength: number, intensity: number, now: number, surface: Surface = 'paved') {
+    const fwdE = Math.sin(heading), fwdN = Math.cos(heading), rightE = Math.cos(heading), rightN = -Math.sin(heading);
+    const colors = SURFACE_FX[surface], back = -carLength * 0.36;
+    for (const side of [-1, 1]) for (let k = 0; k < 2; k++) {
+      const spread = side * rand(0.8, 2.6);
+      const throwBack = rand(2.5, 6) * (0.5 + intensity);
+      this.add(here, { e: fwdE * back + rightE * side * 0.8, n: fwdN * back + rightN * side * 0.8, u: 0.15 }, {
+        kind: surface === 'paved' ? 'tiresmoke' : 'dust', tint: colors.dust,
+        ve: rightE * spread - fwdE * throwBack + rand(-0.4, 0.4),
+        vn: rightN * spread - fwdN * throwBack + rand(-0.4, 0.4),
+        vu: rand(0.3, 0.9), life: 2600 + intensity * 1800,
+        size0: 1.0 + intensity * 0.6, size1: 6 + intensity * 7,
+        drag: 0.9, gravity: -0.1, stretch: 0,
+      }, now);
+    }
+  }
+
   /** Smoke spreads out from each rear wheel as stationary revs build. */
   stagingSmoke(here: Position, heading: number, carLength: number, intensity: number, now: number, surface: Surface = 'paved') {
     const fwdE = Math.sin(heading), fwdN = Math.cos(heading), rightE = Math.cos(heading), rightN = -Math.sin(heading);
