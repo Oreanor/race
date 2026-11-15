@@ -256,6 +256,8 @@ export class WorldTiles {
   private template: string | null = null;
   private disposed = false;
   private roadMat: THREE.ShaderMaterial;
+  /** the railway beds: the road shader with the track texture */
+  private railMat: THREE.ShaderMaterial;
   private farMat: THREE.ShaderMaterial;
   private groundMat: THREE.ShaderMaterial;
   private overlayMats: THREE.ShaderMaterial[];
@@ -282,6 +284,7 @@ export class WorldTiles {
   constructor(private uniforms: BaseUniforms, mask: THREE.Texture, readonly options: WorldTilesOptions = defaultWorldOptions) {
     this.root.matrixAutoUpdate = false;
     this.roadMat = roadMaterial(uniforms);
+    this.railMat = roadMaterial(uniforms, true);
     this.farMat = farBuildingMaterial(uniforms, mask);
     this.groundMat = groundMaterial(uniforms);
     this.overlayMats = [0, 1, 2].map((layer) => overlayMaterial(uniforms, layer));
@@ -335,7 +338,7 @@ export class WorldTiles {
   }
 
   setMaterialSide(side: THREE.Side) {
-    for (const m of [this.roadMat, this.farMat, this.groundMat, this.waterMat, ...this.overlayMats]) m.side = side;
+    for (const m of [this.roadMat, this.railMat, this.farMat, this.groundMat, this.waterMat, ...this.overlayMats]) m.side = side;
     this.vegetation.setSide(side);
     this.side = side;
     if (this.spireMaterial) this.spireMaterial.side = side;
@@ -664,6 +667,12 @@ export class WorldTiles {
         group.add(roads);
         live.roads = roads;
         live.disposables.push(roads.geometry);
+      }
+      if (data.rails?.index.length) {
+        const rails = this.lampLit(this.mesh(data.rails, this.railMat, true), live);
+        rails.renderOrder = -1;
+        group.add(rails);
+        live.disposables.push(rails.geometry);
       }
       group.updateMatrixWorld(true);
     });
@@ -1832,7 +1841,7 @@ export class WorldTiles {
     for (const [key, live] of [...this.tiles]) this.unload(key, live);
     for (const w of this.workers) w?.terminate();
     this.workers = [];
-    for (const m of [this.roadMat, this.farMat, this.groundMat, this.waterMat, ...this.overlayMats]) m.dispose();
+    for (const m of [this.roadMat, this.railMat, this.farMat, this.groundMat, this.waterMat, ...this.overlayMats]) m.dispose();
     this.vegetation.dispose();
     this.spireGeometry?.dispose();
     this.spireMaterial?.dispose();

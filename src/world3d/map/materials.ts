@@ -7,6 +7,7 @@ import {
   lampMapUniform,
 } from './shaders/common.ts';
 import { baseUniforms, type BaseUniforms } from './shaders/uniforms.ts';
+import { SLEEPER_PITCH, TRACK_HALF } from '../tiles/roadStyle.ts';
 
 export type { BaseUniforms } from './shaders/uniforms.ts';
 export { baseUniforms } from './shaders/uniforms.ts';
@@ -235,17 +236,66 @@ export function waterMaterial(u: BaseUniforms) {
   });
 }
 
-export function roadMaterial(u: BaseUniforms) {
+let trackTexture: THREE.DataTexture | null = null;
+/**
+ * A railway track seen from above, drawn once in code: the pale shoulder, the ballast
+ * (a little gravel in it), a sleeper and the two rails (dark foot, bright head) at
+ * standard gauge. Across: s 0..1 is -TRACK_HALF..TRACK_HALF m; along: one sleeper pitch.
+ */
+function trackMap() {
+  if (trackTexture) return trackTexture;
+  const W = 128, H = 64, data = new Uint8Array(W * H * 4);
+  const hex = (c: string) => [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16));
+  const shoulder = hex('#8b847a'), ballast = hex('#6c665f'), sleeper = hex('#4a3d33'), foot = hex('#34373b'), head = hex('#b4bac0');
+  let seed = 9;
+  const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
+    const m = Math.abs((i + 0.5) / W * 2 - 1) * TRACK_HALF; // metres from the centre
+    const along = (j + 0.5) / H * SLEEPER_PITCH;            // metres into the pitch
+    let c = m > 1.2 ? shoulder : ballast;
+    let shade = 1 + (rnd() - 0.5) * (m > 1.2 ? 0.08 : 0.22); // gravel
+    if (m < 1.17 && along < 0.22) { c = sleeper; shade = 1 + (rnd() - 0.5) * 0.06; }
+    const rail = Math.abs(m - 0.72);
+    if (rail < 0.06) { c = foot; shade = 1; }
+    if (rail < 0.025) { c = head; shade = 1; }
+    const o = (j * W + i) * 4;
+    for (let k = 0; k < 3; k++) data[o + k] = Math.max(0, Math.min(255, Math.round(c[k] * shade)));
+    data[o + 3] = 255;
+  }
+  trackTexture = new THREE.DataTexture(data, W, H);
+  trackTexture.wrapS = THREE.ClampToEdgeWrapping;
+  trackTexture.wrapT = THREE.RepeatWrapping;
+  trackTexture.magFilter = THREE.LinearFilter;
+  trackTexture.minFilter = THREE.LinearMipmapLinearFilter;
+  trackTexture.generateMipmaps = true;
+  trackTexture.anisotropy = 4;
+  trackTexture.colorSpace = THREE.NoColorSpace; // sRGB values, made linear in the shader like vColor
+  trackTexture.needsUpdate = true;
+  return trackTexture;
+}
+
+/**
+ * Roads (vertex colours), or with `track` the railway bed: one textured strip instead of
+ * a shoulder, a bed, a ribbon a sleeper and four for the rails: a few times fewer triangles.
+ */
+export function roadMaterial(u: BaseUniforms, track = false) {
   return new THREE.ShaderMaterial({
-    uniforms: { ...u, ...lampMapUniform(), ...groundDetail },
+    uniforms: { ...u, ...lampMapUniform(), ...groundDetail, ...(track ? { uTrack: { value: trackMap() } } : {}) },
+    defines: track ? { TRACK: 1 } : {},
     vertexShader: /* glsl */ `
       uniform float uExag;
       attribute float aGround;
       attribute vec3 aColor;
       varying vec3 vColor;
       varying vec3 vWorld;
+      #ifdef TRACK
+        varying vec2 vTrack;
+      #endif
       ${LAMP_VERTEX}
       void main() {
+        #ifdef TRACK
+          vTrack = uv;
+        #endif
         vColor = aColor;
         vLampUv = position.xz / uTileSpan;
         vec4 world = modelMatrix * vec4(position.x, position.y + aGround * uExag, position.z, 1.0);
@@ -259,8 +309,17 @@ export function roadMaterial(u: BaseUniforms) {
       ${DETAIL}
       varying vec3 vColor;
       varying vec3 vWorld;
+      #ifdef TRACK
+        uniform sampler2D uTrack;
+        varying vec2 vTrack;
+      #endif
       void main() {
         vec3 light = (uAmbient * 0.9 + uSunColor * 0.55 * max(uSun.y, 0.0) * cloudSun(vWorld)) / 0.91 + headlight(vWorld, vec3(0.0, 1.0, 0.0)) + lampLight();
+        #ifdef TRACK
+          vec3 bed = texture2D(uTrack, vec2(vTrack.x * 0.5 + 0.5, vTrack.y)).rgb;
+          gl_FragColor = linearToOutputTexel(vec4(fogged(toLinear(bed) * light, vWorld), 1.0));
+          return;
+        #endif
         // asphalt is worn unevenly: broad lighter and darker stretches, and darker patched spots
         float wear = 0.94 + 0.1 * vnoise(vWorld.xz * 0.08) + 0.04 * vnoise(vWorld.xz * 0.9);
         float mend = smoothstep(0.66, 0.74, vnoise(vWorld.xz * 0.21 + 13.0)) * 0.08;

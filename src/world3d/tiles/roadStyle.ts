@@ -30,3 +30,6 @@ export function roadStyle(cls: string, sub: string, ramp: boolean): RoadStyle | 
 export function isPedestrian(cls: string, sub: string) {
   return cls === 'path' || /pedestrian|footway|cycleway|steps|path|platform/.test(sub);
 }
+
+/** The textured railway bed: this far (m) either side of the track centre, one sleeper pitch (m) a repeat. */
+export const TRACK_HALF = 1.65, SLEEPER_PITCH = 1.15;

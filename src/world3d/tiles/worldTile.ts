@@ -15,7 +15,7 @@ type Pt = [number, number];
 import { latFromMercator, tileCorner, tileSpan, type TileId } from '../mercator.ts';
 import { buildVegetation, vegetationTransferables, type VegetationData } from './vegetationTile.ts';
 import { planStreets } from './streetscape.ts';
-import { roadStyle, isPedestrian, roadDeckHalf } from './roadStyle.ts';
+import { roadStyle, isPedestrian, roadDeckHalf, SLEEPER_PITCH, TRACK_HALF } from './roadStyle.ts';
 import { planRoadNetwork, type RoadDeck as Deck, type RoadWay as Way, type PlannedRoad as Planned, type RoadSurfaces as Surfaces, type RoadXY as XY } from './roadNetwork.ts';
 import { buildRoadSurface, deckSections, deckSideOpening, surfaceHeight, type RoadSurfaceData } from './roadSurface.ts';
 import { streetFurniture } from './furniture.ts';
@@ -51,6 +51,8 @@ export type WorldTileData = {
   /** Exact upward-facing road triangles, shared by rendering and drive queries. */
   roadSurface: RoadSurfaceData;
   roads: MeshData;
+  /** the railway beds on the ground: one textured strip a track (shoulder, ballast, sleepers, rails) */
+  rails: MeshData;
   /** streams, canals, ditches: ribbons drawn with the water material */
   streams: MeshData;
   buildings: TileData;
@@ -211,14 +213,19 @@ class RoadBuilder {
   /** terrain cell size: every triangle is cut along the cells and their diagonals */
   cell: number;
   grid: number;
-  constructor(groundAt: (x: number, z: number) => number, cell: number, grid: number) {
+  /** a textured builder (the track bed): texture coordinates for every vertex, from this */
+  uvAt: ((x: number, z: number) => [number, number]) | null = null;
+  uvs: number[] | null;
+  constructor(groundAt: (x: number, z: number) => number, cell: number, grid: number, textured = false) {
     this.groundAt = groundAt; this.cell = cell; this.grid = grid;
+    this.uvs = textured ? [] : null;
   }
 
   private vertex(x: number, y: number, z: number, rgb: [number, number, number]) {
     this.positions.push(x, y, z);
     this.ground.push(this.groundAt(x, z));
     this.colors.push(rgb[0], rgb[1], rgb[2]);
+    if (this.uvs) this.uvs.push(...(this.uvAt ? this.uvAt(x, z) : [0, 0]));
     return this.positions.length / 3 - 1;
   }
 
@@ -388,6 +395,7 @@ function meshOf(builder: RoadBuilder): MeshData {
     ground: new Float32Array(builder.ground),
     colors: new Uint8Array(builder.colors),
     index: new Uint32Array(builder.index),
+    ...(builder.uvs ? { uvs: new Float32Array(builder.uvs) } : {}),
   };
 }
 
@@ -748,7 +756,7 @@ function railKind(p: Record<string, unknown>): { tram: boolean; gauge: number; w
  * (dark foot, bright head); trams get the rails only, in a dark groove in the street.
  * Everything goes into the one road mesh — more flat triangles, no extra draw calls.
  */
-function railTracks(builder: RoadBuilder, layer: VectorTile['layers'][string], k: number, at: Surfaces, bridges: number[], ways: Map<number, Way>, plan: Map<number, Planned>) {
+function railTracks(builder: RoadBuilder, layer: VectorTile['layers'][string], k: number, at: Surfaces, bridges: number[], ways: Map<number, Way>, plan: Map<number, Planned>, bed?: RoadBuilder) {
   const toMerc = at.toMerc, groundAt = at.driveAt;
   const shoulder = hex('#8b847a');
   const ballast = hex('#6c665f');
@@ -871,6 +879,8 @@ function railTracks(builder: RoadBuilder, layer: VectorTile['layers'][string], k
     for (const line of planned?.rest ?? way.lines) {
       // distance to the next sleeper, carried across the line's pieces so the pitch stays even
       let toSleeper = SLEEPER_STEP * 0.5;
+      // metres along the line so far: the textured bed's sleepers run on without a jump
+      let traveled = 0;
       let toMast = MAST_STEP * 0.5;
       for (let j = 0; j + 1 < line.length; j++) {
         const cut = clipSegment(line[j].x, line[j].y, line[j + 1].x, line[j + 1].y, layer.extent);
@@ -880,13 +890,28 @@ function railTracks(builder: RoadBuilder, layer: VectorTile['layers'][string], k
         if (len < 1e-9) continue;
         builder.groundAt = groundAt;
         const nx = -(bz - az) / len, nz = (bx - ax) / len;
-        if (!tram) {
+        const lenM = len / toMerc;
+        if (!tram && bed) {
+          // the track bed in one textured strip: shoulder, ballast, sleepers and rails are in
+          // the texture (u across, v along in sleeper pitches, carried on along the line)
+          const ux = (bx - ax) / len, uz = (bz - az) / len, start = traveled;
+          bed.groundAt = groundAt;
+          bed.uvAt = (x, z) => [((x - ax) * nx + (z - az) * nz) / (TRACK_HALF * toMerc), (start + ((x - ax) * ux + (z - az) * uz) / toMerc) / SLEEPER_PITCH];
+          bed.segment(ax, az, bx, bz, TRACK_HALF * toMerc, 0.06, ballast);
+          // the outer side of a bend into the next piece, mapped as this one goes on
+          const nb = line[j + 2];
+          if (nb && cut[2] === line[j + 1].x && cut[3] === line[j + 1].y) bed.bevel(bx, bz, bx - ax, bz - az, nb.x * k - bx, nb.y * k - bz, TRACK_HALF * toMerc, 0.06, ballast);
+          bed.uvAt = null;
+        } else if (!tram) {
           builder.segment(ax, az, bx, bz, 1.65 * toMerc, 0.05, shoulder);
           builder.segment(ax, az, bx, bz, 1.2 * toMerc, 0.06, ballast);
           if (j > 0) {
             builder.disc(ax, az, 1.65 * toMerc, 0.05, shoulder, 6);
             builder.disc(ax, az, 1.2 * toMerc, 0.06, ballast, 6);
           }
+        }
+        traveled += lenM;
+        if (!tram) {
           // a track running alongside for this whole piece: ballast across the gap too, so
           // a yard reads as one field of tracks, not strips with ground between
           if (len > 6 * toMerc) for (const sgn of [-1, 1]) {
@@ -895,13 +920,15 @@ function railTracks(builder: RoadBuilder, layer: VectorTile['layers'][string], k
             const ox = nx * sgn * d / 2, oz = nz * sgn * d / 2;
             builder.segment(ax + ox, az + oz, bx + ox, bz + oz, d / 2 + 0.2 * toMerc, 0.055, ballast);
           }
-          // sleepers across the bed, a little wider than the gauge
-          const lenM = len / toMerc, reach = (kind.gauge + 0.45) * toMerc;
-          for (let s = toSleeper; s < lenM; s += SLEEPER_STEP) {
-            const cx = ax + (bx - ax) * s / lenM, cz = az + (bz - az) * s / lenM;
-            builder.segment(cx - nx * reach, cz - nz * reach, cx + nx * reach, cz + nz * reach, 0.11 * toMerc, 0.08, sleeper);
+          // sleepers across the bed, a little wider than the gauge (the textured bed has them)
+          if (!bed) {
+            const reach = (kind.gauge + 0.45) * toMerc;
+            for (let s = toSleeper; s < lenM; s += SLEEPER_STEP) {
+              const cx = ax + (bx - ax) * s / lenM, cz = az + (bz - az) * s / lenM;
+              builder.segment(cx - nx * reach, cz - nz * reach, cx + nx * reach, cz + nz * reach, 0.11 * toMerc, 0.08, sleeper);
+            }
+            toSleeper = ((toSleeper - lenM) % SLEEPER_STEP + SLEEPER_STEP) % SLEEPER_STEP;
           }
-          toSleeper = ((toSleeper - lenM) % SLEEPER_STEP + SLEEPER_STEP) % SLEEPER_STEP;
           if (kind.wired) {
             builder.segment(ax, az, bx, bz, 0.03 * toMerc, CONTACT_Y, wire);
             builder.segment(ax, az, bx, bz, 0.03 * toMerc, CATENARY_Y, wire);
@@ -912,7 +939,8 @@ function railTracks(builder: RoadBuilder, layer: VectorTile['layers'][string], k
             toMast = ((toMast - lenM) % MAST_STEP + MAST_STEP) % MAST_STEP;
           }
         }
-        railPair((ox, oz, w, y, rgb) => builder.segment(ax + ox, az + oz, bx + ox, bz + oz, w, y, rgb), nx, nz, gauge, tram);
+        // the rails (on the textured bed at standard gauge; trams and narrow gauge drawn)
+        if (tram || !bed || kind.gauge !== 0.72) railPair((ox, oz, w, y, rgb) => builder.segment(ax + ox, az + oz, bx + ox, bz + oz, w, y, rgb), nx, nz, gauge, tram);
       }
     }
     builder.groundAt = groundAt;
@@ -977,7 +1005,7 @@ function neighbourWays(neighbours: { dx: number; dy: number; vt: VectorTile }[],
   return out;
 }
 
-function roadMesh(vt: VectorTile, span: number, grid: number, at: Surfaces, bridges: number[], surface: number[], pitchLines: number[] = [], lawns: number[] = [], neighbours: { dx: number; dy: number; vt: VectorTile }[] = []): MeshData {
+function roadMesh(vt: VectorTile, span: number, grid: number, at: Surfaces, bridges: number[], surface: number[], pitchLines: number[] = [], lawns: number[] = [], neighbours: { dx: number; dy: number; vt: VectorTile }[] = [], bed?: RoadBuilder): MeshData {
   const towerSpots = new Set<string>();
   const { driveAt, groundAt: bedAt } = at;
   const builder = new RoadBuilder(driveAt, span / grid, grid);
@@ -1015,7 +1043,7 @@ function roadMesh(vt: VectorTile, span: number, grid: number, at: Surfaces, brid
         }
       }
     }
-    railTracks(builder, layer, k, at, bridges, ways, plan);
+    railTracks(builder, layer, k, at, bridges, ways, plan, bed);
     // the drawn roads round their corners (the plan's lines stay as they are for the rest)
     const drawn = roundedRoadLines(ways, plan, toMerc / k);
     // casings first (lower), then fills, each a flat ribbon slightly above ground
@@ -1354,7 +1382,10 @@ export function buildWorldTile(buffer: ArrayBuffer, tile: TileId, options: World
   // lawn a hedge stands on for the road mesh
   const streets = planStreets(corner, span, metersScale, features as unknown as Record<string, MapFeature[]>);
   // the tiles around: their roads go into the bridge plan (an unreadable one is left out)
-  const roads = roadMesh(vt, span, options.grid, { driveAt, groundAt, waterAt, toMerc: 1 / metersScale }, bridgeList, surfaceList, furniture.lines, hedgeLawns(streets.plants, 1 / metersScale), around);
+  // the railway beds go into their own small textured mesh (a texture instead of sleepers and rails)
+  const railBed = new RoadBuilder(driveAt, span / options.grid, options.grid, true);
+  const roads = roadMesh(vt, span, options.grid, { driveAt, groundAt, waterAt, toMerc: 1 / metersScale }, bridgeList, surfaceList, furniture.lines, hedgeLawns(streets.plants, 1 / metersScale), around, railBed);
+  const rails = meshOf(railBed);
   // streams sit on the water surface — following the carved bed made torn blue ribbons
   const streamAt = (x: number, z: number) => {
     const g = groundAt(x, z);
@@ -1376,6 +1407,7 @@ export function buildWorldTile(buffer: ArrayBuffer, tile: TileId, options: World
     bridges,
     roadSurface,
     roads,
+    rails,
     streams,
     buildings: buildTile(vt, tile, {
       buildingAssemblies: options.buildingAssemblies,
@@ -1406,7 +1438,7 @@ export function worldTransferables(data: WorldTileData): ArrayBuffer[] {
   const out = [...buildingTransferables(data.buildings), ...vegetationTransferables(data.vegetation)];
   out.push(...groundTransferables(data.ground), data.bridges.buffer as ArrayBuffer);
   out.push(data.roadSurface.triangles.buffer as ArrayBuffer, data.roadSurface.offsets.buffer as ArrayBuffer, data.roadSurface.entries.buffer as ArrayBuffer);
-  for (const mesh of [data.roads, data.streams]) {
+  for (const mesh of [data.roads, data.rails, data.streams]) {
     out.push(mesh.positions.buffer as ArrayBuffer, mesh.ground.buffer as ArrayBuffer, mesh.index.buffer as ArrayBuffer);
     if (mesh.colors) out.push(mesh.colors.buffer as ArrayBuffer);
     if (mesh.uvs) out.push(mesh.uvs.buffer as ArrayBuffer);
