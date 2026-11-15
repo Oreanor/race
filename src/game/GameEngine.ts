@@ -5706,7 +5706,9 @@ export class GameEngine {
     }
     // the ground falls away faster than gravity can pull the car down: it flies
     const predicted = this.altitude + this.climb * dt - 0.5 * GRAVITY * dt * dt;
-    if (speed > 5 && ground < predicted - 0.3 && this.altitude - ground < 2.4) {
+    // (a drop of more than 2.4 m is a deck seam, not a cliff — except off a ramp's lip:
+    // a tall ramp over a river is 4–5 m up, and it must throw the car, not let it slide down)
+    if (speed > 5 && ground < predicted - 0.3 && (this.altitude - ground < 2.4 || this.wasOnRamp)) {
       this.airborne = true;
       this.altitude = predicted;
       this.climb -= GRAVITY * dt;
@@ -6126,9 +6128,13 @@ export class GameEngine {
             // light skim only — heavy damping made corners feel sticky
             this.vehicle.speed *= 0.97;
           } else {
-            // either end of the step on the deck → water must not wall or drown us
+            // either end of the step on the deck → water must not wall or drown us.
+            // A ramp out over a river is a deck too: up it and off its lip into the air
+            // (from there the jump decides: the far bank, or a splash).
             const elevated = this.onBridgeDeck(this.vehicle.position, this.altitude)
-              || this.onBridgeDeck(previous, this.altitude);
+              || this.onBridgeDeck(previous, this.altitude)
+              || this.rampLift(previous as [number, number]) != null
+              || this.rampLift(this.vehicle.position as [number, number]) != null;
             const hit = this.water.resolve(previous, this.vehicle.position, this.vehicle.heading, 1, elevated);
             this.vehicle.position = hit.position;
             if (hit.stopped) {
