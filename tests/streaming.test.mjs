@@ -29,6 +29,72 @@ const { MapCamera } = await import('../src/world3d/map/camera.ts');
 const { GameEngine } = await import('../src/game/GameEngine.ts');
 const { PreparedTransfer } = await import('../src/game/PreparedTransfer.ts');
 const { missionAreas } = await import('../src/game/missionPopulation.ts');
+const { cameraTransition } = await import('../src/game/cameraTransition.ts');
+
+test('camera fly-in preserves both endpoints, settles softly, and rotates through the shortest arc', () => {
+  const from = { center: [-8.8, 40.15], zoom: 15, pitch: 0, bearing: 350, elevation: 100 };
+  const to = { center: [-8.7, 40.16], zoom: 20.55, pitch: 73, bearing: 10, elevation: 25 };
+  assert.deepEqual(cameraTransition(from, to, 0), from);
+  const end = cameraTransition(from, to, 1);
+  assert.deepEqual({ ...end, bearing: end.bearing % 360 }, to);
+  assert.equal(cameraTransition(from, to, 0.5).bearing, 360);
+  assert.ok(Math.abs(cameraTransition(from, to, 0.001).zoom - from.zoom) < 0.000001);
+  assert.ok(Math.abs(cameraTransition(from, to, 0.999).zoom - to.zoom) < 0.000001);
+  let previous = from;
+  for (let i = 1; i <= 140; i++) {
+    const frame = cameraTransition(from, to, i / 140);
+    assert.ok(frame.zoom >= previous.zoom && frame.pitch >= previous.pitch);
+    assert.ok(frame.zoom - previous.zoom < 0.08, 'no skipped zoom at any frame');
+    previous = frame;
+  }
+});
+
+test('engine starts fly-in on the visible frame and resumes after pause without consuming the paused time', () => {
+  const originalDocument = globalThis.document;
+  globalThis.document = { hidden: false };
+  const stopAfterView = new Error('frame captured');
+  const source = { center: [-8.8, 40.15], zoom: 15, pitch: 0, bearing: 0, elevation: 70 };
+  let captured;
+  const engine = Object.assign(Object.create(GameEngine.prototype), {
+    disposed: false, ready: true, last: 0, driving: true, paused: false,
+    approachFrom: source, approachElapsed: 0, approachMs: 2200,
+    vehicle: { position: [-8.8, 40.15], heading: 0 }, altitude: 25,
+    renderVehicle: { position: [-8.8, 40.15], reset() {} },
+    map: { setStreamCalm() {}, setScreenStream() {}, jumpTo(view) { captured = view; throw stopAfterView; } },
+  });
+  try {
+    assert.throws(() => engine.updateApproach(0), e => e === stopAfterView);
+    assert.deepEqual(captured, source, 'first rendered frame is the intro, not halfway along the flight');
+    assert.throws(() => engine.updateApproach(0.016), e => e === stopAfterView);
+    const elapsed = engine.approachElapsed;
+    engine.paused = true;
+    engine.updateApproach(8);
+    assert.equal(engine.approachElapsed, elapsed);
+    engine.paused = false;
+    assert.throws(() => engine.updateApproach(0.016), e => e === stopAfterView);
+    assert.equal(engine.approachElapsed, elapsed + 16);
+    assert.ok(captured.zoom - source.zoom < 0.001);
+    globalThis.document.hidden = true;
+    engine.updateApproach(8);
+    assert.equal(engine.approachElapsed, elapsed + 16);
+    globalThis.document.hidden = false;
+    const completed = [];
+    engine.map.jumpTo = view => { captured = view; };
+    engine.map.setFocusCar = () => {};
+    engine.map.beginStreamBurst = () => {};
+    engine.onApproach = active => completed.push(active);
+    engine.approachElapsed = 2184;
+    engine.updateApproach(0.016);
+    assert.equal(engine.approachFrom, null);
+    assert.deepEqual(completed, [false]);
+    assert.equal(captured.pitch, 73);
+    assert.equal(captured.elevation, 25);
+    assert.ok(captured.zoom > 20);
+  } finally {
+    if (originalDocument === undefined) delete globalThis.document;
+    else globalThis.document = originalDocument;
+  }
+});
 
 test('map streaming expands the driving ring, cancels distant work on close, and prioritises a transfer', () => {
   const focus = [-8.8, 40.15];

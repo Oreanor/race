@@ -1,4 +1,5 @@
 import { roadStart } from './roadStart.ts';
+import { cameraTransition, type CameraView } from './cameraTransition.ts';
 import { PreparedTransfer } from './PreparedTransfer.ts';
 import { missionAreas, missionRoadSpot, nearestOfEachKind } from './missionPopulation.ts';
 import { VehiclePose } from './VehiclePose.ts';
@@ -268,11 +269,11 @@ export class GameEngine {
   private bootChaseWarmed = false;
   /** keep isotropic/fast uploads until this time (ms), then endStreamBurst */
   private bootBurstUntil = 0;
-  /** wall-clock start of the fly-in — hitch spikes must not jerk the lerp via dt */
-  private approachAt = 0;
-  /** remaining intro→chase blend (ms); boot already parked mid-flight */
-  private approachMs = 1400;
-  private approachFrom: { lng: number; lat: number; zoom: number; pitch: number; bearing: number } | null = null;
+  /** Active animation time; pauses and hidden tabs do not advance it. */
+  private approachElapsed = 0;
+  /** Full intro→chase flight, including its gentle start and stop. */
+  private approachMs = 2200;
+  private approachFrom: CameraView | null = null;
   onApproach: (active: boolean) => void = () => {};
   onBoot: (ready: boolean) => void = () => {};
   message = '';
@@ -5556,14 +5557,14 @@ export class GameEngine {
     // Disable map interactivity while driving
     this.map.setInteractive({ pan: false, rotate: false });
     if (starting && approach) {
-      // boot already warmed the ring — starve uploads during the fly-in so it stays smooth.
-      // start partway through: the long pull-in was the hitchy half in London/Manhattan.
+      // Boot already warmed the ring. Keep upload work out of the fly-in, but
+      // animate from the actual visible view instead of skipping its first half.
       this.map.endStreamBurst();
       this.map.setStreamCalm(true);
       this.bootBurstUntil = 0;
       const center = this.map.getCenter();
-      this.approachFrom = { lng: center.lng, lat: center.lat, zoom: this.map.getZoom(), pitch: this.map.getPitch(), bearing: this.map.getBearing() };
-      this.approachAt = performance.now();
+      this.approachFrom = { center: [center.lng, center.lat], zoom: this.map.getZoom(), pitch: this.map.getPitch(), bearing: this.map.getBearing(), elevation: this.map.getCenterElevation() };
+      this.approachElapsed = 0;
       this.onApproach(true);
       return true;
     }
@@ -6080,6 +6081,38 @@ export class GameEngine {
     }
   }
 
+  private updateApproach(dt: number) {
+    if (!this.driving || this.paused || document.hidden || !this.approachFrom) return;
+    this.accumulator = 0;
+    this.renderVehicle.reset(this.vehicle);
+    this.orbit = 0;
+    this.distance = cameraConfig.distance;
+    this.pitch = cameraConfig.pitch;
+    this.bearing = this.vehicle.heading * 180 / Math.PI;
+    const bearingRad = this.bearing * Math.PI / 180;
+    const zoom = zoomForDistance(this.distance, this.renderVehicle.position[1]);
+    const ahead = lookAheadFor(zoom, this.renderVehicle.position[1]);
+    const look = offsetPosition(this.renderVehicle.position, Math.sin(bearingRad) * ahead, Math.cos(bearingRad) * ahead);
+    // Advance only while this branch is active: settings, a hidden tab or a
+    // suspended frame must not consume the animation and skip ahead on resume.
+    this.approachElapsed = Math.min(this.approachMs, this.approachElapsed + dt * 1000);
+    const raw = this.approachElapsed / this.approachMs;
+    const view = cameraTransition(this.approachFrom, {
+      center: look, zoom, pitch: this.pitch, bearing: this.bearing, elevation: this.altitude,
+    }, raw);
+    this.map.setStreamCalm(true);
+    this.map.setScreenStream(false);
+    this.map.jumpTo(view);
+    this.map.setFocusCar(this.renderVehicle.position, this.altitude, this.renderVehicle.heading, this.modelPitch);
+    if (raw >= 1) {
+      this.approachFrom = null;
+      this.onApproach(false);
+      this.map.setStreamCalm(false);
+      this.map.beginStreamBurst();
+      this.bootBurstUntil = performance.now() + 2000;
+    }
+  }
+
   tick = (now: number) => {
     if (this.disposed) return;
     const cpuStart = performance.now();
@@ -6093,37 +6126,7 @@ export class GameEngine {
     // fly-in: no world scoops / traffic / physics — those were the 17 fps хрясть
     if (!this.approachFrom) this.pumpWorld(now);
     if (this.driving && !this.paused && !document.hidden && this.approachFrom) {
-      this.accumulator = 0;
-      this.renderVehicle.reset(this.vehicle);
-      this.orbit = 0;
-      this.distance = cameraConfig.distance;
-      this.pitch = cameraConfig.pitch;
-      this.bearing = this.vehicle.heading * 180 / Math.PI;
-      const bearingRad = this.bearing * Math.PI / 180;
-      const zoom = zoomForDistance(this.distance, this.renderVehicle.position[1]);
-      const ahead = lookAheadFor(zoom, this.renderVehicle.position[1]);
-      const look = offsetPosition(this.renderVehicle.position, Math.sin(bearingRad) * ahead, Math.cos(bearingRad) * ahead);
-      const from = this.approachFrom;
-      const startT = 0.45;
-      const raw = Math.min(1, (now - this.approachAt) / this.approachMs);
-      const t = startT + (1 - startT) * raw;
-      const eased = t * t * (3 - 2 * t);
-      const turn = ((this.bearing - from.bearing + 540) % 360) - 180;
-      const center: [number, number] = [from.lng + (look[0] - from.lng) * eased, from.lat + (look[1] - from.lat) * eased];
-      const zoomNow = from.zoom + (zoom - from.zoom) * eased;
-      const pitchNow = from.pitch + (this.pitch - from.pitch) * eased;
-      const bearingNow = from.bearing + turn * eased;
-      this.map.setStreamCalm(true);
-      this.map.setScreenStream(false);
-      this.map.jumpTo({ center, zoom: zoomNow, pitch: pitchNow, bearing: bearingNow, elevation: this.altitude });
-      this.map.setFocusCar(this.renderVehicle.position, this.altitude, this.renderVehicle.heading, this.modelPitch);
-      if (raw >= 1) {
-        this.approachFrom = null;
-        this.onApproach(false);
-        this.map.setStreamCalm(false);
-        this.map.beginStreamBurst();
-        this.bootBurstUntil = performance.now() + 2000;
-      }
+      this.updateApproach(dt);
     } else if (this.driving && !this.paused && !this.transfer.pending && !document.hidden) {
       this.accumulator += dt;
       let blocked = false;
