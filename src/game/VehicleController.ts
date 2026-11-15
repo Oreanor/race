@@ -83,6 +83,8 @@ export class VehicleController {
   private launch = 0;
   /** last step: Shift + gas at a standstill (the clutch held in, revs building) */
   private clutched = false;
+  /** Visual intensity while holding the engine against the brake at a stop. */
+  get staging() { return this.clutched ? Math.max(0, (this.revs - 0.15) / 0.8) : 0; }
   /**
    * The player's brake: S held from moving forward stops the car and holds it there;
    * reverse takes a fresh press at a standstill. Bots keep S as brake-into-reverse.

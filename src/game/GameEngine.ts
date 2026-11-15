@@ -5626,7 +5626,9 @@ export class GameEngine {
       const rate = 14 + Math.min(22, Math.abs(gap) * 8);
       return current + gap * (1 - Math.exp(-dt * rate));
     };
-    if (!this.wheelTargets.ready || now - this.wheelSampleTime >= 48) {
+    // A moving car needs the surface every frame. Reusing a 48 ms old wheel
+    // target turns a continuous incline into a series of vertical steps.
+    if (!this.wheelTargets.ready || Math.abs(this.vehicle.speed) > 0.5 || now - this.wheelSampleTime >= 48) {
       this.wheelSampleTime = now;
       const heading = this.renderVehicle.heading;
       const forwardEast = Math.sin(heading);
@@ -5751,13 +5753,7 @@ export class GameEngine {
       this.climb += (measured - this.climb) * (1 - Math.exp(-dt * 8));
       this.modelPitch = settle(this.modelPitch, this.wheelTargets.pitch);
     }
-      this.modelRoll = settle(this.modelRoll, this.wheelTargets.roll);
-    // Clutch staging: hold Shift+gas at a stop — the chassis shakes with the revs.
-    if (speed < 0.5 && this.vehicle.revs > 0.15) {
-      const shake = this.vehicle.revs;
-      this.modelRoll += Math.sin(now * 0.055) * shake * 0.048;
-      this.modelPitch += Math.cos(now * 0.073) * shake * 0.02;
-    }
+    this.modelRoll = settle(this.modelRoll, this.wheelTargets.roll);
     this.wasOnRamp = lift != null;
   }
 
@@ -6076,6 +6072,7 @@ export class GameEngine {
       let shore = false;
       this.tickPlunge(now);
       const gridded = this.raceCountdown(now);
+      this.trafficNetwork.beginFrame();
       while (this.accumulator >= 1 / 60) {
         this.renderVehicle.capture(this.vehicle);
         const previous: [number, number] = [...this.vehicle.position];

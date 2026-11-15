@@ -191,6 +191,8 @@ export function vehicleLayer(
   let cursor = 0;
   let lastSpawn = 0;
   let lastDust = 0;
+  let lastStagingSmoke = 0;
+  let stagingHeat = 0;
   let lastHouseFx = 0;
   let surface: Surface = 'paved';
   let surfaceAt = 0;
@@ -1362,6 +1364,14 @@ export function vehicleLayer(
         spawn(-1, now);
       }
       const drift = vehicle.slip ?? 0, speed = vehicle.speed ?? 0;
+      const staging = Math.abs(speed) < 1 ? vehicle.staging ?? 0 : 0;
+      stagingHeat = Math.max(0, Math.min(1, stagingHeat + dt * (staging > 0 ? 0.45 : -2.5)));
+      if (staging > 0.04 && now - lastStagingSmoke > 70 - 45 * staging) {
+        lastStagingSmoke = now;
+        const rear = offsetPosition(here, -Math.sin(heading) * currentCar.length * 0.36, -Math.cos(heading) * currentCar.length * 0.36);
+        fx.altitude = height();
+        fx.stagingSmoke(here, heading, currentCar.length, staging * (0.25 + stagingHeat * 0.75), now, map?.surfaceAt(rear) ?? 'paved');
+      }
       const slip = Math.abs(drift);
       if (slip > 0.28 && Math.abs(speed) > 3) {
         const dustGap = 45 - Math.min(25, slip * 20);
@@ -1633,8 +1643,11 @@ export function vehicleLayer(
         layShadow(playerShadow, 0, ground, 0, 0, -ground);
       }
       root.rotation.order = 'XYZ';
-      root.rotation.x = -pitch(); // pitch is nose-up positive; +x rotation here lowers the nose
-      root.rotation.z = roll();
+      // Engine vibration belongs to the drawn chassis, not its wheel supports or
+      // camera altitude. Mostly heave, with only a very small angular tremor.
+      root.position.y = staging * (0.025 + 0.018 * Math.sin(now * 0.071) + 0.007 * Math.sin(now * 0.113));
+      root.rotation.x = -pitch() + Math.cos(now * 0.073) * staging * 0.003;
+      root.rotation.z = roll() + Math.sin(now * 0.055) * staging * 0.004;
       const matrix = new THREE.Matrix4().makeTranslation(place.x, place.y, place.z).scale(new THREE.Vector3(meters, -meters, meters)).multiply(new THREE.Matrix4().makeRotationX(Math.PI / 2)).multiply(new THREE.Matrix4().makeRotationY(-vehicle.heading + Math.PI));
       placement.copy(matrix);
       // camera position in this layer's local frame, for camera-facing particles

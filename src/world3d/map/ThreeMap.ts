@@ -174,6 +174,7 @@ export class ThreeMap {
   /** first-frame shader compile so the opening lap does not hitch on program link */
   private programsWarmed = false;
   private gpuWarmQueue: THREE.Mesh[] = [];
+  private gpuWarmLayers = new WeakMap<THREE.Mesh, number>();
   private gpuWarmScene = new THREE.Scene();
   private gpuWarmTarget: THREE.WebGLRenderTarget | null = null;
   /** tone mapping, bloom and a vignette over the finished frame */
@@ -228,7 +229,13 @@ export class ThreeMap {
     this.uniforms = baseUniforms(SKY);
     this.mask = facadeMask();
     this.world = new WorldTiles(this.uniforms, this.mask, { ...defaultWorldOptions, demTemplate: options.dem ?? null, region: options.region ?? '' });
-    this.world.onMesh = mesh => { this.gpuWarmQueue.push(mesh); };
+    this.world.onMesh = mesh => {
+      // An unprepared visible mesh bypassed the upload queue: the main render
+      // uploaded every new tile anyway, outside warmGpu's frame budget.
+      this.gpuWarmLayers.set(mesh, mesh.layers.mask);
+      mesh.layers.mask = 0;
+      this.gpuWarmQueue.push(mesh);
+    };
     this.world.onTile = (key) => {
       // `tile` ("z/x/y") lets listeners skip tiles far from what they care about
       this.emit('tile', { tile: key });
@@ -945,6 +952,8 @@ export class ThreeMap {
           // deferred until the first real draw during a camera turn.
           geometry.setDrawRange(start, Math.min(count, 3));
           renderer.render(this.gpuWarmScene, this.sceneCamera);
+          source.layers.mask = this.gpuWarmLayers.get(source) ?? 1;
+          this.gpuWarmLayers.delete(source);
         } finally {
           geometry.setDrawRange(start, count);
           this.gpuWarmScene.remove(proxy);

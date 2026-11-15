@@ -19,6 +19,15 @@ performance.now = () => simulated;
 process.on('exit', () => { performance.now = realNow; });
 const step = (dt: number) => { simulated += dt * 1000; };
 
+test('route planning can defer bots for a busy frame and resume on the next', () => {
+  const network = new TrafficRoadNetwork();
+  network.addFeatures([{ properties: { class: 'minor' }, geometry: { type: 'LineString', coordinates: [[0, 0], [0.01, 0]] } }] as MapFeature[]);
+  network.beginFrame(0);
+  assert.equal(network.routeForBot([0, 0], Math.PI / 2, 1, [0.009, 0]), null);
+  network.beginFrame();
+  assert.ok(network.routeForBot([0, 0], Math.PI / 2, 1, [0.009, 0])!.length > 2);
+});
+
 const tile = { z: 14, x: 7808, y: 6190 };
 
 test('pruning roads keeps shared nodes and allows an old area to load again', () => {

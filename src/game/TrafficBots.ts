@@ -89,6 +89,20 @@ export class TrafficRoadNetwork {
   private nodeOwners = new Map<string, number>();
   private spatialCells = new Map<string, Set<RoadNode>>();
   revision = 0;
+  private routeBudget = Infinity;
+
+  /** Shared by all bots and physics catch-up steps in one rendered frame. */
+  beginFrame(routeBudgetMs = 2) { this.routeBudget = routeBudgetMs; }
+
+  routeForBot(position: Position, heading: number, seed: number, destination?: Position): Position[] | null {
+    if (this.routeBudget <= 0) return null;
+    const started = performance.now();
+    const nearest = this.nearest(position, new Set<string>(), 0, 220)
+      ?? this.nearest(position, new Set<string>(), 0, 500);
+    const result = nearest ? this.route(nearest.id, heading, seed, destination, started + this.routeBudget) : [];
+    this.routeBudget -= performance.now() - started;
+    return result;
+  }
 
   addFeatures(features: Iterable<MapFeature>) {
     let changed = false;
@@ -347,12 +361,13 @@ export class TrafficRoadNetwork {
     return route.length > 1 ? [...route[route.length - 1]] as Position : null;
   }
 
-  route(startId: string, heading: number, seed: number, destination?: Position) {
+  route(startId: string, heading: number, seed: number, destination?: Position, deadline = Infinity) {
     this.ensureBuilt();
     const start = this.nodes.get(startId);
     if (!start) return [];
     const gScore = new Map<string, number>([[startId, 0]]);
     const previous = new Map<string, string>();
+    const firstSteps = new Map<string, string>();
     const queue = new MinQueue();
     // With a finish line: A* toward goal in ~2 km chunks (full 5 km Dijkstra kills race FPS).
     // Without: cheap wander Dijkstra.
@@ -378,6 +393,7 @@ export class TrafficRoadNetwork {
       // Priority is f = g+h; skip stale heap entries.
       if (current.distance !== g + heuristic(node)) continue;
       if (g > maxDist || ++expanded > maxExpand) break;
+      if ((expanded & 31) === 0 && performance.now() >= deadline) break;
 
       if (destination) {
         if (current.id !== startId) {
@@ -387,7 +403,7 @@ export class TrafficRoadNetwork {
           if (d <= 40) break;
         }
       } else if (current.id !== startId && (g >= 700 ? g <= 4200 && wander.length < 40 : g > farG)) {
-        const firstStep = this.firstStep(startId, current.id, previous);
+        const firstStep = firstSteps.get(current.id);
         const next = firstStep ? this.nodes.get(firstStep) : undefined;
         if (!next || Math.cos(angleDifference(headingTo(start.position, next.position), heading)) > -0.55) {
           if (g >= 700) wander.push(current.id);
@@ -401,6 +417,7 @@ export class TrafficRoadNetwork {
         if (!nextNode) continue;
         gScore.set(neighbor, nextG);
         previous.set(neighbor, current.id);
+        firstSteps.set(neighbor, current.id === startId ? neighbor : firstSteps.get(current.id)!);
         queue.push({ id: neighbor, distance: nextG + heuristic(nextNode) });
       }
     }
@@ -417,16 +434,6 @@ export class TrafficRoadNetwork {
     }
     routeIds.reverse();
     return routeIds.map(id => this.nodes.get(id)!.position);
-  }
-
-  private firstStep(startId: string, targetId: string, previous: Map<string, string>) {
-    let current = targetId;
-    let parent = previous.get(current);
-    while (parent && parent !== startId) {
-      current = parent;
-      parent = previous.get(current);
-    }
-    return parent === startId ? current : null;
   }
 
   private nodeId(position: Position) {
@@ -655,9 +662,9 @@ export function trafficBotKeys(bot: TrafficBot, network: TrafficRoadNetwork, hun
         ?? network.randomAway(bot.position, new Set(), 700, 7500, bot.routeSeed + 7);
       if (away) bot.goal = [...away.position] as Position;
     }
-    const nearest = network.nearest(bot.position, new Set<string>(), 0, 220)
-      ?? network.nearest(bot.position, new Set<string>(), 0, 500);
-    bot.route = nearest ? network.route(nearest.id, bot.heading, bot.routeSeed, bot.goal ?? undefined) : [];
+    const route = network.routeForBot(bot.position, bot.heading, bot.routeSeed, bot.goal ?? undefined);
+    if (route == null) return cruiseKeys(bot);
+    bot.route = route;
     bot.routeIndex = 1;
     bot.lastRouteRevision = network.revision;
     // Stagger bots (~3–5 Hz max) so three racers don't Dijkstra the same frame.

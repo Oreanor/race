@@ -371,6 +371,23 @@ export class WorldParticles {
     }
   }
 
+  /** Smoke spreads out from each rear wheel as stationary revs build. */
+  stagingSmoke(here: Position, heading: number, carLength: number, intensity: number, now: number, surface: Surface = 'paved') {
+    const fwdE = Math.sin(heading), fwdN = Math.cos(heading), rightE = Math.cos(heading), rightN = -Math.sin(heading);
+    const colors = SURFACE_FX[surface], back = -carLength * 0.36;
+    for (const side of [-1, 1]) {
+      const spread = side * (0.6 + intensity * 3.2);
+      this.add(here, { e: fwdE * back + rightE * side * 0.8, n: fwdN * back + rightN * side * 0.8, u: 0.12 }, {
+        kind: surface === 'paved' ? 'tiresmoke' : 'dust', tint: colors.dust,
+        ve: rightE * spread - fwdE * rand(0.2, 0.8) + rand(-0.2, 0.2),
+        vn: rightN * spread - fwdN * rand(0.2, 0.8) + rand(-0.2, 0.2),
+        vu: rand(0.15, 0.4), life: 1500 + intensity * 1800,
+        size0: 0.3 + intensity * 0.4, size1: 1.5 + intensity * 4.5,
+        drag: 0.55, gravity: -0.08, stretch: 0,
+      }, now);
+    }
+  }
+
   /**
    * Fire hose: fixed muzzle speed, elevation from the player (mouse Y).
    * Lands where the lob falls — short/long = aim higher/lower or drive closer/farther.
