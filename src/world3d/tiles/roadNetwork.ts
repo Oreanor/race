@@ -30,6 +30,8 @@ export type RoadDeck = {
   frame?: RoadPoint[];
   /** Physical half widths, in tile-local mercator metres. */
   half?: number[];
+  /** Shared graph stations, retained for real junction openings in parapets. */
+  nodes?: number[];
 };
 export type PlannedRoad = { decks: RoadDeck[]; rest: RoadXY[][] };
 
@@ -338,7 +340,7 @@ export function planRoadNetwork(ways: Map<number, RoadWay>, extent: number, span
     for (let i = 1; i < pts.length; i++) {
       const up = lifted(i); if (i + 1 < pts.length && up === lifted(i + 1)) continue;
       if (up) {
-        planned.decks.push({ pts: pts.slice(start, i + 1), s: s.slice(start, i + 1).map(v => v - s[start]), h: h.slice(start, i + 1), bed: bed.slice(start, i + 1), length: s[i] - s[start], frame: frames.slice(start, i + 1), half: widths.slice(start, i + 1) });
+        planned.decks.push({ pts: pts.slice(start, i + 1), s: s.slice(start, i + 1).map(v => v - s[start]), h: h.slice(start, i + 1), bed: bed.slice(start, i + 1), length: s[i] - s[start], frame: frames.slice(start, i + 1), half: widths.slice(start, i + 1), nodes: ids.slice(start, i + 1) });
       } else {
         // The graph needs dense stations for solving approaches; the unchanged
         // ground mesh does not. Keep real vertices and junctions, and remove

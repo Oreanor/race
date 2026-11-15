@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { planBridges } from '../src/world3d/tiles/worldTile.ts';
 import { planRoadNetwork, ROAD_GRADE, ROAD_CLEARANCE, type RoadWay } from '../src/world3d/tiles/roadNetwork.ts';
-import { buildRoadSurface, deckSections, surfaceHeight } from '../src/world3d/tiles/roadSurface.ts';
+import { buildRoadSurface, deckSections, deckSideOpening, surfaceHeight } from '../src/world3d/tiles/roadSurface.ts';
 
 type Way = { lines: { x: number; y: number }[][]; bridge: boolean; level: number; foot: boolean };
 
@@ -210,4 +210,14 @@ test('a tiny source stub absorbed into a junction does not crash the tile builde
     [2, line([[40.05, 10], [40.05, 50]])],
   ]), 100, 100, flat);
   assert.ok(plan.get(2)!.decks[0].h.every(Number.isFinite));
+});
+
+test('parapets open onto a connected side road, not nearby spans or the air past a tip', () => {
+  const base = { bed: [0, 0, 0], s: [0, 5, 10], length: 10 };
+  const main = { ...base, pts: [[0, 0], [5, 0], [10, 0]] as [number, number][], h: [10, 10, 10], nodes: [1, 2, 3] };
+  const branch = { ...base, pts: [[5, 0], [5, 8]] as [number, number][], h: [10, 10], nodes: [2, 4] };
+  assert.equal(deckSideOpening(main, 1, 1, 2, branch, 1), true);
+  assert.equal(deckSideOpening(main, 1, -1, 2, branch, 1), false, 'no hole on the side away from the junction');
+  assert.equal(deckSideOpening(main, 1, 1, 2, { ...branch, nodes: [7, 8] }, 1), false, 'nearby unconnected deck');
+  assert.equal(deckSideOpening(main, 1, 1, 2, { ...branch, h: [4, 4] }, 1), false, 'lower road');
 });

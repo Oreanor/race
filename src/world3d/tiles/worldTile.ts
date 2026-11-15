@@ -17,7 +17,7 @@ import { buildVegetation, vegetationTransferables, type VegetationData } from '.
 import { planStreets } from './streetscape.ts';
 import { roadStyle, isPedestrian, roadDeckHalf } from './roadStyle.ts';
 import { planRoadNetwork, type RoadDeck as Deck, type RoadWay as Way, type PlannedRoad as Planned, type RoadSurfaces as Surfaces, type RoadXY as XY } from './roadNetwork.ts';
-import { buildRoadSurface, deckSections, surfaceHeight, type RoadSurfaceData } from './roadSurface.ts';
+import { buildRoadSurface, deckSections, deckSideOpening, surfaceHeight, type RoadSurfaceData } from './roadSurface.ts';
 import { streetFurniture } from './furniture.ts';
 import type { MapFeature } from '../../game/WaterCollisionController.ts';
 
@@ -545,15 +545,7 @@ function deckSideCovered(deck: Deck, i: number, side: number, half: number, plan
   const pa = side > 0 ? a.left : a.right, pb = side > 0 ? b.left : b.right;
   for (const { id, deck: other, n } of deckPiecesAt(plan, (pa[0] + pb[0]) / 2, (pa[1] + pb[1]) / 2)) {
     if (id === selfId) continue;
-      const [ax, az] = other.pts[n - 1], [bx, bz] = other.pts[n];
-      const dx = bx - ax, dz = bz - az, len2 = dx * dx + dz * dz || 1;
-      for (const t of [0.2, 0.5, 0.8]) {
-        const x = pa[0] + (pb[0] - pa[0]) * t, z = pa[1] + (pb[1] - pa[1]) * t;
-        const u = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / len2));
-        const w = (other.half?.[n - 1] ?? half) + ((other.half?.[n] ?? half) - (other.half?.[n - 1] ?? half)) * u;
-        const h = other.h[n - 1] + (other.h[n] - other.h[n - 1]) * u;
-        if (Math.hypot(x - ax - u * dx, z - az - u * dz) < w + 0.01 && Math.abs(a.h + (b.h - a.h) * t - h) < 0.4) return true;
-      }
+    if (deckSideOpening(deck, i, side, half, other, n)) return true;
   }
   return false;
 }

@@ -32,6 +32,29 @@ function makeSections(deck: Pick<RoadDeck, 'pts' | 'h' | 'frame' | 'half'>, half
   });
 }
 
+/** Open a parapet only onto the body of an actually connected road piece. */
+export function deckSideOpening(deck: RoadDeck, i: number, side: number, half: number, other: RoadDeck, n: number): boolean {
+  if (!deck.nodes || !other.nodes) return false;
+  const shared = [deck.nodes[i - 1], deck.nodes[i]].some(id => id === other.nodes![n - 1] || id === other.nodes![n]);
+  if (!shared) return false;
+  const sections = deckSections(deck, half, true), a = sections[i - 1], b = sections[i];
+  const pa = side > 0 ? a.left : a.right, pb = side > 0 ? b.left : b.right;
+  const [ax, az] = other.pts[n - 1], [bx, bz] = other.pts[n];
+  const dx = bx - ax, dz = bz - az, len2 = dx * dx + dz * dz;
+  if (len2 < 1e-10) return false;
+  for (const t of [0.2, 0.5, 0.8]) {
+    const x = pa[0] + (pb[0] - pa[0]) * t, z = pa[1] + (pb[1] - pa[1]) * t;
+    const u = ((x - ax) * dx + (z - az) * dz) / len2;
+    // A rounded proximity test extended the other road past its end and punched
+    // holes in intact parapets. An opening must lead onto actual pavement.
+    if (u <= 0 || u >= 1) continue;
+    const w = (other.half?.[n - 1] ?? half) + ((other.half?.[n] ?? half) - (other.half?.[n - 1] ?? half)) * u;
+    const h = other.h[n - 1] + (other.h[n] - other.h[n - 1]) * u;
+    if (Math.hypot(x - ax - u * dx, z - az - u * dz) < w - 0.01 && Math.abs(a.h + (b.h - a.h) * t - h) < 0.4) return true;
+  }
+  return false;
+}
+
 /** Build the collision index in the worker, never during the first wheel query. */
 export function buildRoadSurface(data: Float32Array): RoadSurfaceData {
   let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
