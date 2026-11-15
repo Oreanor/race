@@ -127,6 +127,8 @@ export class ThreeMap {
   private cleanups: (() => void)[] = [];
   private maxPitch: number;
   private side: THREE.Side = THREE.FrontSide;
+  /** the face side that faces out in the scene as drawn now (the projection may mirror) */
+  get faceSide(): THREE.Side { return this.side; }
   private removed = false;
   private mask: THREE.Texture;
   /** real time, or a typical morning / day / evening / night of today here (key T) */

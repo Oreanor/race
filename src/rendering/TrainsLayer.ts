@@ -130,6 +130,8 @@ export function trainsLayer(): MapLayer & {
     return mesh;
   });
   const models = new Map<ModelName, ModelParts>();
+  /** the models' own materials: their face side follows the world's */
+  const modelMaterials: THREE.Material[] = [];
   let loading = false;
 
   /** Each model: its parts as instanced meshes, RAIL_CAR_HEIGHT tall, long side along +z, wheels at y = 0. */
@@ -154,7 +156,13 @@ export function trainsLayer(): MapLayer & {
         root.traverse((node) => {
           const mesh = node as THREE.Mesh;
           if (!mesh.isMesh) return;
-          const instanced = new THREE.InstancedMesh(mesh.geometry, hazed(mesh.material as THREE.Material, uniforms), MAX);
+          const material = hazed(mesh.material as THREE.Material, uniforms);
+          // the models are double-sided with an inner skin under the outer one: drawn both
+          // ways the two fight over depth in big diagonal patches. One side only (the
+          // world's, as the projection may mirror) — the inner skin is culled.
+          material.side = map?.faceSide ?? THREE.FrontSide;
+          modelMaterials.push(material);
+          const instanced = new THREE.InstancedMesh(mesh.geometry, material, MAX);
           instanced.count = 0;
           instanced.frustumCulled = false;
           scene.add(instanced);
@@ -189,6 +197,8 @@ export function trainsLayer(): MapLayer & {
       loadModels();
     },
     setCars(cars, origin, terrain) {
+      const side = map?.faceSide;
+      if (side != null) for (const m of modelMaterials) if (m.side !== side) { m.side = side; m.needsUpdate = true; }
       const perMeter = mercatorPerMeter(origin[1]);
       // scene: x east, y up, z south, meters around `origin` → mercator 0..1
       place.set(
