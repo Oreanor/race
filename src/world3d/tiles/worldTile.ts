@@ -1149,9 +1149,22 @@ function coplanarDeckCross(deck: Deck, a: number, plan: Map<number, Planned> | u
  * underside, a low parapet on each side and concrete piers down into the river.
  * Parapets open where another deck crosses coplanarly (steep angle).
  */
-function deckStructure(builder: RoadBuilder, deck: Deck, half: number, toMerc: number, plan?: Map<number, Planned>, selfId = -1) {
+/**
+ * How a deck's sides meet the world: `beside(i, sgn)` is the distance (mercator) to a
+ * parallel deck on that side of piece i, or null; there the two slabs meet halfway in one
+ * plate with no parapet between. `plate` lays the deck's top (rail decks: the ballast
+ * ribbon does not cover it), `truss` raises a Warren truss on the free sides.
+ */
+type DeckSides = { beside?: (i: number, sgn: number) => number | null; plate?: [number, number, number]; truss?: boolean };
+
+function deckStructure(builder: RoadBuilder, deck: Deck, half: number, toMerc: number, plan?: Map<number, Planned>, selfId = -1, sides: DeckSides = {}) {
   const n = deck.pts.length;
   const up = deck.h.map((h, i) => h - deck.bed[i] > 1.2);
+  /** the half width on one side of piece i: out to the neighbour (a little past halfway) or the deck's own */
+  const reach = (i: number, sgn: number) => {
+    const d = sides.beside?.(i, sgn);
+    return d == null ? null : d / 2 + 0.25 * toMerc;
+  };
   const side = (nx: number, nz: number) => 0.7 + 0.2 * (nx * 0.6 + nz * 0.8);
   const shade = (rgb: [number, number, number], f: number): [number, number, number] => [rgb[0] * f, rgb[1] * f, rgb[2] * f];
   const wall = 0.3 * toMerc;
@@ -1162,7 +1175,10 @@ function deckStructure(builder: RoadBuilder, deck: Deck, half: number, toMerc: n
     const nx = -(bz - az) / len, nz = (bx - ax) / len;
     const ha = deck.h[i - 1], hb = deck.h[i];
     const open = coplanarDeckCross(deck, i, plan, selfId);
+    const wide = [reach(i, -1), reach(i, 1)];
     for (const sgn of [-1, 1]) {
+      // a neighbour on this side: one plate with it, no wall between
+      if (wide[sgn < 0 ? 0 : 1] != null) continue;
       const ox = nx * half * sgn, oz = nz * half * sgn;
       const ix = nx * (half - wall) * sgn, iz = nz * (half - wall) * sgn;
       const f = side(nx * sgn, nz * sgn);
@@ -1177,9 +1193,12 @@ function deckStructure(builder: RoadBuilder, deck: Deck, half: number, toMerc: n
         builder.quad([[ax + ix, az + iz, ha, PARAPET], [bx + ix, bz + iz, hb, PARAPET], [bx + ix, bz + iz, hb, 0.05], [ax + ix, az + iz, ha, 0.05]], shade(CONCRETE, 1.05 - f * 0.25));
       }
     }
-    // underside
-    builder.quad([[ax + nx * half, az + nz * half, ha, -SLAB], [bx + nx * half, bz + nz * half, hb, -SLAB], [bx - nx * half, bz - nz * half, hb, -SLAB], [ax - nx * half, az - nz * half, ha, -SLAB]], UNDERSIDE, 'down');
+    // underside (and the top plate), out to a neighbour where there is one
+    const hl = wide[0] ?? half, hr = wide[1] ?? half;
+    builder.quad([[ax + nx * hr, az + nz * hr, ha, -SLAB], [bx + nx * hr, bz + nz * hr, hb, -SLAB], [bx - nx * hl, bz - nz * hl, hb, -SLAB], [ax - nx * hl, az - nz * hl, ha, -SLAB]], UNDERSIDE, 'down');
+    if (sides.plate) builder.quad([[ax + nx * hr, az + nz * hr, ha, 0.04], [bx + nx * hr, bz + nz * hr, hb, 0.04], [bx - nx * hl, bz - nz * hl, hb, 0.04], [ax - nx * hl, az - nz * hl, ha, 0.04]], sides.plate, 'up');
   }
+  if (sides.truss) deckTruss(builder, deck, half, toMerc, up, (i, sgn) => reach(i, sgn) != null || coplanarDeckCross(deck, i, plan, selfId));
   // piers, evenly spaced, none right at the ends
   const meters = deck.length / toMerc;
   if (meters < 16) return;
@@ -1205,6 +1224,95 @@ function deckStructure(builder: RoadBuilder, deck: Deck, half: number, toMerc: n
       const ex = qx - px, ez = qz - pz, el = Math.hypot(ex, ez) || 1;
       const f = side(ez / el, -ex / el);
       builder.quad([[px, pz, bed, -1.5], [qx, qz, bed, -1.5], [qx, qz, h, -SLAB], [px, pz, h, -SLAB]], shade(CONCRETE, f * 0.92));
+    }
+  }
+}
+
+/** a road bridge's shoulder each side of the carriageway (m) */
+const DECK_SHOULDER = 1.5;
+/** a railway bridge's half width (m), and its deck plate */
+const RAIL_DECK_HALF = 3.4;
+const RAIL_PLATE = hex('#77736c');
+
+/**
+ * Distance (mercator) to the nearest piece of another line in `pieces` running alongside
+ * a→b on side sgn: parallel, 2.5–8 m off, at about the same height. Null if none.
+ */
+function beside(
+  pieces: { id: number; ax: number; az: number; bx: number; bz: number; h: number }[],
+  self: number, ax: number, az: number, bx: number, bz: number, len: number, h: number, sgn: number, toMerc: number,
+): number | null {
+  const dx = (bx - ax) / len, dz = (bz - az) / len, nx = -dz, nz = dx;
+  const mx = (ax + bx) / 2, mz = (az + bz) / 2;
+  let best: number | null = null;
+  for (const p of pieces) {
+    if (p.id === self || Math.abs(p.h - h) > 1.5) continue;
+    const ex = p.bx - p.ax, ez = p.bz - p.az, el = Math.hypot(ex, ez) || 1;
+    if (Math.abs((ex * dx + ez * dz) / el) < 0.95) continue;
+    const t = Math.max(0, Math.min(1, ((mx - p.ax) * ex + (mz - p.az) * ez) / (el * el)));
+    const vx = p.ax + ex * t - mx, vz = p.az + ez * t - mz;
+    const across = (vx * nx + vz * nz) * sgn;
+    if (across < 2.5 * toMerc || across > 8 * toMerc) continue;
+    // beside us, not ahead or behind
+    if (Math.abs(vx * dx + vz * dz) > across) continue;
+    if (best == null || across < best) best = across;
+  }
+  return best;
+}
+
+/** Warren truss: panel length and height (m), member width (m) */
+const TRUSS_PANEL = 5, TRUSS_H = 5, TRUSS_W = 0.32;
+const TRUSS = hex('#5b6066');
+
+/**
+ * A railway bridge's Warren truss along both free sides: diagonals up and down in a row
+ * of triangles (/\/\/\) under a top chord, where the deck stands over the ground.
+ * Flat walls (both faces), a few dozen triangles a panel pair.
+ */
+function deckTruss(builder: RoadBuilder, deck: Deck, half: number, toMerc: number, up: boolean[], skip: (i: number, sgn: number) => boolean) {
+  const n = deck.pts.length;
+  if (deck.length / toMerc < 12) return;
+  /** piece index, point and height at arc length s */
+  const at = (s: number) => {
+    let i = 1;
+    while (i < n - 1 && deck.s[i] < s) i++;
+    const t = Math.max(0, Math.min(1, (s - deck.s[i - 1]) / ((deck.s[i] - deck.s[i - 1]) || 1)));
+    const [ax, az] = deck.pts[i - 1], [bx, bz] = deck.pts[i];
+    const len = Math.hypot(bx - ax, bz - az) || 1;
+    return { i, x: ax + (bx - ax) * t, z: az + (bz - az) * t, h: deck.h[i - 1] + (deck.h[i] - deck.h[i - 1]) * t, nx: -(bz - az) / len, nz: (bx - ax) / len };
+  };
+  const panel = TRUSS_PANEL * toMerc, w = TRUSS_W * toMerc;
+  const count = Math.max(1, Math.round(deck.length / panel));
+  const step = deck.length / count;
+  /** a member: a flat strip from (s0, y0) to (s1, y1) on side sgn, `w` wide along the deck */
+  const member = (s0: number, y0: number, s1: number, y1: number, sgn: number) => {
+    const a = at(s0), b = at(s1);
+    const ax = a.x + a.nx * half * sgn, az = a.z + a.nz * half * sgn, bx = b.x + b.nx * half * sgn, bz = b.z + b.nz * half * sgn;
+    // all four corners on the line a→b: a true vertical wall even where the deck curves
+    const l = Math.hypot(bx - ax, bz - az) || 1, ux = (bx - ax) / l * w / 2, uz = (bz - az) / l * w / 2;
+    builder.quad([[ax - ux, az - uz, a.h, y0], [ax + ux, az + uz, a.h, y0], [bx + ux, bz + uz, b.h, y1], [bx - ux, bz - uz, b.h, y1]], TRUSS);
+  };
+  /** a horizontal band from s0 to s1 between heights lo and hi, following the deck */
+  const band = (s0: number, s1: number, lo: number, hi: number, sgn: number) => {
+    const pieces = Math.max(1, Math.ceil((s1 - s0) / (2 * toMerc)));
+    for (let k = 0; k < pieces; k++) {
+      const a = at(s0 + (s1 - s0) * k / pieces), b = at(s0 + (s1 - s0) * (k + 1) / pieces);
+      const ax = a.x + a.nx * half * sgn, az = a.z + a.nz * half * sgn, bx = b.x + b.nx * half * sgn, bz = b.z + b.nz * half * sgn;
+      builder.quad([[ax, az, a.h, lo], [bx, bz, b.h, lo], [bx, bz, b.h, hi], [ax, az, a.h, hi]], TRUSS);
+    }
+  };
+  const bottom = PARAPET - 0.1, top = TRUSS_H;
+  for (const sgn of [-1, 1]) {
+    for (let p = 0; p < count; p++) {
+      const s0 = p * step, s1 = s0 + step / 2, s2 = s0 + step;
+      const mid = at(s1);
+      // only over open air, and not where a neighbour or a crossing road shares the side
+      if (!up[mid.i - 1] && !up[mid.i]) continue;
+      if (skip(mid.i, sgn)) continue;
+      member(s0, bottom, s1, top, sgn);
+      member(s1, top, s2, bottom, sgn);
+      // the top chord from this apex to the next: a band along the deck
+      if (p + 1 < count && !skip(at(s2).i, sgn)) band(s1, s1 + step, top - 0.35, top, sgn);
     }
   }
 }
@@ -1267,6 +1375,66 @@ function railTracks(builder: RoadBuilder, layer: VectorTile['layers'][string], k
       lay(ox, oz, 0.025 * toMerc, tram ? 0.19 : 0.115, head);
     }
   };
+  // every railway deck piece in the tile, to find the tracks that run side by side
+  const railDecks: { id: number; ax: number; az: number; bx: number; bz: number; h: number }[] = [];
+  for (const [i] of ways) {
+    const kind = railKind(layer.feature(i).properties);
+    if (!kind || kind.tram) continue;
+    for (const deck of plan.get(i)?.decks ?? []) for (let n = 1; n < deck.pts.length; n++) {
+      railDecks.push({ id: i, ax: deck.pts[n - 1][0], az: deck.pts[n - 1][1], bx: deck.pts[n][0], bz: deck.pts[n][1], h: (deck.h[n - 1] + deck.h[n]) / 2 });
+    }
+  }
+  /** the nearest railway deck running alongside piece n of `deck` on side sgn (mercator), or null */
+  const besideDeck = (deck: Deck, self: number) => (n: number, sgn: number) => {
+    const [ax, az] = deck.pts[n - 1], [bx, bz] = deck.pts[n];
+    const len = Math.hypot(bx - ax, bz - az) || 1;
+    return beside(railDecks, self, ax, az, bx, bz, len, (deck.h[n - 1] + deck.h[n]) / 2, sgn, toMerc);
+  };
+  // the tracks on the ground, in 16 m cells: a yard's parallel tracks get one ballast field
+  type Piece = { id: number; ax: number; az: number; bx: number; bz: number; h: number };
+  const CELL = 16 * toMerc;
+  const cells = new Map<string, Piece[]>();
+  for (const [i, way] of ways) {
+    const kind = railKind(layer.feature(i).properties);
+    if (!kind || kind.tram) continue;
+    for (const line of plan.get(i)?.rest ?? way.lines) for (let j = 0; j + 1 < line.length; j++) {
+      const cut = clipSegment(line[j].x, line[j].y, line[j + 1].x, line[j + 1].y, layer.extent);
+      if (!cut) continue;
+      const piece: Piece = { id: i, ax: cut[0] * k, az: cut[1] * k, bx: cut[2] * k, bz: cut[3] * k, h: 0 };
+      piece.h = groundAt((piece.ax + piece.bx) / 2, (piece.az + piece.bz) / 2);
+      // in every cell its box touches
+      const x0 = Math.floor(Math.min(piece.ax, piece.bx) / CELL), x1 = Math.floor(Math.max(piece.ax, piece.bx) / CELL);
+      const z0 = Math.floor(Math.min(piece.az, piece.bz) / CELL), z1 = Math.floor(Math.max(piece.az, piece.bz) / CELL);
+      if ((x1 - x0 + 1) * (z1 - z0 + 1) > 400) continue;
+      for (let cx = x0; cx <= x1; cx++) for (let cz = z0; cz <= z1; cz++) {
+        const key = cx + ',' + cz;
+        const list = cells.get(key);
+        if (list) list.push(piece); else cells.set(key, [piece]);
+      }
+    }
+  }
+  /** pieces near (x, z): its cell and the eight round it */
+  const nearPieces = (x: number, z: number) => {
+    const out = new Set<Piece>();
+    const cx = Math.floor(x / CELL), cz = Math.floor(z / CELL);
+    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (const p of cells.get((cx + a) + ',' + (cz + b)) ?? []) out.add(p);
+    return [...out];
+  };
+  /**
+   * How far the next track runs alongside a→b on side sgn — all along it (near both ends
+   * and the middle), so a track merely crossing or touching nearby does not count.
+   */
+  const alongside = (self: number, ax: number, az: number, bx: number, bz: number, len: number, sgn: number) => {
+    const ux = (bx - ax) / len, uz = (bz - az) / len, bit = 0.5 * toMerc;
+    let far = 0;
+    for (const t of [0.15, 0.5, 0.85]) {
+      const px = ax + (bx - ax) * t, pz = az + (bz - az) * t;
+      const d = beside(nearPieces(px, pz), self, px - ux * bit, pz - uz * bit, px + ux * bit, pz + uz * bit, 2 * bit, groundAt(px, pz), sgn, toMerc);
+      if (d == null) return null;
+      far = Math.max(far, d);
+    }
+    return far;
+  };
   for (const [i, way] of ways) {
     const kind = railKind(layer.feature(i).properties);
     if (!kind) continue;
@@ -1274,10 +1442,12 @@ function railTracks(builder: RoadBuilder, layer: VectorTile['layers'][string], k
     const gauge = kind.gauge * toMerc;
     const planned = plan.get(i);
     for (const deck of planned?.decks ?? []) {
-      const half = 2.1 * toMerc;
-      deckStructure(builder, deck, half, toMerc, plan, i);
+      // a railway bridge is wider than its track (walkways, cable runs) and carries a truss;
+      // tracks side by side share one plate
+      const half = (tram ? 2.1 : RAIL_DECK_HALF) * toMerc;
+      deckStructure(builder, deck, half, toMerc, plan, i, tram ? {} : { beside: besideDeck(deck, i), plate: RAIL_PLATE, truss: true });
       pushDeck(bridges, deck, half);
-      if (!tram) deckRibbon(builder, deck, 1.3 * toMerc, 0.06, ballast, 0);
+      if (!tram) deckRibbon(builder, deck, 1.6 * toMerc, 0.06, ballast, 0);
       for (let n = 1; n < deck.pts.length; n++) {
         const [ax, az] = deck.pts[n - 1], [bx, bz] = deck.pts[n];
         const len = Math.hypot(bx - ax, bz - az) || 1;
@@ -1307,6 +1477,14 @@ function railTracks(builder: RoadBuilder, layer: VectorTile['layers'][string], k
           if (j > 0) {
             builder.disc(ax, az, 1.65 * toMerc, 0.05, shoulder, 6);
             builder.disc(ax, az, 1.2 * toMerc, 0.06, ballast, 6);
+          }
+          // a track running alongside for this whole piece: ballast across the gap too, so
+          // a yard reads as one field of tracks, not strips with ground between
+          if (len > 6 * toMerc) for (const sgn of [-1, 1]) {
+            const d = alongside(i, ax, az, bx, bz, len, sgn);
+            if (d == null) continue;
+            const ox = nx * sgn * d / 2, oz = nz * sgn * d / 2;
+            builder.segment(ax + ox, az + oz, bx + ox, bz + oz, d / 2 + 0.2 * toMerc, 0.055, ballast);
           }
           // sleepers across the bed, a little wider than the gauge
           const lenM = len / toMerc, reach = (kind.gauge + 0.45) * toMerc;
@@ -1366,15 +1544,18 @@ function roadMesh(vt: VectorTile, span: number, grid: number, at: Surfaces, brid
         // and gentle curves need none. Narrow paths get cheaper discs.
         const steps = style.width < 2 ? 6 : 8;
         const planned = plan.get(i);
+        // a road bridge has a shoulder each side, out to the parapets: room to drive on it
+        // without dropping off (footbridges keep a narrow edge)
+        const edge = (style.width / 2 + 0.18 + (style.width < 1.5 ? 0.35 : DECK_SHOULDER)) * toMerc;
         for (const deck of planned?.decks ?? []) {
           if (pass === 'casing') {
-            // the parapets stand just outside the pavement, on a concrete edge
-            deckStructure(builder, deck, half + 0.35 * toMerc, toMerc, plan, i);
+            // the parapets stand just outside the shoulders, on a concrete edge
+            deckStructure(builder, deck, edge, toMerc, plan, i);
             // footbridges: stair towers where an end hangs in the air
             if (style.width < 1.5) stairTowers(builder, deck, toMerc, span, towerSpots, plan);
             // round joins on the concrete edge too — otherwise bends show a notch
-            deckRibbon(builder, deck, half + 0.35 * toMerc, y - 0.01, CONCRETE, 6);
-          } else pushDeck(bridges, deck, half);
+            deckRibbon(builder, deck, edge, y - 0.01, CONCRETE, 6);
+          } else pushDeck(bridges, deck, edge);
           deckRibbon(builder, deck, half, y, rgb, steps);
         }
         for (const line of drawn.get(i) ?? planned?.rest ?? way.lines) {

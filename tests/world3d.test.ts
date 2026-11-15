@@ -273,6 +273,10 @@ test('world tile: terrain, roads facing up, gameplay features and raw data kept'
     const a = r.index[t] * 3, b = r.index[t + 1] * 3, c = r.index[t + 2] * 3;
     const cross = (r.positions[b] - r.positions[a]) * (r.positions[c + 2] - r.positions[a + 2]) - (r.positions[b + 2] - r.positions[a + 2]) * (r.positions[c] - r.positions[a]);
     if (Math.abs(cross) < 1e-9) continue;
+    // a wall (parapet, truss member): stands upright, its plan area is only rounding
+    const ab = Math.hypot(r.positions[b] - r.positions[a], r.positions[b + 2] - r.positions[a + 2]);
+    const ac = Math.hypot(r.positions[c] - r.positions[a], r.positions[c + 2] - r.positions[a + 2]);
+    if (Math.abs(cross) < 2e-3 * ab * ac) continue;
     if (r.positions[a + 1] < 0) continue; // under a bridge deck: its underside faces down
     if (cross < 0) up++; else down++;
   }
