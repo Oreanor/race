@@ -156,6 +156,8 @@ const wrapDegrees = (deg: number) => ((deg + 180) % 360 + 360) % 360 - 180;
 const CAMERA_STORE = 'race.camera';
 /** a racer looks this far (m) straight toward the flag: clear of houses and water → it cuts across */
 const RACE_LOOK_M = 400;
+/** never a race / arena rival: the police, the emergency and work vehicles, the robot, the monster truck */
+const RIVAL_EXCLUDED = new Set(['09', '16', '21', '18', '19', '20', '14', '03']);
 /** The camera as last left, within its limits; null if none was kept (or it is unreadable). */
 function savedCamera(): { distance: number; pitch: number; orbit: number } | null {
   try {
@@ -1028,6 +1030,8 @@ export class GameEngine {
 
   /** C: get into the next car of the garage, right where we are (not during a race or a fight). */
   private swapCar() {
+    // a race or a fight is driven in the car it started in (the rivals were matched to it)
+    if (this.driving && !this.paused && this.mode !== 'roam') { this.say(t('garage.locked'), true); return; }
     if (!this.driving || this.paused || this.mode !== 'roam' || this.garage.size < 2) {
       if (this.driving && this.garage.size < 2) this.say(t('garage.one'), true);
       return;
@@ -2019,16 +2023,37 @@ export class GameEngine {
     this.syncMissionVisuals(true);
   }
 
+  /**
+   * Rivals for a race or the arena: `n` different cars priced close to ours — picked at random
+   * from the nearest few by price (a ratio, so cheap and dear cars are matched alike).
+   * Police, emergency and odd vehicles stay out.
+   */
+  private rivalCars(n: number): Car[] {
+    const ours = Math.max(1, carPrice(this.car));
+    const pool = carsConfig
+      .filter((car) => !RIVAL_EXCLUDED.has(car.id) && car.id !== this.car.id)
+      .map((car) => ({ car, gap: Math.abs(Math.log(Math.max(1, carPrice(car)) / ours)) }))
+      .sort((a, b) => a.gap - b.gap)
+      .slice(0, Math.max(n, 6))
+      .map((entry) => entry.car);
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+    return Array.from({ length: n }, (_, i) => pool[i % pool.length] ?? carsConfig[0]);
+  }
+
   private startArena() {
     const center = this.vehicle.position as [number, number];
     const heading = this.vehicle.heading;
     const usedStarts = new Set<string>();
     const driverNames = randomDriverNames(3);
     const seedBase = Math.round(center[0] * 1e5) ^ Math.round(center[1] * 1e5) ^ (performance.now() | 0);
+    const rivals = this.rivalCars(3);
     this.trafficBots = Array.from({ length: 3 }, (_, index) => createTrafficBot(
       `arena-${index}`,
       driverNames[index],
-      carsConfig[(index + 1) % carsConfig.length],
+      rivals[index],
       this.trafficNetwork,
       center,
       heading + (index - 1) * 0.8,
@@ -2065,11 +2090,12 @@ export class GameEngine {
       : [...finishAhead!] as [number, number];
     const usedStarts = new Set<string>();
     const driverNames = randomDriverNames(3);
+    const rivals = this.rivalCars(3);
     this.trafficBots = Array.from({ length: 3 }, (_, index) => {
       const bot = createTrafficBot(
         `race-${index}`,
         driverNames[index],
-        carsConfig[(index + 1) % carsConfig.length],
+        rivals[index],
         this.trafficNetwork,
         center,
         heading + (index - 1) * 0.55,
