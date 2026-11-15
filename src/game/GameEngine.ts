@@ -154,6 +154,8 @@ import {
 const wrapDegrees = (deg: number) => ((deg + 180) % 360 + 360) % 360 - 180;
 /** where the camera (zoom, tilt, turn) is kept between reloads */
 const CAMERA_STORE = 'race.camera';
+/** a racer looks this far (m) straight toward the flag: clear of houses and water → it cuts across */
+const RACE_LOOK_M = 400;
 /** The camera as last left, within its limits; null if none was kept (or it is unreadable). */
 function savedCamera(): { distance: number; pitch: number; orbit: number } | null {
   try {
@@ -2467,11 +2469,21 @@ export class GameEngine {
       const v = this.vehicle.speed * 0.5;
       target = offsetPosition(this.vehicle.position, Math.sin(this.vehicle.heading) * v, Math.cos(this.vehicle.heading) * v) as Position;
     }
-    if (!target || metersBetween(bot.position, target) > 350) return null;
+    if (!target) return null;
+    // a racer heads cross-country toward the flag whenever the next RACE_LOOK_M straight
+    // that way are clear (like we can: a stream line is no obstacle, only houses and real
+    // water); a hunter only cuts in on the last 350 m
+    const far = metersBetween(bot.position, target);
+    if (racing && bot.mood !== 'hunt' && far > RACE_LOOK_M) {
+      const k = RACE_LOOK_M / far;
+      target = [bot.position[0] + (target[0] - bot.position[0]) * k, bot.position[1] + (target[1] - bot.position[1]) * k];
+    } else if (far > 350) return null;
     // stuck lately (a river bank, a fence): keep to the roads for a while
     if ((this.botNoCut.get(bot.id) ?? 0) > now) return null;
     let sight = this.botSight.get(bot.id);
-    if (!sight || now - sight.at > 300) {
+    // a blocked view is looked at again only after 1.5 s: flipping between cutting and the
+    // roads re-plans the route each time (a Dijkstra), which costs frames
+    if (!sight || now - sight.at > (sight.clear ? 300 : 1500)) {
       sight = { at: now, clear: !this.collisions.sightBlocked(bot.position, target) && !this.waterBetween(bot.position, target) };
       this.botSight.set(bot.id, sight);
     }
@@ -2480,7 +2492,7 @@ export class GameEngine {
 
   /** Water anywhere on the straight line (bridges count as dry): no cutting across a river. */
   private waterBetween(from: Position, to: Position) {
-    const steps = Math.max(1, Math.ceil(metersBetween(from, to) / 10));
+    const steps = Math.max(1, Math.ceil(metersBetween(from, to) / 12));
     for (let i = 1; i <= steps; i++) {
       const k = i / steps;
       if (this.water.covers([from[0] + (to[0] - from[0]) * k, from[1] + (to[1] - from[1]) * k], true)) return true;
