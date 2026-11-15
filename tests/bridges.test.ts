@@ -203,3 +203,11 @@ test('a deck clears a cross slope under its shoulder, not just under the axis', 
   const plan = planBridges(new Map([[1, line([[20, 100], [180, 100]], { half: 4.5 })]]), 200, 200, at);
   assert.ok(plan.get(1)!.decks[0].h.every(h => h >= 14));
 });
+
+test('a tiny source stub absorbed into a junction does not crash the tile builder', () => {
+  const plan = planBridges(new Map([
+    [1, line([[40, 50], [40.1, 50]])],
+    [2, line([[40.05, 10], [40.05, 50]])],
+  ]), 100, 100, flat);
+  assert.ok(plan.get(2)!.decks[0].h.every(Number.isFinite));
+});

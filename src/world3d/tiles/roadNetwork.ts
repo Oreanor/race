@@ -313,7 +313,7 @@ export function planRoadNetwork(ways: Map<number, RoadWay>, extent: number, span
   };
   // Cross slopes matter too: checking the axis alone lets the ground cut
   // through a wide deck, which looks like holes inside an otherwise sound span.
-  for (const route of routes) if (route.way.bridge) route.nodes.forEach((id, i, ids) => {
+  for (const route of routes) if (route.way.bridge && route.nodes.length >= 2) route.nodes.forEach((id, i, ids) => {
     const n = nodes[id], f = frame(id, ids[i - 1], ids[i + 1]);
     for (const side of [-1, 1]) n.floor = Math.max(n.floor, at.driveAt(n.p[0] + f[0] * n.half * side, n.p[1] + f[1] * n.half * side));
   });
