@@ -1,6 +1,7 @@
 import type { Car } from '@/config/vehicle.config';
 import type { MapFeature } from './WaterCollisionController.ts';
 import { VehicleController, type Position, metersBetween, METERS_PER_DEGREE, offsetPosition } from './VehicleController.ts';
+import { raceCourse, RACE_CHECKPOINTS, type RaceCourse } from './RaceCourse.ts';
 
 const ROAD_CLASSES = new Set(['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'minor', 'service']);
 const NODE_SNAP_METERS = 2.5;
@@ -367,6 +368,60 @@ export class TrafficRoadNetwork {
     return route.length > 1 ? [...route[route.length - 1]] as Position : null;
   }
 
+  /** One bounded search per yield: preparing a long race does not stall a frame. */
+  *planRace(position: Position, heading: number, seed: number, available: (p: Position) => boolean = () => true): Generator<null, RaceCourse | null> {
+    this.ensureBuilt();
+    const start = this.nearest(position, new Set(), 0, 120);
+    if (!start) return null;
+    // Sample across the entire graph: randomAway's first few hits can all lie
+    // along one street, making a curved course impossible despite nearby roads.
+    const stride = Math.max(1, Math.ceil(this.nodes.size / 1800));
+    const pool: RoadNode[] = [];
+    let index = 0;
+    for (const node of this.nodes.values()) if (index++ % stride === 0) pool.push(node);
+    const network = this;
+    let searches = 0;
+    function* extend(cursor: RoadNode, incoming: number, legs: Position[][], gates: Position[], zigzag: boolean, bend: number): Generator<null, RaceCourse | null> {
+      if (legs.length === RACE_CHECKPOINTS + 1) return raceCourse(position, legs);
+      const leg = legs.length;
+      const sign = zigzag && leg % 2 === 0 ? -bend : bend;
+      const desired = leg === 0 ? heading : incoming + sign * (zigzag ? 1.95 : 1.15);
+      const ranked: { node: RoadNode; score: number }[] = [];
+      pool.forEach((node, i) => {
+        const d = metersBetween(cursor.position, node.position);
+        if (d < 900 || d > 1400 || gates.some(p => metersBetween(p, node.position) < 300)) return;
+        const bearing = headingTo(cursor.position, node.position);
+        const turn = angleDifference(bearing, incoming) * sign;
+        if (leg === 0 ? Math.cos(angleDifference(bearing, heading)) < 0.1
+          : turn < (zigzag ? 1.35 : 0.5) || turn > (zigzag ? 2.55 : 2.15)) return;
+        const noise = ((Math.imul(i + 1, seed | 1) >>> 0) % 997) / 997;
+        ranked.push({ node, score: Math.abs(angleDifference(bearing, desired)) * 2 + Math.abs(d - 1050) / 900 + noise * 0.25 });
+      });
+      ranked.sort((a, b) => a.score - b.score);
+      const tried: Position[] = [];
+      for (const { node: goal } of ranked) {
+        if (searches >= 160 || tried.length >= 10) break;
+        if (tried.some(p => metersBetween(p, goal.position) < 180) || !available(goal.position)) continue;
+        tried.push(goal.position);
+        searches++;
+        yield null;
+        const route = network.route(cursor.id, incoming, seed, goal.position, performance.now() + 4);
+        const end = route[route.length - 1];
+        if (!end || metersBetween(end, goal.position) > 40 || metersBetween(cursor.position, end) < 850 || !route.every(available)) continue;
+        const next = network.nearest(end, new Set(), 0, 10);
+        if (!next) continue;
+        const course = yield* extend(next, headingTo(cursor.position, end), [...legs, route], [...gates, end], zigzag, bend);
+        if (course) return course;
+      }
+      return null;
+    }
+    const bend = (seed & 2) === 0 ? 1 : -1;
+    const course = yield* extend(start, heading, [], [position], (seed & 1) === 0, bend);
+    if (course) return course;
+    searches = 0;
+    return yield* extend(start, heading, [], [position], false, -bend);
+  }
+
   route(startId: string, heading: number, seed: number, destination?: Position, deadline = Infinity) {
     this.ensureBuilt();
     const start = this.nodes.get(startId);
@@ -531,6 +586,8 @@ export type TrafficBot = {
   /** ms timestamp — throttle expensive route() calls */
   repathAt: number;
   goal: Position | null;
+  /** An ordered race gate stays the goal even near traffic or inside the approach radius. */
+  goalLocked?: boolean;
   money: number;
   /** traffic: how long somebody has stood in its way (s) */
   blockedFor?: number;
@@ -585,6 +642,11 @@ function huntScore(peer: TrafficPeer, distance: number) {
 }
 
 export function steerTrafficBot(bot: TrafficBot, network: TrafficRoadNetwork, peers: TrafficPeer[]) {
+  if (bot.goalLocked && bot.goal) {
+    bot.huntId = null;
+    bot.huntRange = Infinity;
+    return;
+  }
   // Arena/bounty: chase across the whole loaded city. Explore: only bump nearby traffic.
   const engage = bot.mood === 'hunt' ? 16000 : 110;
   let prey: TrafficPeer | null = null;

@@ -72,6 +72,7 @@ export type EventResult = {
 /** What the marker's dialog offers; a delivery says what, how far and for how much. */
 export type EventOffer = {
   kind: MissionKind;
+  preparing?: boolean;
   item?: DeliveryItem;
   km?: number;
   reward?: number;

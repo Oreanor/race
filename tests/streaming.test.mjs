@@ -30,6 +30,74 @@ const { GameEngine } = await import('../src/game/GameEngine.ts');
 const { PreparedTransfer } = await import('../src/game/PreparedTransfer.ts');
 const { missionAreas } = await import('../src/game/missionPopulation.ts');
 const { cameraTransition } = await import('../src/game/cameraTransition.ts');
+const { raceCourse, RaceProgress } = await import('../src/game/RaceCourse.ts');
+
+function testRaceCourse() {
+  const start = [-8.42, 40.2];
+  const points = [[0, 0], [900, 500], [0, 1000], [900, 1500], [0, 2000], [900, 2500], [0, 3000]]
+    .map(([x, y]) => offsetPosition(start, x, y));
+  return raceCourse(start, points.slice(1).map((p, i) => [points[i], p]));
+}
+
+test('race preparation charges only once after success; cancellation and unavailable courses cost nothing', async () => {
+  const originalRaf = globalThis.requestAnimationFrame, frames = [];
+  globalThis.requestAnimationFrame = callback => { frames.push(callback); return frames.length; };
+  const course = testRaceCourse(), launched = [], offers = [];
+  let result = course, plans = 0;
+  const engine = Object.assign(Object.create(GameEngine.prototype), {
+    racePreparation: 0, racePreparing: false, eventOffer: 'race', disposed: false, driving: true,
+    vehicle: { position: course.start, heading: 0 }, playerMoney: 5000,
+    map: { groundAt: () => 10 }, say() {},
+    trafficNetwork: { *planRace() { plans++; yield null; return result; } },
+    onEventOffer: offer => offers.push(offer), startRace: plan => launched.push(plan),
+  });
+  const drain = async task => {
+    while (frames.length) { frames.shift()(0); await Promise.resolve(); }
+    await task;
+  };
+  try {
+    const task = engine.prepareRace();
+    engine.prepareRace(); // A double-click must not start a second plan or charge.
+    assert.equal(engine.playerMoney, 5000);
+    assert.equal(offers.at(-1).preparing, true);
+    await drain(task);
+    assert.equal(plans, 1);
+    assert.equal(engine.playerMoney, 4000);
+    assert.deepEqual(launched, [course]);
+    engine.eventOffer = 'race';
+    const cancelled = engine.prepareRace();
+    engine.declineEvent();
+    await drain(cancelled);
+    assert.equal(engine.playerMoney, 4000);
+    assert.equal(launched.length, 1);
+    engine.eventOffer = 'race'; result = null;
+    await drain(engine.prepareRace());
+    assert.equal(engine.playerMoney, 4000);
+    assert.equal(engine.racePreparing, false);
+    assert.equal(launched.length, 1);
+  } finally { globalThis.requestAnimationFrame = originalRaf; }
+});
+
+test('engine cannot award a race to a player or bot at the finish before their checkpoints', () => {
+  const course = testRaceCourse(), winners = [];
+  const engine = Object.assign(Object.create(GameEngine.prototype), {
+    driving: true, mode: 'race', raceCourse: course, raceGoal: course.finish,
+    raceProgress: new RaceProgress(course, [{ id: 'player', position: course.start }, { id: 'race-0', position: course.start }]),
+    raceStartAt: 0, raceDeadline: performance.now() + 600000, raceWarned: false,
+    vehicle: { position: course.finish },
+    trafficBots: [{ id: 'race-0', driver: 'Rival', position: course.finish }],
+    combatLayer: { isTargetAlive: () => true }, botSight: new Map(),
+    updateBounty() {}, updateFire() {}, updateImpound() {}, updateTaxi() {}, updateAmbulance() {}, updateBus() {},
+    ensureRaceGoalMarker() {}, syncMissionVisuals() {}, say() {}, endRace: id => winners.push(id),
+  });
+  engine.updateEvents();
+  assert.deepEqual(winners, []);
+  for (const point of course.checkpoints) { engine.vehicle.position = point; engine.updateEvents(); }
+  assert.deepEqual(winners, []);
+  engine.vehicle.position = course.finish;
+  engine.updateEvents();
+  assert.deepEqual(winners, ['player']);
+});
 
 test('camera fly-in preserves both endpoints, settles softly, and rotates through the shortest arc', () => {
   const from = { center: [-8.8, 40.15], zoom: 15, pitch: 0, bearing: 350, elevation: 100 };

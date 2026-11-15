@@ -873,7 +873,7 @@ export default function Game() {
             <a className="brand stage-brand" href="/" aria-label="City Rider">
               <span className="brand-icon" aria-hidden="true">
                 <svg viewBox="0 0 64 64" fill="none" focusable="false">
-                  <path d="M6 28h9c7 0 9-4 17-4s10 4 17 4h9v8h-9c-8 0-13 5-13 13v9h-8v-9c0-8-5-13-13-13H6Z" fill="currentColor" />
+                  <path fillRule="evenodd" d="M6 28h9c7 0 9-6 17-6s10 6 17 6h9v8h-9c-8 0-13 5-13 13v9h-8v-9c0-8-5-13-13-13H6ZM32 26a6 6 0 1 0 0 12 6 6 0 1 0 0-12Z" fill="currentColor" />
                   <circle cx="32" cy="32" r="27" stroke="currentColor" strokeWidth="6.5" />
                 </svg>
               </span> city rider
@@ -1193,8 +1193,8 @@ export default function Game() {
         <Dialog
           title={t(`event.${eventOffer.kind}`)}
           actions={<>
-            <button type="button" className="ui-btn" autoFocus onClick={() => engine.current?.acceptEvent()}>
-              {eventOffer.kind === 'delivery' || eventOffer.kind === 'collect' ? t('event.take') : t('event.play')}
+            <button type="button" className="ui-btn" autoFocus disabled={eventOffer.preparing} onClick={() => engine.current?.acceptEvent()}>
+              {eventOffer.preparing ? t('race.preparing') : eventOffer.kind === 'delivery' || eventOffer.kind === 'collect' ? t('event.take') : t('event.play')}
             </button>
             <button type="button" className="ui-btn is-ghost" onClick={() => engine.current?.declineEvent()}>{t('event.later')}</button>
           </>}

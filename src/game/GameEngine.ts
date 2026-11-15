@@ -1,5 +1,6 @@
 import { roadStart } from './roadStart.ts';
 import { cameraTransition, type CameraView } from './cameraTransition.ts';
+import { RaceProgress, type RaceCourse } from './RaceCourse.ts';
 import { PreparedTransfer } from './PreparedTransfer.ts';
 import { missionAreas, missionRoadSpot, nearestOfEachKind } from './missionPopulation.ts';
 import { VehiclePose } from './VehiclePose.ts';
@@ -161,8 +162,6 @@ const CAMERA_STORE = 'race.camera';
 /** a racer looks this far (m) straight toward the flag: clear of houses and water → it cuts across */
 const RACE_LOOK_M = 400;
 /** on the run: how often a patrol in the traffic may join the chase (ms) */
-/** how close to the finish flag counts as across the line (m) */
-const RACE_FINISH_M = 14;
 const POLICE_JOIN_MS = 20_000;
 /** the odds of a patrol joining at each POLICE_JOIN_MS check */
 const POLICE_JOIN_CHANCE = 0.25;
@@ -182,7 +181,7 @@ const FIELD_STEP_M = 4;
  * a strip, 5 × 10 at most */
 const FIELD_GRIDS: [number, number][] = [[1, 5], [1, 7], [1, 8], [1, 10], [1, 10], [1, 6], [2, 8], [3, 6], [4, 8], [5, 10]];
 /** a race nobody finishes is called off after this long from the start (ms) */
-const RACE_TIME_LIMIT_MS = 5 * 60_000;
+const RACE_TIME_LIMIT_MS = 10 * 60_000;
 /** never a race / arena rival: the police, the emergency and work vehicles, the robot, the monster truck */
 const RIVAL_EXCLUDED = new Set(['09', '16', '21', '18', '19', '20', '14', '03']);
 /** The camera as last left, within its limits; null if none was kept (or it is unreadable). */
@@ -343,6 +342,10 @@ export class GameEngine {
   private missionPopulationKey = '';
   private lastCompletedAt: [number, number] | null = null;
   private raceGoal: [number, number] | null = null;
+  private raceCourse: RaceCourse | null = null;
+  private raceProgress: RaceProgress | null = null;
+  private racePreparing = false;
+  private racePreparation = 0;
   private eventOffer: MissionKind | null = null;
   /** bounty hunt: the active job (kept across trips), the offer on screen, the fight */
   private bounty: Bounty | null = loadBounty();
@@ -441,10 +444,11 @@ export class GameEngine {
   private wins = new Map<string, number>();
   private missionMarkers = new Map<string, MapMarker>();
   private raceGoalMarker: MapMarker | null = null;
+  private raceCheckpointMarkers = new Map<number, MapMarker>();
   private eventIndicatorLayer: HTMLElement | null = null;
   private focusIndicator: { element: HTMLElement; arrow: HTMLElement; title: HTMLElement; distance: HTMLElement } | null = null;
   private missionTypeIndicators = new Map<MissionKind, NonNullable<GameEngine['focusIndicator']>>();
-  private raceGoalIndicator: { element: HTMLElement; arrow: HTMLElement; distance: HTMLElement } | null = null;
+  private raceGoalIndicator: { element: HTMLElement; arrow: HTMLElement; title: HTMLElement; distance: HTMLElement } | null = null;
   /** Player pins on the M-map (up to 3), each tracked like a mission target. */
   private customPins: Array<{
     id: string;
@@ -1322,6 +1326,10 @@ export class GameEngine {
   }
 
   private clearEventBots() {
+    this.raceCourse = null;
+    this.raceProgress = null;
+    for (const marker of this.raceCheckpointMarkers.values()) marker.remove();
+    this.raceCheckpointMarkers.clear();
     this.trafficBots = [];
     this.hunterGuns.clear();
     this.policeFar.clear();
@@ -1401,6 +1409,17 @@ export class GameEngine {
       position: mission.position,
     }));
     const errand = this.errand;
+    if (this.mode === 'race' && this.raceCourse && this.raceProgress) {
+      const passed = this.raceProgress.passed('player');
+      this.raceCourse.checkpoints.forEach((position, index) => {
+        if (index < passed) return;
+        beacons.push({ id: `race-checkpoint-${index}`, position,
+          colors: index === passed
+            ? { pole: '#e0b12a', glow: '#b88c12', orb: '#ffe56a' }
+            : { pole: '#3d8bff', glow: '#2252b5', orb: '#8bbcff' },
+        });
+      });
+    }
     if (errand?.kind === 'delivery') beacons.push({ id: 'errand-goal', position: errand.goal, colors: ERRAND_BEACONS.delivery });
     // collect boxes: map/HUD markers with range only — no giant world pins on every box
     if (showWorld && !this.bountyFight && !errand) {
@@ -1966,9 +1985,15 @@ export class GameEngine {
     }
     if (this.mode === 'arena') { this.endArena(false); return true; }
     if (this.mode === 'race') {
-      // the bot closest to the finish takes it
-      const goal = this.raceGoal;
-      const leader = [...this.trafficBots].sort((a, b) => (goal ? metersBetween(a.position, goal) - metersBetween(b.position, goal) : 0))[0];
+      // Ordered checkpoint progress determines the leader, not proximity to a
+      // finish they may have driven past before completing the course.
+      const progress = this.raceProgress;
+      const remaining = (bot: TrafficBot) => {
+        const target = progress?.target(bot.id);
+        return target ? metersBetween(bot.position, target) : 0;
+      };
+      const leader = [...this.trafficBots].sort((a, b) =>
+        (progress?.passed(b.id) ?? 0) - (progress?.passed(a.id) ?? 0) || remaining(a) - remaining(b))[0];
       this.endRace(leader?.id ?? '', leader?.driver ?? '');
       return true;
     }
@@ -2140,15 +2165,17 @@ export class GameEngine {
       this.say(t('event.broke', { fee: formatNumber(fee) }), true);
       return;
     }
+    if (kind === 'race') { this.activeMissionId = nearby?.id ?? null; void this.prepareRace(); return; }
     this.activeMissionId = nearby?.id ?? null;
     this.eventOffer = null;
     this.onEventOffer(null);
     this.playerMoney -= fee;
-    if (kind === 'arena') this.startArena();
-    else this.startRace();
+    this.startArena();
   }
 
   declineEvent() {
+    this.racePreparation++;
+    this.racePreparing = false;
     this.eventOffer = null;
     this.offeredDelivery = null;
     this.activeMissionId = null;
@@ -2215,21 +2242,47 @@ export class GameEngine {
     this.say(t('arena.start'), true);
   }
 
-  private startRace() {
+  private async prepareRace() {
+    if (this.racePreparing) return;
+    const token = ++this.racePreparation;
+    this.racePreparing = true;
+    this.onEventOffer({ kind: 'race', reward: RACE_PRIZE, preparing: true });
+    const center: Position = [...this.vehicle.position];
+    const seed = Math.round(center[0] * 1e5) ^ Math.round(center[1] * 1e5) ^ (performance.now() | 0);
+    const plan = this.trafficNetwork.planRace(center, this.vehicle.heading, seed, p => this.map.groundAt(p) != null);
+    let course: RaceCourse | null = null;
+    while (token === this.racePreparation && !this.disposed && this.driving && this.eventOffer === 'race') {
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+      if (token !== this.racePreparation || this.disposed || !this.driving || this.eventOffer !== 'race') return;
+      try {
+        const step = plan.next();
+        if (step.done) { course = step.value; break; }
+      } catch (error) { console.warn('Race route unavailable', error); break; }
+    }
+    if (token !== this.racePreparation || this.disposed || !this.driving || this.eventOffer !== 'race') return;
+    this.racePreparing = false;
+    if (!course) {
+      this.onEventOffer({ kind: 'race', reward: RACE_PRIZE });
+      this.say(t('race.unavailable'), true);
+      return;
+    }
+    if (this.playerMoney < RACE_FEE) {
+      this.onEventOffer({ kind: 'race', reward: RACE_PRIZE });
+      this.say(t('event.broke', { fee: formatNumber(RACE_FEE) }), true);
+      return;
+    }
+    this.playerMoney -= RACE_FEE;
+    this.eventOffer = null;
+    this.onEventOffer(null);
+    this.startRace(course);
+  }
+
+  private startRace(course: RaceCourse) {
     const center = this.vehicle.position as [number, number];
     const heading = this.vehicle.heading;
     const seedBase = Math.round(center[0] * 1e5) ^ Math.round(center[1] * 1e5) ^ (performance.now() | 0);
-    const finishSpot = this.trafficNetwork.randomAway(center, new Set(), 1800, 2200, seedBase)
-      ?? this.trafficNetwork.randomAway(center, new Set(), 1400, 2600, seedBase + 41);
-    const finishAhead = finishSpot ? null : this.trafficNetwork.destinationAhead(center, heading, seedBase);
-    if (!finishSpot && !finishAhead) {
-      this.say(t('race.unavailable'), true);
-      this.eventCooldown = performance.now() + 8000;
-      return;
-    }
-    this.raceGoal = finishSpot
-      ? [...finishSpot.position] as [number, number]
-      : [...finishAhead!] as [number, number];
+    this.raceCourse = course;
+    this.raceGoal = [...course.finish];
     const usedStarts = new Set<string>();
     const driverNames = randomDriverNames(3);
     const rivals = this.rivalCars(3);
@@ -2246,7 +2299,8 @@ export class GameEngine {
         seedBase ^ (index * 5443),
         { min: 18, max: 90 },
       );
-      bot.goal = [...this.raceGoal!];
+      bot.goal = [...course.checkpoints[0]];
+      bot.goalLocked = true;
       bot.route = [];
       bot.routeIndex = 1;
       bot.lastRouteRevision = -1;
@@ -2268,6 +2322,9 @@ export class GameEngine {
       bot.heading = heading;
     });
     this.vehicle.speed = 0;
+    this.raceProgress = new RaceProgress(course, [
+      { id: 'player', position: center }, ...this.trafficBots.map(bot => ({ id: bot.id, position: bot.position })),
+    ]);
     this.raceStartAt = performance.now() + 3200;
     this.raceCount = 0;
     this.raceDeadline = this.raceStartAt + RACE_TIME_LIMIT_MS;
@@ -2280,7 +2337,7 @@ export class GameEngine {
     this.ensureTrafficMarkers();
     this.combatLayer?.setTargets(this.targetVehicles());
     this.renderVehicle.reset(this.vehicle);
-    this.say(t('race.start'), true);
+    this.say(t('race.start', { km: formatNumber(Math.round(course.meters / 100) / 10) }), true);
   }
 
   /** 3‑2‑1 on the grid; true while nobody may move yet. */
@@ -3053,23 +3110,31 @@ export class GameEngine {
       return;
     }
     if (this.mode === 'race') {
-      if (!this.raceGoal) return;
+      if (!this.raceGoal || !this.raceProgress) return;
       // nobody gets there (lost, stuck, all wrecked): the race is called off
       const now = performance.now();
+      if (this.raceStartAt > now) return;
       if (this.raceDeadline && now >= this.raceDeadline) { this.endRace('', ''); return; }
       if (this.raceDeadline && !this.raceWarned && this.raceDeadline - now <= 30_000) {
         this.raceWarned = true;
         this.say(t('race.hurry'), true);
       }
-      // Generous radius — flag is a point; cars need room to count as finished.
-      if (metersBetween(this.vehicle.position, this.raceGoal) <= RACE_FINISH_M) {
-        this.endRace('player', t('you'));
-        return;
+      const progress = this.raceProgress;
+      if (progress.update('player', this.vehicle.position)) {
+        if (progress.finished('player')) { this.endRace('player', t('you')); return; }
+        this.say(t('race.checkpointPassed', { n: progress.passed('player'), total: this.raceCourse!.checkpoints.length }), true);
+        this.ensureRaceGoalMarker();
+        this.syncMissionVisuals(false);
       }
-      const winner = this.trafficBots.find(bot =>
-        this.combatLayer?.isTargetAlive(bot.id) && metersBetween(bot.position, this.raceGoal!) <= RACE_FINISH_M,
-      );
-      if (winner) this.endRace(winner.id, winner.driver);
+      for (const bot of this.trafficBots) {
+        if (!this.combatLayer?.isTargetAlive(bot.id) || !progress.update(bot.id, bot.position)) continue;
+        if (progress.finished(bot.id)) { this.endRace(bot.id, bot.driver); return; }
+        bot.goal = progress.target(bot.id);
+        bot.route = [];
+        bot.routeIndex = 1;
+        bot.repathAt = now + (Math.abs(bot.routeSeed) % 160);
+        this.botSight.delete(bot.id);
+      }
       return;
     }
     if (this.errand) { this.updateErrand(); return; }
@@ -3746,6 +3811,8 @@ export class GameEngine {
     this.raceGoalMarker = null;
     this.raceGoalIndicator?.element.remove();
     this.raceGoalIndicator = null;
+    for (const marker of this.raceCheckpointMarkers.values()) marker.remove();
+    this.raceCheckpointMarkers.clear();
     this.ensureRaceGoalMarker();
     if (this.focusIndicator) this.focusIndicator.element.setAttribute('aria-label', t('marker.target'));
     this.selfMarker?.getElement().setAttribute('aria-label', t('you'));
@@ -3979,6 +4046,8 @@ export class GameEngine {
 
   private ensureRaceGoalMarker() {
     if (!this.raceGoal) {
+      for (const marker of this.raceCheckpointMarkers.values()) marker.remove();
+      this.raceCheckpointMarkers.clear();
       this.raceGoalMarker?.remove();
       this.raceGoalMarker = null;
       if (this.raceGoalIndicator) this.raceGoalIndicator.element.style.display = 'none';
@@ -3999,9 +4068,26 @@ export class GameEngine {
     } else this.raceGoalMarker.setLngLat(this.raceGoal);
     const el = this.raceGoalMarker.getElement();
     if (el) el.style.display = this.mode === 'race' ? '' : 'none';
+    const passed = this.raceProgress?.passed('player') ?? 0;
+    this.raceCourse?.checkpoints.forEach((position, index) => {
+      const label = t('race.checkpoint', { n: index + 1, total: this.raceCourse!.checkpoints.length });
+      let marker = this.raceCheckpointMarkers.get(index);
+      if (!marker) {
+        marker = this.marker({ element: this.makeMapLabel('race-finish-marker', label, label,
+          index === passed ? MISSION_COLORS.finish : MISSION_COLORS.arena), anchor: 'bottom' }).setLngLat(position).addTo(this.map);
+        this.raceCheckpointMarkers.set(index, marker);
+      }
+      const element = marker.getElement();
+      if (element) {
+        const colors = index === passed ? MISSION_COLORS.finish : MISSION_COLORS.arena;
+        element.style.setProperty('--mission-color', colors.main);
+        element.style.setProperty('--mission-soft', colors.soft);
+        element.style.display = this.mode === 'race' && index >= passed ? '' : 'none';
+      }
+    });
     if (!this.raceGoalIndicator) {
       const made = this.makeOffscreenIndicator('finish', t('marker.finish'));
-      this.raceGoalIndicator = { element: made.element, arrow: made.arrow, distance: made.distance };
+      this.raceGoalIndicator = made;
       this.eventIndicatorLayer.appendChild(this.raceGoalIndicator.element);
     }
   }
@@ -4813,7 +4899,10 @@ export class GameEngine {
       Boolean(roaming && focused?.role && focused.position),
       focused?.label,
     );
-    this.updateOffscreenMarker(this.raceGoalIndicator, this.raceGoal, this.driving && this.mode === 'race');
+    const nextRaceGate = this.raceProgress?.target('player') ?? this.raceGoal;
+    const raceGateLabel = this.raceCourse && this.raceProgress && this.raceProgress.passed('player') < this.raceCourse.checkpoints.length
+      ? t('race.checkpoint', { n: this.raceProgress.passed('player') + 1, total: this.raceCourse.checkpoints.length }) : t('marker.finish');
+    this.updateOffscreenMarker(this.raceGoalIndicator, nextRaceGate, this.driving && this.mode === 'race', raceGateLabel);
     const errandPins = this.errandPins();
     for (const pin of errandPins) {
       const tip = this.errandIndicators.get(pin.id);
@@ -4843,6 +4932,9 @@ export class GameEngine {
       this.setMapPinRange(marker, mission.position, pinRange);
     }
     this.setMapPinRange(this.raceGoalMarker, this.raceGoal, pinRange && this.mode === 'race');
+    if (this.raceCourse) for (const [index, marker] of this.raceCheckpointMarkers) {
+      this.setMapPinRange(marker, this.raceCourse.checkpoints[index], pinRange && this.mode === 'race');
+    }
     this.setMapPinRange(this.bountyMarker, this.bountyPickup ?? this.bounty?.spot ?? null, pinRange && this.canHuntBounty());
     this.setMapPinRange(this.fireMarker, this.fire.active ? this.fire.spot : this.fire.pickup, pinRange && this.isFireTruck());
     this.setMapPinRange(
@@ -5479,7 +5571,7 @@ export class GameEngine {
 
   /** Into the car (or out). False when it could not start (the car is not affordable). */
   setDriving(value: boolean, approach = true): boolean {
-    if (!value) this.cancelTransfer();
+    if (!value) { this.cancelTransfer(); this.racePreparation++; this.racePreparing = false; }
     // the view from above belongs to one mode; switching modes lands back on the ground
     this.overview = 0;
     this.overviewTarget = 0;
@@ -6583,6 +6675,7 @@ export class GameEngine {
   }
 
   dispose() {
+    this.racePreparation++;
     this.cancelTransfer();
     this.disposed = true;
     this.audio.dispose();
@@ -6596,6 +6689,8 @@ export class GameEngine {
     this.clearCustomPins();
     this.raceGoalMarker?.remove();
     this.bountyMarker?.remove();
+    for (const marker of this.raceCheckpointMarkers.values()) marker.remove();
+    this.raceCheckpointMarkers.clear();
     this.fireMarker?.remove();
     this.impoundMarker?.remove();
     this.taxiMarker?.remove();
