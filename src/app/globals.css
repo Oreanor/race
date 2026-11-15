@@ -185,7 +185,7 @@
   color:var(--ui-ink,var(--ink));font-size:58px;font-weight:800;letter-spacing:-2.8px;gap:14px;
   text-decoration:none;pointer-events:auto;
 }
-.brand-stage .stage-brand .brand-icon{width:60px;height:60px;flex-shrink:0;transform:translateY(3px)}
+.brand-stage .stage-brand .brand-icon{width:60px;height:60px;flex-shrink:0;transform:translateY(6px)}
 .brand-icon::before{display:none}
 .brand-icon svg{display:block;width:100%;height:100%;overflow:visible}
 .brand-stage-slot{
@@ -223,7 +223,7 @@
   .brand-stage.is-revealing,
   .brand-stage.is-ready{padding-top:max(60px,6.5vh)}
   .brand-stage .stage-brand{font-size:40px;letter-spacing:-2px;gap:11px}
-  .brand-stage .stage-brand .brand-icon{width:44px;height:44px;transform:translateY(2px)}
+  .brand-stage .stage-brand .brand-icon{width:44px;height:44px;transform:translateY(5px)}
 }
 .game-shell[data-theme='night'] .icon-button{background:var(--ui-bg);border-color:var(--ui-line);color:var(--ui-ink)}
 .game-shell[data-theme='night'] .intro h1>span{color:#8eb4cc}
