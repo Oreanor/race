@@ -100,6 +100,8 @@ export type Settings = {
   quality: Quality;
   buildingDetail: BuildingDetail;
   architecture: ArchitectureSetting;
+  /** architecture skin painted over any city (buildings/skins) */
+  skin: SkinId;
   theme: Theme;
   /** sound volume 0 … 1 (0: off) */
   volume: number;

@@ -1102,8 +1102,12 @@ export class GameEngine {
 
   applySettings(settings: Settings) {
     const terrainChanged = settings.terrain !== this.settings.terrain;
+    const skinChanged = settings.skin !== this.settings.skin;
     this.settings = settings;
+    this.map.setSkin(settings.skin);
     this.audio.setVolume(settings.volume);
+    // mid-fire skin swap: snap flames onto the new window grid, keep ~the same burn %
+    if (skinChanged && this.fire.active) this.remeshFireForSkin();
     if (!this.mapLoaded) return;
     this.map.setRelief(settings.terrain);
     // fill-rate first: high ≤1.25, medium 1, low 0.85 (was 1 / 1.25 / ≤1.5)
@@ -1112,7 +1116,7 @@ export class GameEngine {
     this.map.setPixelRatio(ratio);
     // the filmic pass costs a copy and three small passes: off on low quality
     this.map.setPostFx(settings.quality !== 'low');
-    this.map.setGroundLook(settings.ground ?? 'realistic');
+    this.map.setGroundLook('realistic');
     if (terrainChanged) { this.collisionDirty = true; this.syncedAt = null; }
   }
 
