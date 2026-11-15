@@ -753,12 +753,15 @@ export class GameEngine {
     listen(window, 'pointerdown', (() => this.audio.unlock()) as EventListener);
     listen(window, 'keydown', ((e: KeyboardEvent) => {
       this.audio.unlock();
+      // typing in a field (the city search, the name, the chat): the keys are the text's
+      const target = e.target as HTMLElement | null;
+      if (target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement || target?.isContentEditable) return;
       // M-map only while driving — intro camera stays put
       if (e.code === 'KeyM' && !e.repeat && !this.driving) {
         e.preventDefault();
         return;
       }
-      if (!this.driving || this.paused || e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
+      if (!this.driving || this.paused) return;
       if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'ShiftLeft', 'ShiftRight', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyR', 'Tab', 'KeyM', 'KeyJ', 'KeyE'].includes(e.code)) e.preventDefault();
       if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'ShiftLeft', 'ShiftRight', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) this.keys.add(e.code);
       if (e.code === 'KeyR') this.resetCamera();
