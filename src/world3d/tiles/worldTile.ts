@@ -13,6 +13,7 @@ import { buildGround, clipHalf, groundTransferables, type GroundData } from './g
 type Pt = [number, number];
 import { latFromMercator, tileCorner, tileSpan, type TileId } from '../mercator.ts';
 import { buildVegetation, vegetationTransferables, type VegetationData } from './vegetationTile.ts';
+import { planStreets } from './streetscape.ts';
 import { roadStyle } from './roadStyle.ts';
 import { streetFurniture } from './furniture.ts';
 import type { MapFeature } from '../../game/WaterCollisionController.ts';
@@ -1553,13 +1554,48 @@ function railTracks(builder: RoadBuilder, layer: VectorTile['layers'][string], k
   }
 }
 
-function roadMesh(vt: VectorTile, span: number, grid: number, at: Surfaces, bridges: number[], pitchLines: number[] = []): MeshData {
+/** how far either side of a hedge's line its lawn reaches (m), and a hedge section's half length */
+const LAWN_HALF = 1.05, HEDGE_HALF = 3.6;
+
+/**
+ * The lawn under hedges: a green strip under each section that has another next to it
+ * (a run of hedge stands in a planted verge; a lone bush just stands on the ground).
+ * Segments as x0, z0, x1, z1 in tile units.
+ */
+function hedgeLawns(plants: { x: number; z: number; species: string; yaw: number }[], toMerc: number): number[] {
+  const hedges = plants.filter((p) => p.species === 'hedge');
+  const cell = 8 * toMerc, reach = 7.5 * toMerc;
+  const cells = new Map<string, typeof hedges>();
+  for (const h of hedges) {
+    const key = Math.floor(h.x / cell) + ',' + Math.floor(h.z / cell);
+    const list = cells.get(key);
+    if (list) list.push(h); else cells.set(key, [h]);
+  }
+  const out: number[] = [];
+  for (const h of hedges) {
+    const cx = Math.floor(h.x / cell), cz = Math.floor(h.z / cell);
+    let paired = false;
+    for (let a = -1; a <= 1 && !paired; a++) for (let b = -1; b <= 1 && !paired; b++) {
+      for (const o of cells.get((cx + a) + ',' + (cz + b)) ?? []) if (o !== h && Math.hypot(o.x - h.x, o.z - h.z) < reach) { paired = true; break; }
+    }
+    if (!paired) continue;
+    // +X of the hedge model lies along the street: (cos yaw, -sin yaw) in tile x/z
+    const dx = Math.cos(h.yaw) * HEDGE_HALF * toMerc, dz = -Math.sin(h.yaw) * HEDGE_HALF * toMerc;
+    out.push(h.x - dx, h.z - dz, h.x + dx, h.z + dz);
+  }
+  return out;
+}
+
+function roadMesh(vt: VectorTile, span: number, grid: number, at: Surfaces, bridges: number[], pitchLines: number[] = [], lawns: number[] = []): MeshData {
   const towerSpots = new Set<string>();
   const { driveAt, groundAt: bedAt } = at;
   const builder = new RoadBuilder(driveAt, span / grid, grid);
   // white pitch markings, painted on the ground under the roads' ribbons
   const chalk = hex('#f4f4ee');
   for (let i = 0; i < pitchLines.length; i += 5) builder.segment(pitchLines[i], pitchLines[i + 1], pitchLines[i + 2], pitchLines[i + 3], 0.06 * at.toMerc, 0.04, chalk);
+  // the lawn under hedges, under the roads (a ribbon over the ground, below every road)
+  const lawn = hex('#a9cf92');
+  for (let i = 0; i < lawns.length; i += 4) builder.segment(lawns[i], lawns[i + 1], lawns[i + 2], lawns[i + 3], LAWN_HALF * at.toMerc, 0.03, lawn);
   const layer = vt.layers.transportation;
   if (layer) {
     const k = span / layer.extent;
@@ -1881,7 +1917,17 @@ export function buildWorldTile(buffer: ArrayBuffer, tile: TileId, options: World
   const bridgeList: number[] = [];
   // statues, fountains, bus shelters, pitch lines and goals
   const furniture = streetFurniture(vt, span, metersScale);
-  const roads = roadMesh(vt, span, options.grid, { driveAt, groundAt, waterAt, toMerc: 1 / metersScale }, bridgeList, furniture.lines);
+  const features: Record<string, GeoFeature[]> = {};
+  for (const name of GAMEPLAY_LAYERS) {
+    const layer = vt.layers[name];
+    const list: GeoFeature[] = [];
+    if (layer) for (let i = 0; i < layer.length; i++) list.push(layer.feature(i).toGeoJSON(tile.x, tile.y, tile.z) as unknown as GeoFeature);
+    features[name] = list;
+  }
+  // the planted streets, once: the trees and hedges for the vegetation, and the strip of
+  // lawn a hedge stands on for the road mesh
+  const streets = planStreets(corner, span, metersScale, features as unknown as Record<string, MapFeature[]>);
+  const roads = roadMesh(vt, span, options.grid, { driveAt, groundAt, waterAt, toMerc: 1 / metersScale }, bridgeList, furniture.lines, hedgeLawns(streets.plants, 1 / metersScale));
   // streams sit on the water surface — following the carved bed made torn blue ribbons
   const streamAt = (x: number, z: number) => {
     const g = groundAt(x, z);
@@ -1893,13 +1939,6 @@ export function buildWorldTile(buffer: ArrayBuffer, tile: TileId, options: World
   // on a bridge / causeway the surface is the deck
   const surfaceAt = (x: number, z: number) => Math.max(groundAt(x, z), bridgeDeck(bridges, x, z) ?? -Infinity);
 
-  const features: Record<string, GeoFeature[]> = {};
-  for (const name of GAMEPLAY_LAYERS) {
-    const layer = vt.layers[name];
-    const list: GeoFeature[] = [];
-    if (layer) for (let i = 0; i < layer.length; i++) list.push(layer.feature(i).toGeoJSON(tile.x, tile.y, tile.z) as unknown as GeoFeature);
-    features[name] = list;
-  }
   return {
     tile,
     corner,
@@ -1927,7 +1966,7 @@ export function buildWorldTile(buffer: ArrayBuffer, tile: TileId, options: World
         return foot < deck + 1.2 && top > underside;
       },
     }),
-    vegetation: buildVegetation(corner, span, metersScale, features as unknown as Record<string, MapFeature[]>, surfaceAt, furniture),
+    vegetation: buildVegetation(corner, span, metersScale, features as unknown as Record<string, MapFeature[]>, surfaceAt, furniture, streets),
     features,
     layers: Object.keys(vt.layers),
     raw: buffer,

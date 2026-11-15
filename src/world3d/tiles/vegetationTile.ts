@@ -202,6 +202,8 @@ export function buildVegetation(
   features: Record<string, MapFeature[]>,
   groundAt: (x: number, z: number) => number,
   furniture: Furniture = { monuments: [], fountains: [], shelters: [], goals: [], lines: [] },
+  /** the planted streets, when the caller has them already */
+  planned?: ReturnType<typeof planStreets>,
 ): VegetationData {
   const toMerc = 1 / metersScale;
   const center: [number, number] = [lngFromMercator(corner[0] + span / 2), latFromMercator(corner[1] - span / 2)];
@@ -268,7 +270,7 @@ export function buildVegetation(
   }
 
   // Planted streets: one species per street from the preset's urban list.
-  const streets = planStreets(corner, span, metersScale, features);
+  const streets = planned ?? planStreets(corner, span, metersScale, features);
   const slot = { plane: 0, jacaranda: 1, pine: 2, cypress: 3 } as const;
   for (const p of streets.plants) {
     if (p.species === 'hedge') {

@@ -2,7 +2,7 @@ import { PostFx } from './postFx.ts';
 import * as THREE from 'three';
 import { MapCamera, latFrom01, lngFrom01, mercatorPerMeter, mercatorX01, mercatorY01 } from './camera.ts';
 import { WorldTiles, defaultWorldOptions } from './WorldTiles.ts';
-import { baseUniforms, facadeMask, type BaseUniforms } from './materials.ts';
+import { baseUniforms, facadeMask, setGroundDetailOrigin, setGroundLook, type BaseUniforms, type GroundLook } from './materials.ts';
 import type { GeoFeature } from '../tiles/worldTile.ts';
 import { seasonWeights, snowCover, worldTime, type SimpleLitUniforms } from './simpleLit.ts';
 import { computeLighting, timeFor, TIME_MODES, type Lighting, type TimeMode } from './lighting.ts';
@@ -811,6 +811,12 @@ export class ThreeMap {
     this.uniforms.uFireCount.value = count;
   }
 
+  /** The ground textures: realistic, stylized or none (plain colours). */
+  setGroundLook(look: GroundLook) {
+    setGroundLook(look, Math.min(4, this.renderer.capabilities.getMaxAnisotropy()), () => this.triggerRepaint());
+    this.triggerRepaint();
+  }
+
   /** Tone mapping + bloom over the frame (off on low quality). */
   setPostFx(on: boolean) {
     if (this.postFx.enabled === on) return;
@@ -886,6 +892,8 @@ export class ThreeMap {
     this.origin = { x01, y01, lat };
     const perMeter = mercatorPerMeter(lat);
     this.world.setOrigin(x01, y01, 1 / perMeter);
+    // the ground texture stays on the world, not on the moving origin
+    setGroundDetailOrigin(x01 / perMeter, y01 / perMeter);
     // scene (x east, y up, z south; meters) → mercator 0..1 (z = altitude in mercator units)
     this.sceneToMercator.set(
       perMeter, 0, 0, x01,

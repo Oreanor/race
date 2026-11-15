@@ -15,6 +15,61 @@ export { facadeMask, farBuildingMaterial } from './facadeMaterial.ts';
 
 // Shaders of the base world (ground, roads, water). Facade lives in facadeMaterial.ts.
 
+/** the ground textures on offer (public/textures/ground-*.png, scripts/ground-textures.py) */
+export type GroundLook = 'realistic' | 'stylized' | 'off';
+
+/** one tiling repeat of the detail map (m) */
+const DETAIL_REPEAT = 2.6;
+
+/**
+ * The ground's detail map, shared by the ground, land-use and road shaders: R grass,
+ * G sand, B earth, A asphalt — each a grain centred on 0.5. The colour stays the
+ * surface's own; only the pattern comes from here. `uDetailShift` keeps the pattern
+ * fixed to the world when the scene origin moves (vWorld is around that origin).
+ */
+export const groundDetail = {
+  uDetail: { value: new THREE.DataTexture(new Uint8Array([128, 128, 128, 128]), 1, 1) as THREE.Texture },
+  uDetailOn: { value: 0 },
+  uDetailShift: { value: new THREE.Vector2() },
+};
+groundDetail.uDetail.value.needsUpdate = true;
+
+/** Where the scene origin sits in metres, folded into the repeat (call on every rebase). */
+export function setGroundDetailOrigin(eastM: number, southM: number) {
+  const period = DETAIL_REPEAT * 64;
+  groundDetail.uDetailShift.value.set(((eastM % period) + period) % period, ((southM % period) + period) % period);
+}
+
+const looks = new Map<GroundLook, THREE.Texture>();
+/** Switch the ground textures (loaded once per look; 'off' leaves the plain colours). */
+export function setGroundLook(look: GroundLook, anisotropy = 4, onLoad?: () => void) {
+  if (look === 'off') { groundDetail.uDetailOn.value = 0; return; }
+  let texture = looks.get(look);
+  if (!texture) {
+    texture = new THREE.TextureLoader().load(`/textures/ground-${look}.png`, () => onLoad?.());
+    texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+    texture.colorSpace = THREE.NoColorSpace; // data, not colour
+    texture.anisotropy = anisotropy;
+    texture.premultiplyAlpha = false;
+    looks.set(look, texture);
+  }
+  groundDetail.uDetail.value = texture;
+  groundDetail.uDetailOn.value = 1;
+}
+
+/** GLSL: the four grains at a world point, -0.5 … 0.5, faded out with distance (no shimmer far off). */
+const DETAIL = /* glsl */ `
+  uniform sampler2D uDetail;
+  uniform float uDetailOn;
+  uniform vec2 uDetailShift;
+  vec4 groundGrain(vec3 world) {
+    if (uDetailOn < 0.5) return vec4(0.0);
+    float near = 1.0 - smoothstep(140.0, 420.0, distance(world, uCameraPos));
+    if (near <= 0.0) return vec4(0.0);
+    return (texture2D(uDetail, (world.xz + uDetailShift) / ${DETAIL_REPEAT.toFixed(1)}) - 0.5) * near;
+  }
+`;
+
 /** Terrain tile with its ground raster. One material per tile (own texture). */
 const GROUND_VERTEX = /* glsl */ `
   uniform float uExag;
@@ -35,6 +90,7 @@ const GROUND_VERTEX = /* glsl */ `
 const GROUND_FRAGMENT = /* glsl */ `
   ${COMMON}
   ${LAMP_FRAGMENT}
+  ${DETAIL}
   uniform vec4 uSeason;
   uniform float uSnow;
   varying vec3 vColor;
@@ -50,7 +106,14 @@ const GROUND_FRAGMENT = /* glsl */ `
     vec3 snow = vec3(0.91, 0.935, 0.96) * mix(0.93, 1.03, mottled);
     // grass is never one flat green: drier and lusher patches, a finer mottle
     float tone = 0.86 + 0.2 * vnoise(vWorld.xz * 0.05) + 0.08 * vnoise(vWorld.xz * 0.4);
-    vec3 albedo = mix(vColor * mix(1.0, tone, greenish), snow, uSeason.w * uSnow * greenish);
+    // the texture's grain on grass, sand and earth only: warm (yellow-brown) ground is sand
+    // when light, earth when dark; grey city ground and concrete keep their plain colour
+    float warm = smoothstep(0.05, 0.08, vColor.g - vColor.b) * step(vColor.g, vColor.r + 0.02) * (1.0 - greenish);
+    float lum = dot(vColor, vec3(0.2126, 0.7152, 0.0722));
+    float sandy = warm * smoothstep(0.7, 0.74, lum);
+    vec4 grain = groundGrain(vWorld);
+    float detail = 1.0 + grain.r * greenish * 0.6 + grain.g * sandy * 0.5 + grain.b * (warm - sandy) * 0.55;
+    vec3 albedo = mix(vColor * mix(1.0, tone, greenish) * detail, snow, uSeason.w * uSnow * greenish);
     // sky light plus sunlight on the slope (hillshade comes from the real sun)
     vec3 light = uAmbient * 0.9 + uSunColor * 0.55 * max(dot(n, uSun), 0.0) * cloudSun(vWorld) + (headlight(vWorld, n) + lampLight()) * 0.91;
     gl_FragColor = linearToOutputTexel(vec4(fogged(toLinear(albedo) * light / 0.91, vWorld), 1.0));
@@ -60,7 +123,7 @@ const GROUND_FRAGMENT = /* glsl */ `
 /** Terrain: vertex-coloured ground (bank colour next to water). */
 export function groundMaterial(u: BaseUniforms) {
   return new THREE.ShaderMaterial({
-    uniforms: { ...u, ...lampMapUniform(), uSeason: seasonWeights, uSnow: snowCover },
+    uniforms: { ...u, ...lampMapUniform(), uSeason: seasonWeights, uSnow: snowCover, ...groundDetail },
     vertexShader: GROUND_VERTEX, fragmentShader: GROUND_FRAGMENT,
   });
 }
@@ -71,7 +134,7 @@ export function groundMaterial(u: BaseUniforms) {
  */
 export function overlayMaterial(u: BaseUniforms, layer: number) {
   return new THREE.ShaderMaterial({
-    uniforms: { ...u, ...lampMapUniform(), uSeason: seasonWeights, uSnow: snowCover },
+    uniforms: { ...u, ...lampMapUniform(), uSeason: seasonWeights, uSnow: snowCover, ...groundDetail },
     vertexShader: GROUND_VERTEX, fragmentShader: GROUND_FRAGMENT,
     // overlapping land-use polygons lie in the same plane: no depth writes, so they never
     // fight each other; the draw order (renderOrder per layer) decides which is on top
@@ -180,7 +243,7 @@ export function waterMaterial(u: BaseUniforms) {
 
 export function roadMaterial(u: BaseUniforms) {
   return new THREE.ShaderMaterial({
-    uniforms: { ...u, ...lampMapUniform() },
+    uniforms: { ...u, ...lampMapUniform(), ...groundDetail },
     vertexShader: /* glsl */ `
       uniform float uExag;
       attribute float aGround;
@@ -199,6 +262,7 @@ export function roadMaterial(u: BaseUniforms) {
     fragmentShader: /* glsl */ `
       ${COMMON}
       ${LAMP_FRAGMENT}
+      ${DETAIL}
       varying vec3 vColor;
       varying vec3 vWorld;
       void main() {
@@ -206,7 +270,16 @@ export function roadMaterial(u: BaseUniforms) {
         // asphalt is worn unevenly: broad lighter and darker stretches, and darker patched spots
         float wear = 0.94 + 0.1 * vnoise(vWorld.xz * 0.08) + 0.04 * vnoise(vWorld.xz * 0.9);
         float mend = smoothstep(0.66, 0.74, vnoise(vWorld.xz * 0.21 + 13.0)) * 0.08;
-        gl_FragColor = linearToOutputTexel(vec4(fogged(toLinear(vColor) * (wear - mend) * light, vWorld), 1.0));
+        // asphalt grain on the carriageway (grey, not light): kerbs, pavements, paint and
+        // concrete keep their plain colour
+        float spread = max(vColor.r, max(vColor.g, vColor.b)) - min(vColor.r, min(vColor.g, vColor.b));
+        float lum = dot(vColor, vec3(0.2126, 0.7152, 0.0722));
+        float asphalt = (1.0 - smoothstep(0.05, 0.08, spread)) * (1.0 - smoothstep(0.7, 0.735, lum));
+        // and grass on the lawn strips under hedges
+        float green = smoothstep(0.02, 0.1, vColor.g - max(vColor.r, vColor.b));
+        vec4 grain = groundGrain(vWorld);
+        float detail = 1.0 + grain.a * asphalt * 0.7 + grain.r * green * 0.6;
+        gl_FragColor = linearToOutputTexel(vec4(fogged(toLinear(vColor) * (wear - mend) * detail * light, vWorld), 1.0));
       }
     `,
     polygonOffset: true,

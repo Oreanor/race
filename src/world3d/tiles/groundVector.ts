@@ -64,6 +64,8 @@ export function landColor(layer: string, cls: string, sub: string): string | nul
   if (/school|hospital|university|college|kindergarten|library/.test(cls)) return '#f8dfda';
   if (/commercial|retail|industrial|railway|military/.test(cls)) return '#e3e0d8';
   if (/stadium|track/.test(cls)) return '#d5d3c9';
+  // bare earth: building sites, waste ground, tips and pits (the ground shader gives it soil)
+  if (/construction|brownfield|greenfield|landfill|quarry/.test(cls)) return '#b8a07e';
   return null;
 }
 

@@ -368,11 +368,10 @@ const BUILD: Record<FloraModel, () => THREE.BufferGeometry> = {
     t.blob(v(0.1, 1.12, -0.2), 0.6, 0.42, 0.6, c, 0.2);
     return t.build();
   },
-  // a clipped street hedge section: a row of leafy lumps along +X (the road), 7.2 m long
-  // with the next (6.8 m on) overlapping, trimmed flat on top and a little at the sides —
-  // a sheared hedge, still foliage, not a painted block. 80 triangles.
+  // a clipped street hedge section: one long rounded loaf of foliage along +X (the road),
+  // 7.2 m with the next (6.8 m on) overlapping (see hedgeShape). ~82 triangles.
   hedge() {
-    return hedgeShape(4);
+    return hedgeShape(true);
   },
   // rosemary, sagebrush, saltbush: twiggy, open, small grey tufts
   bush_dry() {
@@ -423,32 +422,62 @@ const BUILD: Record<FloraModel, () => THREE.BufferGeometry> = {
 };
 
 /**
- * A hedge section of `lumps` lumps over 7.2 m, cut by the shears: level at the top,
- * back at the sides. One lump makes the far stand-in (20 triangles), the same length.
+ * A clipped hedge section: one long loaf of foliage along +X (the road), 7.2 m with the
+ * next (6.8 m on) overlapping — rounded shoulders over slightly bellied sides, a gently
+ * uneven top, smooth soft shading (no facets, no separate lumps). `segments` along it,
+ * `fine` for the near shape; the far stand-in is the same loaf, coarse.
  */
-function hedgeShape(lumps: number) {
-  const t = new Shape(157);
-  const c = v(0, 0.5, 0);
-  const L = 7.2, step = L / lumps;
-  for (let i = 0; i < lumps; i++) {
-    const x = -L / 2 + step * (i + 0.5) + (lumps > 1 ? t.j() * 0.12 : 0);
-    t.blob(v(x, 0.56 + t.j() * 0.04, t.j() * 0.05), step * 0.62 + t.j() * 0.05, 0.62, 0.5 + t.j() * 0.04, c, lumps > 1 ? 0.26 : 0.12);
+function hedgeShape(fine: boolean) {
+  const L = 7.2, segments = fine ? 6 : 1;
+  // cross-section (z across, y up), left foot over the top to the right foot
+  const profile: [number, number][] = fine
+    ? [[-0.44, 0], [-0.49, 0.48], [-0.41, 0.9], [0, 1.1], [0.41, 0.9], [0.49, 0.48], [0.44, 0]]
+    : [[-0.46, 0], [-0.45, 0.85], [0, 1.08], [0.45, 0.85], [0.46, 0]];
+  const t = new Shape(163);
+  const positions: number[] = [], normals: number[] = [], shade: number[] = [], index: number[] = [];
+  const centre = 0.45;
+  const rings = segments + 1;
+  for (let r = 0; r < rings; r++) {
+    const x = -L / 2 + (L * r) / segments;
+    const end = r === 0 || r === segments;
+    // ends drawn in a little (a trimmed, rounded end); inner rings bulge and dip a little
+    const k = end ? 0.86 : 1 + t.j() * 0.06, lift = end ? 0.92 : 1 + t.j() * 0.04;
+    for (const [z, y] of profile) {
+      const py = y * lift, pz = z * k;
+      positions.push(x, py, pz);
+      const n = new THREE.Vector3(0, py - centre, pz).normalize();
+      if (y === 0) n.set(0, -0.2, Math.sign(z)).normalize();
+      normals.push(n.x, n.y, n.z);
+      shade.push(py / 1.1);
+    }
   }
-  const g = t.build();
-  const TOP = 1.02, SIDE = 0.46;
-  const pos = g.getAttribute('position'), nrm = g.getAttribute('normal'), shade = g.getAttribute('aShade');
-  const n = new THREE.Vector3();
-  for (let i = 0; i < pos.count; i++) {
-    let y = pos.getY(i), z = pos.getZ(i);
-    n.set(nrm.getX(i), nrm.getY(i), nrm.getZ(i));
-    if (y > TOP) { y = TOP; n.lerp(UP, 0.7); }
-    if (Math.abs(z) > SIDE) { z = Math.sign(z) * SIDE; n.lerp(v(0, 0, Math.sign(z)), 0.5); }
-    y = Math.max(0, y);
-    pos.setY(i, y); pos.setZ(i, z);
-    n.normalize();
-    nrm.setXYZ(i, n.x, n.y, n.z);
-    shade.setX(i, y / TOP);
+  const P = profile.length;
+  for (let r = 0; r < segments; r++) {
+    for (let i = 0; i + 1 < P; i++) {
+      const a = r * P + i, b = r * P + i + 1, c = (r + 1) * P + i + 1, d = (r + 1) * P + i;
+      // outward: the profile runs left → over the top → right, the rings run +X
+      index.push(a, b, c, a, c, d);
+    }
   }
+  // end caps: the end ring as a fan, each facing out along X
+  for (const [r, dir] of [[0, -1], [segments, 1]] as const) {
+    const base = positions.length / 3;
+    for (let i = 0; i < P; i++) {
+      positions.push(positions[(r * P + i) * 3], positions[(r * P + i) * 3 + 1], positions[(r * P + i) * 3 + 2]);
+      normals.push(dir * 0.8, 0.45, 0);
+      shade.push(positions[(r * P + i) * 3 + 1] / 1.1);
+    }
+    for (let i = 1; i + 1 < P; i++) {
+      if (dir > 0) index.push(base, base + i, base + i + 1);
+      else index.push(base, base + i + 1, base + i);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+  g.setAttribute('aPart', new THREE.Float32BufferAttribute(new Array(positions.length / 3).fill(1), 1));
+  g.setAttribute('aShade', new THREE.Float32BufferAttribute(shade, 1));
+  g.setIndex(index);
   g.computeBoundingSphere();
   return g;
 }
@@ -466,7 +495,7 @@ export function createFloraModels(): THREE.BufferGeometry[] {
 export function createFarFloraModels(near: THREE.BufferGeometry[]): THREE.BufferGeometry[] {
   return near.map((geometry, index) => {
     // far off a hedge is one long sheared lump: the same length, height and colour
-    if (FLORA_MODELS[index] === 'hedge') return hedgeShape(1);
+    if (FLORA_MODELS[index] === 'hedge') return hedgeShape(false);
     const position = geometry.getAttribute('position'), part = geometry.getAttribute('aPart');
     const leaf = new THREE.Box3(), bark = new THREE.Box3();
     const p = new THREE.Vector3();
