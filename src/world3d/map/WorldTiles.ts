@@ -64,7 +64,9 @@ export const defaultWorldOptions: WorldTilesOptions = {
   unloadRadius: 3600,
   // POIs (stations, hubs) are known before they come out of the fog
   featureRadius: 2400,
-  maxInFlight: 6,
+  // a job is mostly waiting on the network (the tile, its eight neighbours, the relief:
+  // ~1 s) and only briefly building (~0.3 s): twice the jobs keep the workers busy
+  maxInFlight: 12,
   // base GPU uploads/frame; bursts higher when a backlog would hitch the first lap
   uploadsPerFrame: 3,
   // ~25-35 m terrain cells: relief still reads; every road ribbon is cut along these
