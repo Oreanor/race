@@ -944,7 +944,8 @@ export default function Game() {
         </div>
       )}
       {booted && (
-        <div className="clock-hud" aria-hidden="true">
+        // on the intro and the M map only: on the road it would hide the view
+        <div className={`clock-hud${driving && !mapViewOpen ? ' is-hidden' : ''}`} aria-hidden="true">
           <span className="local-place" ref={placeRef} />
           <span className="local-district" ref={districtRef} hidden />
           <span className="local-clock" ref={clockRef} />
