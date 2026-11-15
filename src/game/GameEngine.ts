@@ -373,7 +373,8 @@ export class GameEngine {
     dragAt?: number;
   } | null = null;
   /** our police car's lights (F) */
-  private beaconsOn = true;
+  /** our police lights (F): off by default */
+  private beaconsOn = false;
   /** towed by a train on the cable: the car's own driving is off, the rope pulls it */
   private towed = false;
   private towSpeed = 0;

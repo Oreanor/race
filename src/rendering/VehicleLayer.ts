@@ -482,6 +482,7 @@ export function vehicleLayer(
           disposeObject(mine.body);
           mine.body.clear();
           mine.body.add(model);
+          applyBeaconPower(model, false); // other players' police lights stay off
           if (typeof model.userData.width === 'number') shadowScale(mine.shadow, spec.car.length, model.userData.width);
           map?.triggerRepaint();
         }).catch((error: unknown) => console.error(`Failed to load player car ${spec.car.path}`, error));
@@ -560,6 +561,9 @@ export function vehicleLayer(
     }
   }
 
+  /** the police a chase sent after us (GameEngine.sendPolice ids) */
+  const chasingUs = (id: string) => id.startsWith('police-');
+
   function addTarget(spec: TargetVehicle) {
     {
       const root = new THREE.Group();
@@ -585,6 +589,8 @@ export function vehicleLayer(
         disposeObject(root);
         root.clear();
         root.add(model);
+        // police lights only on the police after us (the chase); every other car's are off
+        applyBeaconPower(root, chasingUs(spec.id));
         if (target.destroyed) {
           target.charMats = captureCharMats(root);
           if (target.deathPhase === 'wreck') applyChar(target, 1, 0);
@@ -1017,8 +1023,8 @@ export function vehicleLayer(
   };
   /** our body's width (m): the tyre tracks sit under its wheels */
   let carWidth = 1.9;
-  /** our police lights (F): the glow shown or hidden, the lamps lit or dull */
-  let beaconsOn = true;
+  /** our police lights (F): off until switched on — lights mean a chase, not a paint job */
+  let beaconsOn = false;
   function applyBeacons() {
     applyBeaconPower(root, beaconsOn);
     map?.triggerRepaint();

@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { loadCar, disposeObject } from '@/rendering/VehicleLayer';
+import { applyBeaconPower } from '@/rendering/vehicleLayer/carModel';
 import type { Car } from '@/config/vehicle.config';
 
 /** Car preview: drag to spin; idle auto-turn resumes after a pause. */
@@ -54,6 +55,7 @@ export default function CarPreview({ car }: { car: Car }) {
     };
     loadCar(car).then((m) => {
       if (disposed) { disposeObject(m); return; }
+      applyBeaconPower(m, false); // police lights off in the showroom too
       const pivot = new THREE.Group();
       pivot.add(m);
       model = pivot;
