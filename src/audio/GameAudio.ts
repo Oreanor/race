@@ -177,9 +177,9 @@ export class GameAudio {
     // "h" in it, chopped by a tremolo that runs faster as the car slides faster
     const ta = ctx.createOscillator(); ta.type = 'triangle'; ta.frequency.value = 330;
     const tb = ctx.createOscillator(); tb.type = 'triangle'; tb.frequency.value = 495;
-    const vowel = ctx.createBiquadFilter(); vowel.type = 'bandpass'; vowel.frequency.value = 420; vowel.Q.value = 1.4;
+    const vowel = ctx.createBiquadFilter(); vowel.type = 'bandpass'; vowel.frequency.value = 850; vowel.Q.value = 1.4;
     const breathSrc = this.loop(this.noise!);
-    const breathFilter = ctx.createBiquadFilter(); breathFilter.type = 'lowpass'; breathFilter.frequency.value = 900;
+    const breathFilter = ctx.createBiquadFilter(); breathFilter.type = 'lowpass'; breathFilter.frequency.value = 1600;
     const breath = ctx.createGain(); breath.gain.value = 0.35;
     const chop = ctx.createGain(); chop.gain.value = 0.5;
     const lfo = ctx.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = 10;
@@ -254,8 +254,8 @@ export class GameAudio {
     // "uh-uh-uh": 7 … 15 pulses a second as the slide gets faster, the hum a touch higher
     const pulse = 7 + clamp(Math.abs(f.speed) / 25) * 8;
     this.tyres.lfo.frequency.setTargetAtTime(pulse, t, 0.05);
-    this.tyres.a.frequency.setTargetAtTime(300 + squeal * 80, t, 0.05);
-    this.tyres.b.frequency.setTargetAtTime((300 + squeal * 80) * 1.5, t, 0.05);
+    this.tyres.a.frequency.setTargetAtTime(600 + squeal * 160, t, 0.05);
+    this.tyres.b.frequency.setTargetAtTime((600 + squeal * 160) * 1.5, t, 0.05);
     this.tyres.gain.gain.setTargetAtTime(squeal * 0.3 * on, t, 0.04);
     // ---- wind with speed
     const rush = clamp(Math.abs(f.speed) / 70);
