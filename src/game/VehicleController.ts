@@ -67,7 +67,7 @@ export { metersBetween, METERS_PER_DEGREE } from './meters.ts';
 
 /** handbrake spin: from this speed (m/s) the tail comes round */
 const SPIN_MIN_SPEED = 5;
-/** handbrake spin: top yaw rate (rad/s) — a half turn in about 1.2 s */
+/** handbrake spin: top yaw rate (rad/s) — a half turn in about 1.2 s, and on round while it slides */
 const SPIN_YAW_MAX = 2.6;
 /** handbrake spin: how much of the yaw goes into the slide (the rest turns the travel direction) */
 const SPIN_SLIDE = 0.85;
@@ -126,11 +126,13 @@ export class VehicleController {
     const pace=this.speed/scale;
     if(spinning){
       // yaw quicker the faster we slide; the travel direction lags (it turns only a little)
-      // facing fully backwards: stop there and slide on tail-first (a 180, not a 360)
-      const room=Math.PI-Math.abs(this.slip)*(Math.sign(this.slip)===steer?1:-1);
-      const yaw=steer*Math.min(Math.min(SPIN_YAW_MAX, 1.1+pace*0.05)*dt, Math.max(0, room)/SPIN_SLIDE);
+      // it keeps coming round as long as the speed lasts (a 180, a 360 …); the slide angle
+      // is kept in −π…π so the travel direction (heading − slip) stays the same
+      const yaw=steer*Math.min(SPIN_YAW_MAX, 1.1+pace*0.05)*dt;
       this.heading+=yaw;
-      this.slip=Math.max(-Math.PI, Math.min(Math.PI, this.slip+yaw*SPIN_SLIDE));
+      this.slip+=yaw*SPIN_SLIDE;
+      if(this.slip>Math.PI) this.slip-=Math.PI*2;
+      else if(this.slip<-Math.PI) this.slip+=Math.PI*2;
     } else {
       if(Math.abs(this.slip)>Math.PI/2){
         // let go facing backwards: roll on tail-first the way we were sliding
