@@ -1414,9 +1414,122 @@ function roadMesh(vt: VectorTile, span: number, grid: number, at: Surfaces, brid
         builder.groundAt = driveAt;
       }
     }
+    laneMarkings(builder, layer, ways, plan, k, toMerc, driveAt);
     zebraCrossings(builder, layer, ways, k, toMerc, driveAt);
   }
   return meshOf(builder);
+}
+
+/**
+ * Painted lines on the asphalt, by the kind of road: a motorway a dashed lane line and solid
+ * edges, a trunk or primary road a solid centre line and edges, secondary / tertiary a dashed
+ * centre line, a minor street a sparse thin dash. Lanes, tracks, ramps, paths and bridge decks
+ * stay plain; the paint stops 7 m short of a junction so lines do not cross it. Flat strips
+ * in the one road mesh — no extra draw calls.
+ */
+function laneMarkings(builder: RoadBuilder, layer: VectorTile['layers'][string], ways: Map<number, Way>, plan: Map<number, Planned>, k: number, toMerc: number, driveAt: (x: number, z: number) => number) {
+  // junctions: points where three or more arms of drivable roads meet
+  const arms = new Map<string, number>();
+  for (const [i, way] of ways) {
+    if (way.foot) continue;
+    const p = layer.feature(i).properties;
+    if (!roadStyle(String(p.class ?? ''), String(p.subclass ?? ''), Number(p.ramp) === 1)) continue;
+    for (const line of way.lines) {
+      for (let n = 0; n < line.length; n++) {
+        const key = line[n].x + ',' + line[n].y;
+        arms.set(key, (arms.get(key) ?? 0) + (n === 0 || n === line.length - 1 ? 1 : 2));
+      }
+    }
+  }
+  // junctions in a grid of clearR cells: a lookup touches the 3×3 cells round the point
+  const clearR = 7 * toMerc;
+  const cells = new Map<string, { x: number; z: number }[]>();
+  for (const [key, count] of arms) {
+    if (count < 3) continue;
+    const [x, y] = key.split(',').map(Number);
+    const j = { x: x * k, z: y * k };
+    const cell = `${Math.floor(j.x / clearR)},${Math.floor(j.z / clearR)}`;
+    const list = cells.get(cell);
+    if (list) list.push(j); else cells.set(cell, [j]);
+  }
+  const nearJunction = (x: number, z: number) => {
+    const cx = Math.floor(x / clearR), cz = Math.floor(z / clearR);
+    for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
+      for (const j of cells.get(`${cx + dx},${cz + dz}`) ?? []) if (Math.hypot(j.x - x, j.z - z) < clearR) return true;
+    }
+    return false;
+  };
+  const paint = hex('#e8e6dc');
+  builder.groundAt = driveAt;
+  for (const [i, way] of ways) {
+    if (way.foot || way.bridge) continue;
+    const p = layer.feature(i).properties;
+    const cls = String(p.class ?? '');
+    if (Number(p.ramp) === 1 || p.brunnel === 'tunnel') continue;
+    const style = roadStyle(cls, String(p.subclass ?? ''), false);
+    if (!style) continue;
+    // centre: [half width, dash, gap] (gap 0 = solid); edges solid on the big roads
+    const motorway = cls === 'motorway';
+    const main = cls === 'trunk' || cls === 'primary';
+    const centre: [number, number, number] | null = motorway ? [0.07, 3, 6]
+      : main ? [0.07, 1, 0]
+        : cls === 'secondary' || cls === 'tertiary' ? [0.065, 3, 5]
+          : cls === 'minor' ? [0.05, 2, 6] : null;
+    if (!centre) continue;
+    const edge = motorway || main ? style.width / 2 - 0.35 : null;
+    const y = style.lift + 0.05;
+    for (const line of plan.get(i)?.rest ?? way.lines) {
+      let phase = 0; // metres into the dash pattern, carried along the line
+      for (let j = 0; j + 1 < line.length; j++) {
+        const c = clipSegment(line[j].x, line[j].y, line[j + 1].x, line[j + 1].y, layer.extent);
+        if (!c) continue;
+        const [ax, az, bx, bz] = [c[0] * k, c[1] * k, c[2] * k, c[3] * k];
+        const len = Math.hypot(bx - ax, bz - az);
+        if (len < 1e-9) continue;
+        const ux = (bx - ax) / len, uz = (bz - az) / len, nx = -uz, nz = ux;
+        const lenM = len / toMerc;
+        // the paint in pieces of ≤ 3 m so each can stop short of a junction
+        const [half, dash, gap] = centre;
+        const period = dash + gap;
+        let s = 0;
+        while (s < lenM) {
+          let e: number, on: boolean;
+          if (!gap) { e = Math.min(lenM, s + 3); on = true; }
+          else {
+            const at = (phase + s) % period;
+            on = at < dash;
+            e = Math.min(lenM, s + (on ? dash - at : period - at));
+          }
+          if (on && e - s > 0.2) {
+            const sx = ax + ux * s * toMerc, sz = az + uz * s * toMerc;
+            const ex = ax + ux * e * toMerc, ez = az + uz * e * toMerc;
+            if (!nearJunction((sx + ex) / 2, (sz + ez) / 2)) {
+              builder.segment(sx, sz, ex, ez, half * toMerc, y, paint);
+              if (edge) {
+                for (const side of [-1, 1]) {
+                  const ox = nx * edge * side * toMerc, oz = nz * edge * side * toMerc;
+                  // edges are solid: under a dashed centre line they fill the gaps too
+                  builder.segment(sx + ox, sz + oz, ex + ox, ez + oz, 0.06 * toMerc, y, paint);
+                }
+              }
+            }
+          }
+          if (!on && edge && e - s > 0.2) {
+            const sx = ax + ux * s * toMerc, sz = az + uz * s * toMerc;
+            const ex = ax + ux * e * toMerc, ez = az + uz * e * toMerc;
+            if (!nearJunction((sx + ex) / 2, (sz + ez) / 2)) {
+              for (const side of [-1, 1]) {
+                const ox = nx * edge * side * toMerc, oz = nz * edge * side * toMerc;
+                builder.segment(sx + ox, sz + oz, ex + ox, ez + oz, 0.06 * toMerc, y, paint);
+              }
+            }
+          }
+          s = e;
+        }
+        phase = (phase + lenM) % (period || 1);
+      }
+    }
+  }
 }
 
 /** streets that get zebra crossings at their junctions (not motorways, not lanes and tracks) */
