@@ -918,9 +918,10 @@ export class WorldTiles {
     const [cx, cy] = live.data.corner;
     const x = mercatorX(lng) - cx, z = cy - mercatorY(lat);
     const u = x / span, v = z / span;
-    // The visible terrain is the support. A separate smoothed dry-bank grid
-    // could sit metres above it and create invisible floors and floating roads.
-    const visual = gridGround(live.data.ground.heights, this.options.grid, u, v);
+    // The visible terrain is the support: driveHeights is the ground as drawn, the shore
+    // cells' level bank included (the plain grid there dives to the river bed, and the
+    // car sank into the sand within a cell of the water).
+    const visual = gridGround(live.data.ground.driveHeights, this.options.grid, u, v);
     const water = gridWaterLevel(live.data.ground.waterLevel, this.options.grid, u, v);
     const ground = driveTerrainHeight(visual, water);
     // The exact triangles drawn as pavement, including their shoulder widths and

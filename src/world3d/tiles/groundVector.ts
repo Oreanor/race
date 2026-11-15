@@ -26,9 +26,9 @@ export type GroundData = {
   /** grid heights after carving the water beds, (grid+1)² — visual mesh / roads */
   heights: Float32Array;
   /**
-   * Drive surface (grid+1)²: shore dips stay visual-only. Wet / bank cells are
-   * lifted to the dry-bank height the shore mesh draws, so the car doesn't sink
-   * into the tan strip.
+   * Drive surface (grid+1)²: the ground exactly as drawn — dry points as they are, a wet
+   * point at its dry neighbours' height (not under the water), as the shore cells draw
+   * the bank. On a beach the car stands on the sand it sees.
    */
   driveHeights: Float32Array;
   /** water surface level per grid point (NaN on dry land) */
@@ -352,8 +352,6 @@ export function buildGround(vt: VectorTile, span: number, grid: number, dem: Flo
     waters.forEach((w, k) => { if (!w.pool) low.set(root(k), Math.min(low.get(root(k)) ?? Infinity, w.level)); });
     waters.forEach((w, k) => { if (!w.pool) w.level = low.get(root(k))!; });
   }
-  // DEM before beds/banks are carved — restore this for driving on the shore
-  const land = Float32Array.from(H);
   const wet = new Uint8Array(n * n);
   const waterLevel = new Float32Array(n * n).fill(Number.NaN);
   for (const w of waters) {
@@ -433,13 +431,12 @@ export function buildGround(vt: VectorTile, span: number, grid: number, dem: Flo
 
   flattenUnderRoads(H, grid, onRoad, wet, 3);
 
-  // drive grid: same as the shore mesh's dry bank (not the dipped visual H)
+  // The ground the car drives on is exactly the ground drawn: dry points as they are
+  // (banks dipped as drawn), and a wet point at the height of the dry ones round it, never
+  // under the water — the bank runs level to the shoreline, as the shore cells draw it.
+  // (The bed itself is under water: the car's water test, not this grid, deals with it.)
+  // The terrain mesh below uses this same array for its shore cells, so they cannot differ.
   const driveHeights = Float32Array.from(H);
-  const CLEAR = 0.35;
-  for (let k = 0; k < n * n; k++) {
-    if (!Number.isFinite(waterLevel[k])) continue;
-    if (!wet[k]) driveHeights[k] = Math.max(H[k], land[k], waterLevel[k] + CLEAR);
-  }
   for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
     const k = j * n + i;
     if (!wet[k]) continue;
@@ -447,11 +444,11 @@ export function buildGround(vt: VectorTile, span: number, grid: number, dem: Flo
     for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
       const ii = i + di, jj = j + dj;
       if (ii < 0 || jj < 0 || ii >= n || jj >= n || wet[jj * n + ii]) continue;
-      sum += driveHeights[jj * n + ii];
+      sum += H[jj * n + ii];
       count++;
     }
     const surface = Number.isFinite(waterLevel[k]) ? waterLevel[k] : H[k];
-    driveHeights[k] = count ? Math.max(sum / count, surface + CLEAR) : surface + CLEAR;
+    driveHeights[k] = count ? Math.max(sum / count, surface) : surface;
   }
 
   if (heightsOnly) return { heights: H, driveHeights, waterLevel };
@@ -595,20 +592,7 @@ export function buildGround(vt: VectorTile, span: number, grid: number, dem: Flo
     // the land side sees no river bed: a wet grid point stands at the height of the dry
     // ones round it, so the bank runs level to the shoreline and drops there in one wall
     // (not a slope into the water first, and a second step at the shore)
-    const dry = Float32Array.from(H);
-    for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
-      const k = j * n + i;
-      if (!wet[k]) continue;
-      let sum = 0, count = 0;
-      for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
-        const ii = i + di, jj = j + dj;
-        if (ii < 0 || jj < 0 || ii >= n || jj >= n || wet[jj * n + ii]) continue;
-        sum += H[jj * n + ii];
-        count++;
-      }
-      const surface = Number.isFinite(waterLevel[k]) ? waterLevel[k] : H[k];
-      dry[k] = count ? Math.max(sum / count, surface) : surface;
-    }
+    const dry = driveHeights;
     const dryPlane = (p: Pt, ci: number, cj: number, upper: boolean) => {
       const u = p[0] / cs - ci, v = p[1] / cs - cj;
       const ha = dry[cj * n + ci], hb = dry[cj * n + ci + 1], hc = dry[(cj + 1) * n + ci], hd = dry[(cj + 1) * n + ci + 1];

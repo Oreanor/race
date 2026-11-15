@@ -248,6 +248,28 @@ test('footprints index every building with closed ring ranges', () => {
   assert.ok(pitched > 0, 'some houses carry a pitched roof profile');
 });
 
+test('the car drives the ground as drawn: on the bank, never under the river', async () => {
+  const { buildWorldTile } = await import('../src/world3d/tiles/worldTile.ts');
+  const raw = pbf.buffer.slice(pbf.byteOffset, pbf.byteOffset + pbf.byteLength) as ArrayBuffer;
+  const dem = new Float32Array(256 * 256);
+  for (let j = 0; j < 256; j++) for (let i = 0; i < 256; i++) dem[j * 256 + i] = 40 + i * 0.05 + Math.sin(j * 0.3) * 2;
+  const g = buildWorldTile(raw, tile, { dem, chunks: 4, inset: 0, grid: 32, region: 'Portugal' }).ground;
+  let lifted = 0;
+  for (let k = 0; k < g.heights.length; k++) {
+    // never below the ground drawn there (the car sank into the sand)
+    assert.ok(g.driveHeights[k] >= g.heights[k] - 1e-4, `below the drawn ground at ${k}`);
+    // dry land away from water: exactly the drawn height
+    if (Number.isNaN(g.waterLevel[k])) assert.equal(g.driveHeights[k], g.heights[k]);
+    // a river bed point: level with the bank, at or over the water
+    if (g.driveHeights[k] > g.heights[k] + 0.5) {
+      lifted++;
+      assert.ok(g.driveHeights[k] >= g.waterLevel[k] - 1e-4, `bed point ${k} left under the water`);
+    }
+  }
+  const wetPoints = lifted;
+  assert.ok(wetPoints > 10, `the Coimbra tile has its river (${wetPoints} bed points lifted to the bank)`);
+});
+
 test('world tile: terrain, roads facing up, gameplay features and raw data kept', async () => {
   const { buildWorldTile, GAMEPLAY_LAYERS } = await import('../src/world3d/tiles/worldTile.ts');
   const raw = pbf.buffer.slice(pbf.byteOffset, pbf.byteOffset + pbf.byteLength) as ArrayBuffer;
