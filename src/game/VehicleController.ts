@@ -71,8 +71,8 @@ const SPIN_MIN_SPEED = 5;
 const SPIN_YAW_MAX = 2.6;
 /** handbrake spin: how much of the yaw goes into the slide (the rest turns the travel direction) */
 const SPIN_SLIDE = 0.85;
-/** handbrake: share of its force that slows the car going straight (~6.6 m/s², the brake is 12) */
-const HANDBRAKE_SCRUB = 0.3;
+/** handbrake: share of its force that slows the car going straight (~12 m/s², as hard as the brake) */
+const HANDBRAKE_SCRUB = 0.55;
 /** handbrake spin: share of its force that slows the car while sliding sideways */
 const SPIN_SCRUB = 0.3;
 
@@ -97,7 +97,7 @@ export class VehicleController {
     // while the car keeps sliding the way it was going
     const spinning=handbrake && steerKey!==0 && this.speed/scale>SPIN_MIN_SPEED;
     // sliding sideways scrubs speed less hard than locked wheels going straight
-    // only the rear wheels lock: it slows gently and mostly breaks the tail loose (the brake stops)
+    // straight: stops as hard as the brake; steering: the tail breaks loose and it slides (soft)
     if(handbrake && Math.abs(this.speed) > 0.1) this.speed-=Math.sign(this.speed)*handbrakeForce*(spinning?SPIN_SCRUB:HANDBRAKE_SCRUB)*dt;
     if(handbrake && Math.abs(this.speed) <= 0.1 && !gas) this.speed=0;
     if(this.launch>0){
