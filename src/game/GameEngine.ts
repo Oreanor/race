@@ -712,6 +712,7 @@ export class GameEngine {
       this.combatLayer.onFireWindowOut = (left) => this.onFireWindowOut(left);
       this.combatLayer.onShot = (kind) => this.audio.shot(kind);
       this.combatLayer.onTargetDestroyed = (id, position) => {
+        this.audio.explosion(position);
         this.dropCoins(position);
         if (this.heist && id.startsWith('police')) {
           this.heist.reinforce += 2;
@@ -1870,6 +1871,7 @@ export class GameEngine {
    */
   private wreck() {
     this.combatLayer?.explodePlayer();
+    this.audio.explosion(null);
     this.releaseHaul(null);
     const failed = this.failMission();
     this.playerHp = this.playerMaxHp;
@@ -2715,6 +2717,7 @@ export class GameEngine {
     for (const [id, pickup] of this.pickups) if (pickup.kind === 'cash') this.pickups.delete(id);
     this.combatLayer?.setPickups(this.pickupVisuals());
     this.combatLayer?.explodePlayer();
+    this.audio.explosion(null);
     const drop = this.nearestCivic();
     const kind = drop?.kind ?? null;
     const fine = (kind ? ARREST_COSTS[kind] : ARREST_FINE) + stolen;
@@ -5577,6 +5580,8 @@ export class GameEngine {
       this.modelPitch = settle(this.modelPitch, clamp(Math.atan2(this.climb, Math.max(4, speed)) * 0.8));
       this.modelRoll = settle(this.modelRoll, 0);
       if (this.altitude <= ground) {
+        // touchdown: a thump as hard as the fall (climb is the vertical speed, m/s)
+        if (this.climb < -2) this.audio.land(-this.climb / 14);
         this.altitude = ground;
         this.airborne = false;
         this.climb = 0;

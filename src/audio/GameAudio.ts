@@ -78,7 +78,7 @@ export class GameAudio {
   private brown: AudioBuffer | null = null;
   // our car
   private engine: { a: OscillatorNode; b: OscillatorNode; drive: WaveShaperNode; filter: BiquadFilterNode; gain: GainNode } | null = null;
-  private tyres: { filter: BiquadFilterNode; gain: GainNode } | null = null;
+  private tyres: { a: OscillatorNode; b: OscillatorNode; filter: BiquadFilterNode; gain: GainNode; hiss: GainNode } | null = null;
   private wind: { filter: BiquadFilterNode; gain: GainNode } | null = null;
   private town: { gain: GainNode } | null = null;
   private horn: GainNode | null = null;
@@ -89,6 +89,8 @@ export class GameAudio {
   private boosting = false;
   /** our car's loudness from where the camera is (one-shots and the horn use it too) */
   private nearness = 1;
+  /** the last frame (for placing one-shots out in the world) */
+  private heard: AudioFrame | null = null;
   private hidden = false;
 
   constructor() {
@@ -171,12 +173,19 @@ export class GameAudio {
     a.connect(mix); b.connect(mix); mix.connect(drive); drive.connect(filter); filter.connect(gain); gain.connect(out);
     a.start(); b.start();
     this.engine = { a, b, drive, filter, gain };
-    // tyres: band-passed noise
-    const tyreSrc = this.loop(this.noise!);
-    const tf = ctx.createBiquadFilter(); tf.type = 'bandpass'; tf.frequency.value = 1900; tf.Q.value = 6;
+    // tyres: a squeal is a tone (rubber stick-slip), two detuned voices through a band-pass,
+    // with only a breath of noise under it
+    const ta = ctx.createOscillator(); ta.type = 'triangle';
+    const tb = ctx.createOscillator(); tb.type = 'sawtooth';
+    const tf = ctx.createBiquadFilter(); tf.type = 'bandpass'; tf.frequency.value = 1400; tf.Q.value = 2.5;
     const tg = ctx.createGain(); tg.gain.value = 0;
-    tyreSrc.connect(tf); tf.connect(tg); tg.connect(out);
-    this.tyres = { filter: tf, gain: tg };
+    ta.connect(tf); tb.connect(tf); tf.connect(tg); tg.connect(out);
+    ta.start(); tb.start();
+    const tyreNoise = this.loop(this.noise!);
+    const th = ctx.createBiquadFilter(); th.type = 'highpass'; th.frequency.value = 3000;
+    const hiss = ctx.createGain(); hiss.gain.value = 0;
+    tyreNoise.connect(th); th.connect(hiss); hiss.connect(out);
+    this.tyres = { a: ta, b: tb, filter: tf, gain: tg, hiss };
     // wind: low noise rising with speed
     const windSrc = this.loop(this.noise!);
     const wf = ctx.createBiquadFilter(); wf.type = 'lowpass'; wf.frequency.value = 500;
@@ -216,6 +225,7 @@ export class GameAudio {
     const smooth = 0.06;
     // our own car and the air around it fade as the camera rises (the M map: barely a murmur)
     const near = clamp(22 / Math.max(1, f.ear), 0.06, 1) ** 0.7;
+    this.heard = f;
     const on = (f.active ? 1 : 0) * near;
     this.nearness = near;
     // ---- our engine: pitch from revs; a bigger engine sits lower (a small four buzzes,
@@ -236,8 +246,14 @@ export class GameAudio {
     // a hard corner at speed whimpers (the everyday drift tops out at ~0.42 rad), a real
     // slide or a spin screams; the pitch wavers a little like rubber does
     const squeal = clamp((Math.abs(f.slip) - 0.34) * 2.2) * clamp(Math.abs(f.speed) / 10);
-    this.tyres.gain.gain.setTargetAtTime(squeal * 0.75 * on, t, 0.04);
-    this.tyres.filter.frequency.setTargetAtTime(1700 + squeal * 600 + Math.sin(t * 23) * 90, t, 0.03);
+    // the pitch wavers fast and climbs a little with the slide
+    const wobble = Math.sin(t * 31) * 35 + Math.sin(t * 13.7) * 25;
+    const squealPitch = 880 + squeal * 260 + wobble;
+    this.tyres.a.frequency.setTargetAtTime(squealPitch, t, 0.02);
+    this.tyres.b.frequency.setTargetAtTime(squealPitch * 1.5 + 7, t, 0.02);
+    this.tyres.filter.frequency.setTargetAtTime(squealPitch * 1.3, t, 0.03);
+    this.tyres.gain.gain.setTargetAtTime(squeal * 0.075 * on, t, 0.035);
+    this.tyres.hiss.gain.setTargetAtTime(squeal * 0.04 * on, t, 0.05);
     // ---- wind with speed
     const rush = clamp(Math.abs(f.speed) / 70);
     this.wind.gain.gain.setTargetAtTime(rush * rush * 0.1 * on, t, 0.3);
@@ -479,6 +495,34 @@ export class GameAudio {
     const s = clamp(strength, 0.1, 1), k = this.nearness;
     this.burst({ type: 'lowpass', from: 1800 + s * 2500, to: 200, level: (0.12 + s * 0.4) * k, length: 0.25 + s * 0.35 });
     this.tone(70 + s * 30, 0, 0.18 + s * 0.2, (0.15 + s * 0.3) * k, 'sine', 40);
+  }
+
+  /** the car comes down on the ground after a jump or a drop; `strength` 0 … 1 */
+  land(strength: number) {
+    const s = clamp(strength, 0.15, 1), k = this.nearness;
+    this.tone(62, 0, 0.22 + s * 0.25, (0.25 + s * 0.45) * k, 'sine', 32);
+    this.burst({ type: 'lowpass', from: 700 + s * 600, to: 90, level: (0.12 + s * 0.3) * k, length: 0.2 + s * 0.25 });
+    // a rattle of the body
+    this.burst({ type: 'bandpass', from: 1800, to: 900, q: 2, level: 0.05 * s * k, length: 0.12 });
+  }
+
+  /** a car blows up — `at` out in the world (null: ours, right here) */
+  explosion(at: Position | null) {
+    let gain = this.nearness, pan = 0;
+    if (at && this.heard) {
+      const s = spatial(this.heard, { id: 'boom', position: at, velocity: [0, 0] }, 2500);
+      gain = Math.min(1, s.gain * 1.6);
+      pan = s.pan;
+    }
+    if (gain < 0.01) return;
+    // the crack, the long roar, the deep boom under it
+    this.burstAt(0, { type: 'lowpass', from: 6000, to: 1200, level: 0.5 * gain, length: 0.12 }, pan);
+    this.burstAt(0, { type: 'lowpass', from: 2200, to: 70, level: 0.55 * gain, length: 1.8, attack: 0.01 }, pan);
+    this.tone(55, 0, 1.1, 0.5 * gain, 'sine', 24);
+    // debris patter
+    for (let i = 0; i < 5; i++) {
+      this.burstAt(0.35 + Math.random() * 0.9, { type: 'bandpass', from: 2500, to: 1200, q: 3, level: (0.05 + Math.random() * 0.06) * gain, length: 0.06 }, pan);
+    }
   }
 
   /** into the water */
