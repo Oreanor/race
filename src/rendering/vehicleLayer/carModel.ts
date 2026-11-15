@@ -170,24 +170,38 @@ function polish(object: THREE.Object3D) {
   });
 }
 
+/**
+ * Every car model is decoded once per page: the GLB fetch is cached by the browser, but
+ * GLTFLoader re-parses the file each call, and parked traffic re-asks for a spot as it
+ * streams past the car — without this that is a fresh 1 MB parse every few seconds.
+ */
+const models = new Map<string, Promise<THREE.Group>>();
+
 export async function loadCar(car: Car) {
-  const gltf = await new GLTFLoader().loadAsync(car.path);
-  const model = gltf.scene;
-  const box = new THREE.Box3().setFromObject(model);
-  const size = box.getSize(new THREE.Vector3());
-  const center = box.getCenter(new THREE.Vector3());
-  const scale = car.length / Math.max(size.x, size.z);
-  model.position.set(-center.x, -box.min.y, -center.z);
-  const group = new THREE.Group();
-  group.add(model);
-  group.scale.setScalar(scale);
-  const root = new THREE.Group();
-  root.add(group);
-  root.rotation.y = car.yaw;
-  polish(root);
-  addBeacons(root, car, size, scale);
-  root.userData.width = Math.min(size.x, size.z) * scale;
-  return root;
+  let built = models.get(car.path);
+  if (!built) {
+    built = new GLTFLoader().loadAsync(car.path).then((gltf) => {
+      const model = gltf.scene;
+      const box = new THREE.Box3().setFromObject(model);
+      const size = box.getSize(new THREE.Vector3());
+      const center = box.getCenter(new THREE.Vector3());
+      const scale = car.length / Math.max(size.x, size.z);
+      model.position.set(-center.x, -box.min.y, -center.z);
+      const group = new THREE.Group();
+      group.add(model);
+      group.scale.setScalar(scale);
+      const root = new THREE.Group();
+      root.add(group);
+      root.rotation.y = car.yaw;
+      polish(root);
+      addBeacons(root, car, size, scale);
+      root.userData.width = Math.min(size.x, size.z) * scale;
+      return root;
+    });
+    models.set(car.path, built);
+  }
+  // every caller disposes its copy on removal — clone, never hand out the cached root itself
+  return (await built).clone(true);
 }
 
 export function fallbackCar(color: string) {
