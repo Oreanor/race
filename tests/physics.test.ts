@@ -113,6 +113,23 @@ test('a car overlapping a building can move out but not deeper into it',()=>{
   assert.equal(collision.blocked([12/meters,0],[5/meters,0],Math.PI/2),false);
   assert.equal(collision.blocked([12/meters,0],[25/meters,0],Math.PI/2),true);
 });
+test('sliding along a wall at 300 km/h never sinks into the house',()=>{
+  const collision=new BuildingCollisions();
+  const meters=111319.49;
+  // a long wall 3 m east of the road, the car drifting into it at 6° and 83 m/s (1.4 m a step)
+  const wall: [number,number][][]=[[[3/meters,-10/meters],[20/meters,-10/meters],[20/meters,600/meters],[3/meters,600/meters],[3/meters,-10/meters]]];
+  collision.update([0,0],[wall]);
+  const heading=6*Math.PI/180, step=83/60;
+  let at:[number,number]=[0,0];
+  let worst=0;
+  for(let i=0;i<300;i++){
+    const next:[number,number]=[at[0]+Math.sin(heading)*step/meters,at[1]+Math.cos(heading)*step/meters];
+    at=collision.resolve(at,next,heading).position as [number,number];
+    const c=collision as unknown as {local(p:[number,number]):[number,number];depth(p:[number,number],h:number,s:number,a:number):number};
+    worst=Math.max(worst,c.depth(c.local(at),heading,1,-Infinity));
+  }
+  assert.ok(worst<=0.26,`sank ${worst.toFixed(2)} m into the wall`);
+});
 test('vehicle width keeps wheels clear of a wall while driving alongside it',()=>{
   const collision=new BuildingCollisions();
   const meters=111319.49;
