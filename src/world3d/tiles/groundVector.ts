@@ -40,7 +40,7 @@ export type GroundData = {
 };
 export type GroundHeights = Pick<GroundData, 'heights' | 'driveHeights' | 'waterLevel'>;
 
-const BACKGROUND = '#dcdad3';
+const BACKGROUND = '#b1d59b';
 const BANK = '#cdc4ad';
 const GREEN = '#b1d59b';
 const WOOD = '#7fb27f';
