@@ -166,7 +166,7 @@ export class GameAudio {
     const b = ctx.createOscillator(); b.type = 'square';
     const mix = ctx.createGain(); mix.gain.value = 0.5;
     const drive = ctx.createWaveShaper(); drive.curve = this.curve(1.5);
-    const filter = ctx.createBiquadFilter(); filter.type = 'lowpass'; filter.Q.value = 2;
+    const filter = ctx.createBiquadFilter(); filter.type = 'lowpass'; filter.Q.value = 0.9;
     const gain = ctx.createGain(); gain.gain.value = 0;
     a.connect(mix); b.connect(mix); mix.connect(drive); drive.connect(filter); filter.connect(gain); gain.connect(out);
     a.start(); b.start();
@@ -218,13 +218,13 @@ export class GameAudio {
     const near = clamp(22 / Math.max(1, f.ear), 0.06, 1) ** 0.7;
     const on = (f.active ? 1 : 0) * near;
     this.nearness = near;
-    // ---- our engine: firing rate from revs and the number of cylinders
-    const cylinders = f.litres < 1.9 ? 4 : f.litres < 3.2 ? 6 : 8;
-    const rpm = 800 + clamp(f.revs) * 6400;
-    const fire = rpm / 60 * cylinders / 2;
-    this.engine.a.frequency.setTargetAtTime(fire, t, 0.03);
-    this.engine.b.frequency.setTargetAtTime(fire / 2, t, 0.03);
-    this.engine.filter.frequency.setTargetAtTime(300 + clamp(f.revs) * 2600 + (f.boost ? 900 : 0), t, smooth);
+    // ---- our engine: pitch from revs; a bigger engine sits lower (a small four buzzes,
+    // a V8 rumbles) — the tone stays under ~280 Hz and the filter keeps it warm
+    const size = f.litres < 1.9 ? 1.2 : f.litres < 3.2 ? 1 : f.litres < 5.5 ? 0.82 : 0.7;
+    const pitch = (48 + clamp(f.revs) * 185) * size;
+    this.engine.a.frequency.setTargetAtTime(pitch, t, 0.03);
+    this.engine.b.frequency.setTargetAtTime(pitch / 2, t, 0.03);
+    this.engine.filter.frequency.setTargetAtTime(220 + clamp(f.revs) * 1300 + (f.boost ? 450 : 0), t, smooth);
     // the boost growls: a harder clip (swapped only when it changes)
     if (f.boost !== this.boosting) {
       this.boosting = f.boost;
