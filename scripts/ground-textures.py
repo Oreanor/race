@@ -6,7 +6,7 @@
 #
 #   python scripts/ground-textures.py      (Pillow only)
 #
-# sets: 1 = realistic, 2 = stylized (docs/green1.png, sand1.png, earth1.png, asphalt1.png …)
+# source: docs/green1.png, sand1.png, earth1.png, asphalt1.png
 
 from pathlib import Path
 from statistics import fmean, pstdev
@@ -14,7 +14,7 @@ from PIL import Image, ImageFilter, ImageChops
 
 ROOT = Path(__file__).resolve().parent.parent
 SIZE = 512
-SETS = {'realistic': '1', 'stylized': '2'}
+SETS = {'realistic': '1'}
 CHANNELS = ['green', 'sand', 'earth', 'asphalt']
 
 

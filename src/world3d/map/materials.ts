@@ -15,9 +15,6 @@ export { facadeMask, farBuildingMaterial } from './facadeMaterial.ts';
 
 // Shaders of the base world (ground, roads, water). Facade lives in facadeMaterial.ts.
 
-/** the ground textures on offer (public/textures/ground-*.png, scripts/ground-textures.py) */
-export type GroundLook = 'realistic' | 'stylized' | 'off';
-
 /** one tiling repeat of the detail map (m) */
 const DETAIL_REPEAT = 9;
 
@@ -40,20 +37,17 @@ export function setGroundDetailOrigin(eastM: number, southM: number) {
   groundDetail.uDetailShift.value.set(((eastM % period) + period) % period, ((southM % period) + period) % period);
 }
 
-const looks = new Map<GroundLook, THREE.Texture>();
-/** Switch the ground textures (loaded once per look; 'off' leaves the plain colours). */
-export function setGroundLook(look: GroundLook, anisotropy = 4, onLoad?: () => void) {
-  if (look === 'off') { groundDetail.uDetailOn.value = 0; return; }
-  let texture = looks.get(look);
-  if (!texture) {
-    texture = new THREE.TextureLoader().load(`/textures/ground-${look}.png`, () => onLoad?.());
-    texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-    texture.colorSpace = THREE.NoColorSpace; // data, not colour
-    texture.anisotropy = anisotropy;
-    texture.premultiplyAlpha = false;
-    looks.set(look, texture);
+let groundTexture: THREE.Texture | null = null;
+/** Put the ground texture on (public/textures/ground-realistic.png, scripts/ground-textures.py); loaded once. */
+export function useGroundTexture(anisotropy = 4, onLoad?: () => void) {
+  if (!groundTexture) {
+    groundTexture = new THREE.TextureLoader().load('/textures/ground-realistic.png', () => onLoad?.());
+    groundTexture.wrapS = groundTexture.wrapT = THREE.RepeatWrapping;
+    groundTexture.colorSpace = THREE.NoColorSpace; // data, not colour
+    groundTexture.anisotropy = anisotropy;
+    groundTexture.premultiplyAlpha = false;
   }
-  groundDetail.uDetail.value = texture;
+  groundDetail.uDetail.value = groundTexture;
   groundDetail.uDetailOn.value = 1;
 }
 

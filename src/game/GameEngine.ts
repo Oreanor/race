@@ -1116,7 +1116,7 @@ export class GameEngine {
     this.map.setPixelRatio(ratio);
     // the filmic pass costs a copy and three small passes: off on low quality
     this.map.setPostFx(settings.quality !== 'low');
-    this.map.setGroundLook(settings.ground ?? 'realistic');
+    this.map.useGroundTexture();
     if (terrainChanged) { this.collisionDirty = true; this.syncedAt = null; }
   }
 

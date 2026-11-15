@@ -388,7 +388,6 @@ export default function Game() {
       skin: 'original',
       theme,
       volume: 0.5,
-      ground: 'realistic',
     };
     // the rest of the settings: remembered as a whole, each value checked against its default
     try {
@@ -401,7 +400,6 @@ export default function Game() {
           if (key === 'theme' || key === 'terrain' || value == null || typeof value !== typeof defaults[key]) continue;
           if (key === 'skin' && !(SKINS as readonly string[]).includes(value as string)) continue;
           if (key === 'quality' && !['low', 'medium', 'high'].includes(value as string)) continue;
-          if (key === 'ground' && !['realistic', 'stylized', 'off'].includes(value as string)) continue;
           if (key === 'sensitivity' && !(Number.isFinite(value) && (value as number) >= 0.3 && (value as number) <= 2)) continue;
           if (key === 'volume' && !(Number.isFinite(value) && (value as number) >= 0 && (value as number) <= 1)) continue;
           out[key] = value;
@@ -842,7 +840,6 @@ export default function Game() {
       </div>
       <label>{t('settings.skin')}<select value={settings.skin} onChange={e => update({ skin: e.target.value as Settings['skin'] })}>{SKINS.map(id => <option key={id} value={id}>{t(`skin.${id}`)}</option>)}</select></label>
       <label>{t('settings.quality')}<select value={settings.quality} onChange={e => update({ quality: e.target.value as Settings['quality'] })}><option value="low">{t('quality.low')}</option><option value="medium">{t('quality.medium')}</option><option value="high">{t('quality.high')}</option></select></label>
-      <label>{t('settings.ground')}<select value={settings.ground} onChange={e => update({ ground: e.target.value as Settings['ground'] })}><option value="realistic">{t('ground.realistic')}</option><option value="stylized">{t('ground.stylized')}</option><option value="off">{t('ground.off')}</option></select></label>
       <label className="toggle">{t('settings.follow')}<input type="checkbox" checked={settings.follow} onChange={e => update({ follow: e.target.checked })} /></label>
       <label>{t('settings.sensitivity')}<input type="range" min="0.3" max="2" step="0.1" value={settings.sensitivity} onChange={e => update({ sensitivity: Number(e.target.value) })} /></label>
       <label>{settings.volume > 0 ? t('settings.volume') : t('settings.volumeOff')}<input type="range" min="0" max="1" step="0.05" value={settings.volume} onChange={e => update({ volume: Number(e.target.value) })} /></label>

@@ -2,7 +2,7 @@ import { PostFx } from './postFx.ts';
 import * as THREE from 'three';
 import { MapCamera, latFrom01, lngFrom01, mercatorPerMeter, mercatorX01, mercatorY01 } from './camera.ts';
 import { WorldTiles, defaultWorldOptions } from './WorldTiles.ts';
-import { baseUniforms, facadeMask, setGroundDetailOrigin, setGroundLook, type BaseUniforms, type GroundLook } from './materials.ts';
+import { baseUniforms, facadeMask, setGroundDetailOrigin, useGroundTexture, type BaseUniforms } from './materials.ts';
 import type { GeoFeature } from '../tiles/worldTile.ts';
 import { seasonWeights, snowCover, worldTime, type SimpleLitUniforms } from './simpleLit.ts';
 import { computeLighting, timeFor, TIME_MODES, type Lighting, type TimeMode } from './lighting.ts';
@@ -819,9 +819,9 @@ export class ThreeMap {
     this.uniforms.uFireCount.value = count;
   }
 
-  /** The ground textures: realistic, stylized or none (plain colours). */
-  setGroundLook(look: GroundLook) {
-    setGroundLook(look, Math.min(4, this.renderer.capabilities.getMaxAnisotropy()), () => this.triggerRepaint());
+  /** The ground texture on (grass, sand, earth, asphalt grain). */
+  useGroundTexture() {
+    useGroundTexture(Math.min(4, this.renderer.capabilities.getMaxAnisotropy()), () => this.triggerRepaint());
     this.triggerRepaint();
   }
 
