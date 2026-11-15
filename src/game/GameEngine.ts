@@ -157,6 +157,8 @@ const wrapDegrees = (deg: number) => ((deg + 180) % 360 + 360) % 360 - 180;
 const CAMERA_STORE = 'race.camera';
 /** a racer looks this far (m) straight toward the flag: clear of houses and water → it cuts across */
 const RACE_LOOK_M = 400;
+/** an event left farther away than this (m) moves to a new spot near us */
+const MISSION_STALE_M = 3500;
 /** hit a wall faster than this (km/h) and coins jump out of it (3; 5 from 150, 10 from 200) */
 const WALL_COIN_KMH = 100;
 /** …when the wall takes at least this much of the speed (m/s, ~40 km/h): a hit, not a graze */
@@ -1583,7 +1585,30 @@ export class GameEngine {
     this.syncMissionVisuals(true);
   }
 
+  /**
+   * Events we drove away from don't stay behind: every 5 s, one lying farther
+   * than MISSION_STALE_M moves to a fresh spot 0.6–2.5 km round us (same kind, new number).
+   */
+  private relocateStaleMissions() {
+    const now = performance.now();
+    if (now < this.staleCheckAt) return;
+    this.staleCheckAt = now + 5000;
+    const here = this.vehicle.position as [number, number];
+    const index = this.missions.findIndex((mission) => mission.id !== this.activeMissionId && metersBetween(mission.position, here) > MISSION_STALE_M);
+    if (index < 0) return;
+    const stale = this.missions[index];
+    const others = this.missions.filter((_, i) => i !== index);
+    const seed = Math.round(here[0] * 1e5) ^ Math.round(here[1] * 1e5) ^ (now | 0);
+    const saved = this.missions;
+    this.missions = others;
+    const fresh = this.createMission(stale.kind, here, this.vehicle.heading, seed ^ 0x5bd1, { min: 600, max: 2500 });
+    this.missions = saved;
+    this.missions[index] = fresh;
+    this.syncMissionVisuals(true);
+  }
+
   private refillMissions() {
+    this.relocateStaleMissions();
     const slots = this.missionKinds().length;
     if (this.mode !== 'roam' || this.missions.length >= slots) return;
     if (!this.missionRespawnAt || performance.now() < this.missionRespawnAt) return;
@@ -2319,6 +2344,7 @@ export class GameEngine {
 
   private dropSerial = 0;
   private wallCoinsAt = 0;
+  private staleCheckAt = 0;
   private trainCoinAt = 0;
 
   /** Train cars near `around` as flat capsules in metres east/north of it, with their ground height. */
