@@ -190,6 +190,7 @@ export default function Game() {
   const speedRef = useRef<HTMLElement>(null);
   const fpsRef = useRef<HTMLElement>(null);
   const placeRef = useRef<HTMLElement>(null);
+  const districtRef = useRef<HTMLElement>(null);
   const clockRef = useRef<HTMLElement>(null);
   const compassRef = useRef<HTMLDivElement>(null);
   // compass: the rose turns against the camera so N always points north
@@ -440,6 +441,10 @@ export default function Game() {
             const { at, timeZone } = game.map.localTime();
             locality.update(game.vehicle.position);
             if (placeRef.current) placeRef.current.textContent = locality.name ?? place.name;
+            if (districtRef.current) {
+              districtRef.current.textContent = locality.district ?? '';
+              districtRef.current.hidden = !locality.district;
+            }
             if (clockRef.current) clockRef.current.textContent = localClock(at, timeZone);
           }
           // not before the run's purse is in: a booting engine reports 0 coins
@@ -941,6 +946,7 @@ export default function Game() {
       {booted && (
         <div className="clock-hud" aria-hidden="true">
           <span className="local-place" ref={placeRef} />
+          <span className="local-district" ref={districtRef} hidden />
           <span className="local-clock" ref={clockRef} />
         </div>
       )}

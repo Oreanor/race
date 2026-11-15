@@ -5,7 +5,10 @@
 type Address = Partial<Record<'hamlet' | 'isolated_dwelling' | 'village' | 'town' | 'city' | 'municipality' | 'suburb' | 'city_district' | 'quarter' | 'neighbourhood', string>>;
 
 /** ~100 m cells: neighbours share an answer; Nominatim asks for few requests */
-const cache = new Map<string, string | null>();
+const cache = new Map<string, Locality | null>();
+
+/** the settlement, and the district of it we are in (when it has them) */
+type Locality = { name: string; district: string | null };
 const CACHE_MAX = 5000;
 
 export async function GET(request: Request) {
@@ -36,9 +39,12 @@ export async function GET(request: Request) {
     const urban = !!(a.city || a.town || a.city_district || a.suburb || a.quarter || a.neighbourhood);
     const hamlet = urban ? undefined : a.hamlet || a.isolated_dwelling;
     const name = a.village || hamlet || a.town || a.city || a.municipality || null;
+    // the part of it: a quarter or neighbourhood, a suburb, a city's "hamlet", a parish
+    const part = a.neighbourhood || a.quarter || a.suburb || (urban ? a.hamlet || a.isolated_dwelling : undefined) || a.city_district || null;
+    const found: Locality | null = name ? { name, district: part && part !== name ? part : null } : null;
     if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value!);
-    cache.set(key, name);
-    return Response.json(name);
+    cache.set(key, found);
+    return Response.json(found);
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError' && request.signal.aborted) throw error;
     return Response.json(null);

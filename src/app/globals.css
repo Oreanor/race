@@ -499,6 +499,8 @@
 /* clock + date: own plaque, centered top */
 .clock-hud{position:absolute;z-index:12;top:8px;left:50%;transform:translateX(-50%);padding:8px 14px;border-radius:var(--ui-radius-sm);background:var(--ui-bg);color:var(--ui-ink);box-shadow:var(--ui-shadow);pointer-events:none;font-family:var(--ui-font);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);text-align:center;line-height:1.15}
 .clock-hud .local-place{display:block;margin:0;min-width:0;color:inherit;text-shadow:none;font-size:26px;font-weight:750;letter-spacing:.2px;white-space:nowrap}
+.clock-hud .local-district{display:block;margin:0;min-width:0;max-width:60vw;overflow:hidden;text-overflow:ellipsis;color:inherit;text-shadow:none;font-size:13px;font-weight:650;letter-spacing:.2px;white-space:nowrap;opacity:.75}
+.clock-hud .local-district[hidden]{display:none}
 .clock-hud .local-clock{display:block;margin:2px 0 0;min-width:0;color:inherit;text-shadow:none;font-size:13px;font-weight:650;font-variant-numeric:tabular-nums;letter-spacing:.2px;white-space:nowrap;opacity:.85}
 /* FPS + settings gear, top-right */
 .meta-hud{
