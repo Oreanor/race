@@ -78,7 +78,7 @@ export class GameAudio {
   private brown: AudioBuffer | null = null;
   // our car
   private engine: { a: OscillatorNode; b: OscillatorNode; drive: WaveShaperNode; filter: BiquadFilterNode; gain: GainNode } | null = null;
-  private tyres: { a: OscillatorNode; b: OscillatorNode; filter: BiquadFilterNode; gain: GainNode; hiss: GainNode } | null = null;
+  private tyres: { a: OscillatorNode; b: OscillatorNode; lfo: OscillatorNode; gain: GainNode } | null = null;
   private wind: { filter: BiquadFilterNode; gain: GainNode } | null = null;
   private town: { gain: GainNode } | null = null;
   private horn: GainNode | null = null;
@@ -173,19 +173,24 @@ export class GameAudio {
     a.connect(mix); b.connect(mix); mix.connect(drive); drive.connect(filter); filter.connect(gain); gain.connect(out);
     a.start(); b.start();
     this.engine = { a, b, drive, filter, gain };
-    // tyres: a squeal is a tone (rubber stick-slip), two detuned voices through a band-pass,
-    // with only a breath of noise under it
-    const ta = ctx.createOscillator(); ta.type = 'triangle';
-    const tb = ctx.createOscillator(); tb.type = 'sine';
-    const tf = ctx.createBiquadFilter(); tf.type = 'highpass'; tf.frequency.value = 1500; tf.Q.value = 0.7;
+    // tyres scrubbing: a pulsing "uh-uh-uh" — a hum on the vowel "oo" with a breath of
+    // "h" in it, chopped by a tremolo that runs faster as the car slides faster
+    const ta = ctx.createOscillator(); ta.type = 'triangle'; ta.frequency.value = 330;
+    const tb = ctx.createOscillator(); tb.type = 'triangle'; tb.frequency.value = 495;
+    const vowel = ctx.createBiquadFilter(); vowel.type = 'bandpass'; vowel.frequency.value = 420; vowel.Q.value = 1.4;
+    const breathSrc = this.loop(this.noise!);
+    const breathFilter = ctx.createBiquadFilter(); breathFilter.type = 'lowpass'; breathFilter.frequency.value = 900;
+    const breath = ctx.createGain(); breath.gain.value = 0.35;
+    const chop = ctx.createGain(); chop.gain.value = 0.5;
+    const lfo = ctx.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = 10;
+    const depth = ctx.createGain(); depth.gain.value = 0.5;
     const tg = ctx.createGain(); tg.gain.value = 0;
-    ta.connect(tf); tb.connect(tf); tf.connect(tg); tg.connect(out);
-    ta.start(); tb.start();
-    const tyreNoise = this.loop(this.noise!);
-    const th = ctx.createBiquadFilter(); th.type = 'highpass'; th.frequency.value = 3000;
-    const hiss = ctx.createGain(); hiss.gain.value = 0;
-    tyreNoise.connect(th); th.connect(hiss); hiss.connect(out);
-    this.tyres = { a: ta, b: tb, filter: tf, gain: tg, hiss };
+    ta.connect(vowel); tb.connect(vowel); vowel.connect(chop);
+    breathSrc.connect(breathFilter); breathFilter.connect(breath); breath.connect(chop);
+    lfo.connect(depth); depth.connect(chop.gain);
+    chop.connect(tg); tg.connect(out);
+    ta.start(); tb.start(); lfo.start();
+    this.tyres = { a: ta, b: tb, lfo, gain: tg };
     // wind: low noise rising with speed
     const windSrc = this.loop(this.noise!);
     const wf = ctx.createBiquadFilter(); wf.type = 'lowpass'; wf.frequency.value = 500;
@@ -246,14 +251,12 @@ export class GameAudio {
     // a hard corner at speed whimpers (the everyday drift tops out at ~0.42 rad), a real
     // slide or a spin screams; the pitch wavers a little like rubber does
     const squeal = clamp((Math.abs(f.slip) - 0.34) * 2.2) * clamp(Math.abs(f.speed) / 10);
-    // a high thin "eeee": two near-unison tones ~2.4–3.1 kHz beating against each other,
-    // the pitch jittering fast and climbing with the slide
-    const wobble = Math.sin(t * 37) * 45 + Math.sin(t * 17.3) * 30;
-    const squealPitch = 2400 + squeal * 700 + wobble;
-    this.tyres.a.frequency.setTargetAtTime(squealPitch, t, 0.015);
-    this.tyres.b.frequency.setTargetAtTime(squealPitch * 1.012, t, 0.015);
-    this.tyres.gain.gain.setTargetAtTime(squeal * 0.05 * on, t, 0.03);
-    this.tyres.hiss.gain.setTargetAtTime(squeal * 0.04 * on, t, 0.05);
+    // "uh-uh-uh": 7 … 15 pulses a second as the slide gets faster, the hum a touch higher
+    const pulse = 7 + clamp(Math.abs(f.speed) / 25) * 8;
+    this.tyres.lfo.frequency.setTargetAtTime(pulse, t, 0.05);
+    this.tyres.a.frequency.setTargetAtTime(300 + squeal * 80, t, 0.05);
+    this.tyres.b.frequency.setTargetAtTime((300 + squeal * 80) * 1.5, t, 0.05);
+    this.tyres.gain.gain.setTargetAtTime(squeal * 0.3 * on, t, 0.04);
     // ---- wind with speed
     const rush = clamp(Math.abs(f.speed) / 70);
     this.wind.gain.gain.setTargetAtTime(rush * rush * 0.1 * on, t, 0.3);
