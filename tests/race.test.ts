@@ -90,7 +90,7 @@ test('a winding course can be built on the real Coimbra road graph', () => {
   const tile = new VectorTile(new PbfReader(readFileSync(new URL('./fixtures/coimbra-14-7808-6190.pbf', import.meta.url))));
   const network = new TrafficRoadNetwork();
   const roads = tile.layers.transportation;
-  network.addFeatures(Array.from({ length: roads.length }, (_, i) => roads.feature(i).toGeoJSON(7808, 6190, 14)));
+  network.addFeatures(Array.from({ length: roads.length }, (_, i) => roads.feature(i).toGeoJSON(7808, 6190, 14)) as any);
   const plan = [1, 3, 4].map(seed => finishPlan(network.planRace([-8.418, 40.209], 0, seed))).find(Boolean);
   assert.ok(plan);
   verify(plan);
