@@ -5,6 +5,7 @@ import { SKINS } from '@/world3d/buildings/skins';
 import { NetHud, type NetFeed } from './NetHud';
 import ServerStatus from './ServerStatus';
 import { findPlaces } from '@/game/findPlaces';
+import { LocalityWatch } from '@/game/locality';
 import { healthColor } from '@/game/health';
 import { GameEngine } from '@/game/GameEngine';
 import type { BountyOffer, DealerOffer, EventOffer, EventResult, FuelHud, HudParticipant, PlayerCarry, BankOffer, RideOffer, ServiceOffer, Settings, Theme, TravelOffer } from '@/game/offers';
@@ -416,6 +417,8 @@ export default function Game() {
     let clockAt = 0;
     let riseTimer = 0;
     let introTimer = 0;
+    // the town / village under the car, for the HUD (the chosen city until it answers)
+    const locality = new LocalityWatch();
     // the purse this engine starts with (a save or a ticket); handed back if it is torn down unused
     const bootCarry = carryRef.current;
     try {
@@ -435,7 +438,8 @@ export default function Game() {
           if ((placeRef.current || clockRef.current) && now - clockAt > 500 && game) {
             clockAt = now;
             const { at, timeZone } = game.map.localTime();
-            if (placeRef.current) placeRef.current.textContent = place.name;
+            locality.update(game.vehicle.position);
+            if (placeRef.current) placeRef.current.textContent = locality.name ?? place.name;
             if (clockRef.current) clockRef.current.textContent = localClock(at, timeZone);
           }
           // not before the run's purse is in: a booting engine reports 0 coins
@@ -539,6 +543,7 @@ export default function Game() {
       }
       window.clearTimeout(riseTimer);
       window.clearTimeout(introTimer);
+      locality.dispose();
       game?.dispose();
       engine.current = null;
     };
