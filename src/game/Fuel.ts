@@ -6,7 +6,7 @@ export const FUEL_PRICE = 1; // coins per litre
 export const EVACUATION_COST = 100; // coins
 /** what the tow truck leaves in the tank, as a share of capacity, so nobody gets stuck broke */
 const REFUEL_RATE = 12; // litres per second at the pump
-const IDLE_BURN = 0.004; // litres per second with the engine running
+const IDLE_BURN = 1 / 3600; // litres per second with the engine running (~1 L/h, a real idle)
 
 /** coins per point of health at a car service */
 export const REPAIR_PRICE = 0.5;
@@ -14,7 +14,7 @@ export const REPAIR_PRICE = 0.5;
 export type FuelSpec = {
   /** tank capacity, litres */
   tank: number;
-  /** game-scaled consumption, litres per kilometre */
+  /** real-world mixed consumption, litres per kilometre (L/100 km ÷ 100) */
   perKm: number;
 };
 
