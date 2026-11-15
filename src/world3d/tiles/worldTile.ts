@@ -9,12 +9,15 @@ import { VectorTile } from '@mapbox/vector-tile';
 import { buildTile, transferables as buildingTransferables, type TileData } from './buildTile.ts';
 import type { BuildingAssembly } from './buildingAssembly.ts';
 import { buildGround, clipHalf, groundTransferables, type GroundData } from './groundVector.ts';
+import { roadTerrain } from './roadTerrain.ts';
 
 type Pt = [number, number];
 import { latFromMercator, tileCorner, tileSpan, type TileId } from '../mercator.ts';
 import { buildVegetation, vegetationTransferables, type VegetationData } from './vegetationTile.ts';
 import { planStreets } from './streetscape.ts';
-import { roadStyle } from './roadStyle.ts';
+import { roadStyle, isPedestrian, roadDeckHalf } from './roadStyle.ts';
+import { planRoadNetwork, type RoadDeck as Deck, type RoadWay as Way, type PlannedRoad as Planned, type RoadSurfaces as Surfaces, type RoadXY as XY } from './roadNetwork.ts';
+import { buildRoadSurface, deckSections, surfaceHeight, type RoadSurfaceData } from './roadSurface.ts';
 import { streetFurniture } from './furniture.ts';
 import type { MapFeature } from '../../game/WaterCollisionController.ts';
 
@@ -45,6 +48,8 @@ export type WorldTileData = {
   ground: GroundData;
   /** bridge decks: x0, z0, x1, z1, half width, deck height at 0 and at 1 (tile-local mercator meters, m) */
   bridges: Float32Array;
+  /** Exact upward-facing road triangles, shared by rendering and drive queries. */
+  roadSurface: RoadSurfaceData;
   roads: MeshData;
   /** streams, canals, ditches: ribbons drawn with the water material */
   streams: MeshData;
@@ -70,7 +75,7 @@ export type WorldBuildOptions = {
    * the bridge plan, so a bridge crossing the tile edge gets the same heights on both
    * sides. Without them each tile plans alone (and patches its edges).
    */
-  neighbours?: { dx: number; dy: number; buffer: ArrayBuffer }[];
+  neighbours?: { dx: number; dy: number; buffer: ArrayBuffer; dem?: Float32Array | null }[];
 };
 
 /**
@@ -189,6 +194,13 @@ class RoadBuilder {
   ground: number[] = [];
   colors: number[] = [];
   index: number[] = [];
+  surface: number[] = [];
+  captureSurface = false;
+
+  private surfaceTriangle(a: number, b: number, c: number) {
+    if (!this.captureSurface) return;
+    for (const i of [a, b, c]) this.surface.push(this.positions[i * 3], this.ground[i] + this.positions[i * 3 + 1], this.positions[i * 3 + 2]);
+  }
 
   groundAt: (x: number, z: number) => number;
   /** terrain cell size: every triangle is cut along the cells and their diagonals */
@@ -228,7 +240,10 @@ class RoadBuilder {
         if (half.length < 3) continue;
         const first = this.vertex(half[0][0], y, half[0][1], rgb);
         for (let k = 1; k < half.length; k++) this.vertex(half[k][0], y, half[k][1], rgb);
-        for (let k = 1; k + 1 < half.length; k++) this.index.push(first, first + k, first + k + 1);
+        for (let k = 1; k + 1 < half.length; k++) {
+          this.index.push(first, first + k, first + k + 1);
+          this.surfaceTriangle(first, first + k, first + k + 1);
+        }
       }
     }
   }
@@ -277,13 +292,17 @@ class RoadBuilder {
       this.ground.push(g);
       this.colors.push(rgb[0], rgb[1], rgb[2]);
     }
-    const [a, b, c] = corners;
-    // same sign convention as the ribbons: negative = seen from above
-    const cross = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
-    const forward = !facing || (facing === 'up') === (cross < 0);
-    const backward = !facing || !forward;
-    if (forward) this.index.push(first, first + 1, first + 2, first, first + 2, first + 3);
-    if (backward) this.index.push(first, first + 2, first + 1, first, first + 3, first + 2);
+    for (const triangle of [[0, 1, 2], [0, 2, 3]]) {
+      const [a, b, c] = triangle.map(i => corners[i]);
+      const cross = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+      const [i, j, k] = triangle.map(i => first + i);
+      if (!facing || (facing === 'up') === (cross < 0)) this.index.push(i, j, k);
+      if (!facing || (facing === 'up') !== (cross < 0)) this.index.push(i, k, j);
+    }
+    if (facing === 'up') {
+      this.surfaceTriangle(first, first + 1, first + 2);
+      this.surfaceTriangle(first, first + 2, first + 3);
+    }
   }
 
   /** Round join / cap. */
@@ -395,782 +414,57 @@ function streamMesh(vt: VectorTile, span: number, metersScale: number, groundAt:
 
 // ---- bridges ----------------------------------------------------------------
 
-type Surfaces = {
-  /** where the roads lie: the ground, a finger above any water */
-  driveAt: (x: number, z: number) => number;
-  /** the terrain itself (river beds carved) */
-  groundAt: (x: number, z: number) => number;
-  /** water surface level, or null on dry land */
-  waterAt: (x: number, z: number) => number | null;
-  toMerc: number;
-};
-
-/** A point of a line in tile extent units. */
-type XY = { x: number; y: number };
-
-/** A bridge deck: points every few meters with the deck and bed heights under them. */
-type Deck = { pts: Pt[]; s: number[]; h: number[]; bed: number[]; length: number };
-
-/** The deck must be at least `h` high at arc length `s` (mercator): where it crosses a lower way. */
-type Need = { s: number; h: number };
-
-/** A road or railway in the tile: its lines, whether it is a bridge, and its level (OSM layer). */
-type Way = {
-  lines: XY[][]; bridge: boolean; level: number; /** paths, steps, platforms: nothing to clear over */ foot: boolean;
-  /** a neighbour's way: the half width its deck has (m), for the car on our side of the edge */
-  half?: number;
-};
-
-/** How a way is drawn: lifted parts as decks, the rest on the ground as usual. */
-type Planned = { decks: Deck[]; rest: XY[][] };
-
-/** clearance under an overpass, deck top over the road below (m) */
-const OVER_CLEAR = 5.5;
-/** an overpass and its approach ramps climb at most this steeply */
-const RAMP_SLOPE = 0.08;
-/** where a bridge leaves the tile (or two bridge ways meet) over water, the deck is this high above it (m) */
-const BRIDGE_CLEAR = 3;
-/** the deck clears the water at least this much where it can (m) */
-const BRIDGE_MIN_CLEAR = 2.2;
-/** deck points every this many meters */
-const DECK_STEP = 8;
-/** concrete piers about this far apart (m) */
-const PIER_GAP = 28;
-/** deck slab thickness under the road (m) */
-const SLAB = 0.9;
-/** parapet height over the deck (m) */
-const PARAPET = 0.75;
-
+const SLAB = 0.9, PARAPET = 0.75, PIER_GAP = 28;
 const CONCRETE = hex('#8c8880');
 const PARAPET_TOP = hex('#aaa59c');
 const UNDERSIDE = hex('#4c4a46');
 
-/** Arc length (mercator) at each point of a polyline. */
-function arcLengths(pts: Pt[]) {
-  const s = [0];
-  for (let i = 1; i < pts.length; i++) s.push(s[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
-  return s;
-}
-
-/** Points every DECK_STEP m along a polyline, the original vertices kept. */
-function subdivide(line: Pt[], toMerc: number) {
-  const step = DECK_STEP * toMerc;
-  const pts: Pt[] = [line[0]];
-  const s = [0];
-  /** index in `pts` of each original vertex */
-  const at = [0];
-  for (let i = 1; i < line.length; i++) {
-    const [ax, az] = line[i - 1], [bx, bz] = line[i];
-    const len = Math.hypot(bx - ax, bz - az);
-    const n = len < 1e-9 ? 0 : Math.max(1, Math.ceil(len / step));
-    for (let q = 1; q <= n; q++) {
-      pts.push([ax + (bx - ax) * q / n, az + (bz - az) * q / n]);
-      s.push(s[s.length - 1] + len / n);
-    }
-    at.push(pts.length - 1);
-  }
-  return { pts, s, at };
-}
-
-/**
- * Height of a bridge end. A real end meets the road on the bank (its drive height,
- * or higher when a neighbouring bridge lifted that point). Where the line is cut by
- * the tile's buffer, or ends over the river, the deck is BRIDGE_CLEAR above the
- * water there: neighbouring tiles compute the same height.
- */
-function endHeight(p: Pt, real: boolean, at: Surfaces, lifted = -Infinity) {
-  const [x, z] = p;
-  const w = at.waterAt(x, z), d = at.driveAt(x, z);
-  // over the river itself, not just on the bank next to it
-  if (w != null && (!real || at.groundAt(x, z) < w - 1)) return Math.max(d, w + BRIDGE_CLEAR, lifted);
-  return Math.max(d, lifted);
-}
-
-/**
- * A bridge deck along a whole line: straight between its end heights with a slight
- * camber over water; at least BRIDGE_MIN_CLEAR over the river and OVER_CLEAR over
- * every lower road or railway it crosses, climbing to that at RAMP_SLOPE — so a deck may end above the ground; the approach roads then rise
- * to meet it (see planBridges).
- */
-function deckProfile(line: Pt[], ends: [number, number], at: Surfaces, needs: Need[], real: [boolean, boolean] = [true, true], free: [boolean, boolean] = [false, false]): Deck {
-  const { pts, s } = subdivide(line, at.toMerc);
-  const length = s[s.length - 1];
-  const water = pts.map(([x, z]) => at.waterAt(x, z));
-  const bed = pts.map(([x, z]) => at.groundAt(x, z));
-  const [h0, h1] = ends;
-  const meters = length / at.toMerc;
-  const base = s.map((si) => h0 + (h1 - h0) * (length > 0 ? si / length : 0));
-  // light camber only — a tall sin-hump on top of clearance made single spans peaky,
-  // but never shave/cap stacked clearances (that collapsed Manhattan interchanges)
-  const wet = water.some((w) => w != null);
-  const hump = wet ? Math.min(0.35, meters * 0.008) : 0;
-  const h = base.map((b, i) => b + hump * (length > 0 ? Math.sin(Math.PI * s[i] / length) : 0));
-  // clear the river as far as the deck can climb from the banks (the river never lifts the ends)
-  const climb = (i: number) => RAMP_SLOPE * Math.min(real[0] ? s[i] : Infinity, real[1] ? length - s[i] : Infinity) / at.toMerc;
-  for (let n = 0; n < pts.length; n++) {
-    const w = water[n];
-    if (w == null || bed[n] >= w - 1) continue;
-    for (let i = 0; i < h.length; i++) {
-      const lift = w + BRIDGE_MIN_CLEAR - RAMP_SLOPE * Math.abs(s[i] - s[n]) / at.toMerc;
-      h[i] = Math.max(h[i], Math.min(lift, base[i] + climb(i)));
-    }
-  }
-  // clear every lower way crossed, climbing at RAMP_SLOPE (approach roads rise to meet it)
-  for (const need of needs) for (let i = 0; i < h.length; i++) h[i] = Math.max(h[i], need.h - RAMP_SLOPE * Math.abs(s[i] - need.s) / at.toMerc);
-  // an end nothing continues from (a footbridge into a square, a building): no road
-  // can ramp up to meet it, so the deck itself comes down to the ground there
-  if (free[0] || free[1]) {
-    for (let i = 0; i < h.length; i++) {
-      if (free[0]) h[i] = Math.min(h[i], h0 + RAMP_SLOPE * s[i] / at.toMerc);
-      if (free[1]) h[i] = Math.min(h[i], h1 + RAMP_SLOPE * (length - s[i]) / at.toMerc);
-    }
-  }
-  // Re-assert clearance after free ramps. Short пешеходный переход spans were
-  // crushed flat by the free-end min, so neighbouring stubs met on the ground
-  // (or left a stair portal beside a floating walkway) instead of in the air.
-  for (const need of needs) {
-    for (let i = 0; i < h.length; i++) {
-      h[i] = Math.max(h[i], need.h - RAMP_SLOPE * Math.abs(s[i] - need.s) / at.toMerc);
-    }
-  }
-  // never under the ground: a straight line between the ends dips into any rise between
-  // them (a hump, a bank higher than the ends), and the road beside it tears; there it
-  // runs on the ground like a causeway
-  for (let i = 0; i < h.length; i++) h[i] = Math.max(h[i], at.driveAt(pts[i][0], pts[i][1]) + 0.05);
-  return { pts, s, h, bed, length };
-}
-
-/**
- * A deck cut to the tile square. `pad` keeps a few metres past the edge so
- * neighbouring tiles overlap at seams instead of leaving an air gap when OSM
- * ways or clip rounding disagree.
- */
-function clipDeck(deck: Deck, span: number, at: Surfaces, pad = 0): Deck[] {
-  const out: Deck[] = [];
-  let cur: Deck | null = null;
-  const lo = -pad, hi = span + pad;
-  for (let i = 1; i < deck.pts.length; i++) {
-    const [ax, az] = deck.pts[i - 1], [bx, bz] = deck.pts[i];
-    const c = clipSegmentBox(ax, az, bx, bz, lo, hi);
-    if (!c) { cur = null; continue; }
-    const len = Math.hypot(bx - ax, bz - az) || 1;
-    const ta = Math.hypot(c[0] - ax, c[1] - az) / len, tb = Math.hypot(c[2] - ax, c[3] - az) / len;
-    const height = (t: number) => deck.h[i - 1] + (deck.h[i] - deck.h[i - 1]) * t;
-    if (!cur || ta > 1e-9) {
-      cur = { pts: [[c[0], c[1]]], s: [0], h: [height(ta)], bed: [at.groundAt(c[0], c[1])], length: 0 };
-      out.push(cur);
-    }
-    cur.length += Math.hypot(c[2] - c[0], c[3] - c[1]);
-    cur.pts.push([c[2], c[3]]);
-    cur.s.push(cur.length);
-    cur.h.push(height(tb));
-    cur.bed.push(at.groundAt(c[2], c[3]));
-    if (tb < 1 - 1e-9) cur = null;
-  }
-  return out.filter((d) => d.length > 0);
-}
-
-/** Deck height of the nearest piece to (x, z). */
-function sampleDecks(decks: Deck[] | undefined, x: number, z: number): number | null {
-  let best = Infinity, height: number | null = null;
-  for (const deck of decks ?? []) for (let i = 1; i < deck.pts.length; i++) {
-    const [ax, az] = deck.pts[i - 1], [bx, bz] = deck.pts[i];
-    const dx = bx - ax, dz = bz - az;
-    const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz || 1)));
-    const d = Math.hypot(x - ax - t * dx, z - az - t * dz);
-    if (d < best) { best = d; height = deck.h[i - 1] + (deck.h[i] - deck.h[i - 1]) * t; }
-  }
-  return height;
-}
-
-/** Parameter along a→b where it crosses c→d, or null. */
-function crossing(a: XY, b: XY, c: XY, d: XY): number | null {
-  const rx = b.x - a.x, ry = b.y - a.y, sx = d.x - c.x, sy = d.y - c.y;
-  const den = rx * sy - ry * sx;
-  if (Math.abs(den) < 1e-9) return null;
-  const t = ((c.x - a.x) * sy - (c.y - a.y) * sx) / den;
-  const u = ((c.x - a.x) * ry - (c.y - a.y) * rx) / den;
-  return t >= 0 && t <= 1 && u >= 0 && u <= 1 ? t : null;
-}
-
-/** Same as `crossing`, for deck points in mercator metres. */
-function crossingMerc(a: Pt, b: Pt, c: Pt, d: Pt): number | null {
-  return crossing({ x: a[0], y: a[1] }, { x: b[0], y: b[1] }, { x: c[0], y: c[1] }, { x: d[0], y: d[1] });
-}
-
-/**
- * |cos| of the two segment directions. ~1 = parallel / tangential merge,
- * ~0 = right-angle crossing. Stack only the latter.
- */
-function segmentAlign(a: XY, b: XY, c: XY, d: XY) {
-  const ax = b.x - a.x, ay = b.y - a.y, bx = d.x - c.x, by = d.y - c.y;
-  return Math.abs(ax * bx + ay * by) / ((Math.hypot(ax, ay) * Math.hypot(bx, by)) || 1);
-}
-
-/** Above this |cos|, a geometric cross is a merge/split — keep coplanar. */
-const TANGENT_COS = 0.55;
-
-/** Raise a finished deck so it clears `minH` at arc length `atS`. */
-function liftDeckClear(deck: Deck, atS: number, minH: number, toMerc: number) {
-  for (let i = 0; i < deck.h.length; i++) {
-    deck.h[i] = Math.max(deck.h[i], minH - RAMP_SLOPE * Math.abs(deck.s[i] - atS) / toMerc);
-  }
-}
-
-/** Roads and railways of the tile, by feature index (tunnels left out). */
 function transportWays(layer: VectorTile['layers'][string]): Map<number, Way> {
   const ways = new Map<number, Way>();
   for (let i = 0; i < layer.length; i++) {
-    const feature = layer.feature(i);
-    if (feature.type !== 2) continue;
-    const p = feature.properties;
-    if (p.brunnel === 'tunnel') continue;
-    if (!roadStyle(String(p.class ?? ''), String(p.subclass ?? ''), Number(p.ramp) === 1) && !railKind(p)) continue;
+    const feature = layer.feature(i), p = feature.properties;
+    if (feature.type !== 2 || p.brunnel === 'tunnel') continue;
+    const cls = String(p.class ?? ''), sub = String(p.subclass ?? '');
+    const style = roadStyle(cls, sub, Number(p.ramp) === 1), rail = railKind(p);
+    if (!style && !rail) continue;
     const bridge = p.brunnel === 'bridge';
-    const level = Number(p.layer ?? (bridge ? 1 : 0)) || (bridge ? 1 : 0);
-    const foot = p.class === 'path' || p.class === 'track';
-    ways.set(i, { lines: feature.loadGeometry().map((line) => line.map(({ x, y }) => ({ x, y }))), bridge, level, foot });
+    ways.set(i, {
+      lines: feature.loadGeometry().map(line => line.map(({ x, y }) => ({ x, y }))),
+      bridge, level: Number(p.layer ?? (bridge ? 1 : 0)) || 0,
+      foot: isPedestrian(cls, sub), rail: !!rail,
+      half: style ? roadDeckHalf(style) : rail?.tram ? 2.1 : RAIL_DECK_HALF,
+      source: feature.id == null ? undefined : cls + ':' + feature.id,
+    });
   }
   return ways;
 }
 
-/**
- * Bridges and overpasses for the whole tile. Every bridge gets a deck along its
- * whole line (cut ends included, so neighbouring tiles agree), lifted over each
- * lower way it crosses (lower bridges first, so a bridge clears the deck below).
- * Two rounds let bridges that meet end to end share their heights. A road that
- * reaches a lifted bridge end climbs to it as a ramp on the same kind of deck.
- */
+/** Plan topology and heights together; no height edits after the solve. */
 export function planBridges(ownWays: Map<number, Way>, extent: number, span: number, at: Surfaces, extra?: Map<number, Way>): Map<number, Planned> {
-  const k = span / extent;
-  // with the neighbours' ways the plan sees past the edge: no edge patching needed after
-  const context = !!extra?.size;
-  const ways = context ? waysInContext(ownWays, extra!, extent) : ownWays;
-  const toM = (p: XY): Pt => [p.x * k, p.y * k];
-  const key = (p: XY) => p.x + ',' + p.y;
-  // how many lines pass through each point: a bridge end on one line only continues nowhere
-  const through = new Map<string, number>();
-  for (const way of ways.values()) for (const line of way.lines) for (const k of new Set(line.map(key))) through.set(k, (through.get(k) ?? 0) + 1);
-  // a line cut by the tile buffer ends on its edge, outside the tile
-  let lo = Infinity, hi = -Infinity;
-  for (const way of ways.values()) for (const line of way.lines) for (const p of line) { lo = Math.min(lo, p.x, p.y); hi = Math.max(hi, p.x, p.y); }
-  const cut = (p: XY) => (p.x < 0 || p.y < 0 || p.x > extent || p.y > extent) && (p.x <= lo + 0.5 || p.y <= lo + 0.5 || p.x >= hi - 0.5 || p.y >= hi - 0.5);
-  const boxes = new Map<XY[], [number, number, number, number]>();
-  for (const way of ways.values()) for (const line of way.lines) {
-    const box: [number, number, number, number] = [Infinity, Infinity, -Infinity, -Infinity];
-    for (const p of line) { box[0] = Math.min(box[0], p.x); box[1] = Math.min(box[1], p.y); box[2] = Math.max(box[2], p.x); box[3] = Math.max(box[3], p.y); }
-    boxes.set(line, box);
-  }
-  const bridges = [...ways].filter(([, w]) => w.bridge).sort((a, b) => a[1].level - b[1].level);
-  const full = new Map<number, Deck[]>();
-  let ends = new Map<string, number>();
-  for (let round = 0; round < 2; round++) {
-    const next = new Map<string, number>();
-    for (const [i, way] of bridges) {
-      const decks: Deck[] = [];
-      for (const line of way.lines) {
-        if (line.length < 2) continue;
-        const pts = line.map(toM);
-        const s = arcLengths(pts);
-        const mine = new Set(line.map(key));
-        const box = boxes.get(line)!;
-        const needs: Need[] = [];
-        for (const [o, other] of ways) {
-          if (o === i || other.foot) continue;
-          // Lower OSM layer always goes under. Same layer: only stack when the
-          // other is also a bridge and we win the id order — and only for
-          // near-orthogonal crosses (tangential merges stay coplanar).
-          const same = other.level === way.level;
-          const below = other.level < way.level || (same && other.bridge && o < i);
-          if (!below) continue;
-          for (const ol of other.lines) {
-            const ob = boxes.get(ol)!;
-            if (ob[0] > box[2] || ob[2] < box[0] || ob[1] > box[3] || ob[3] < box[1]) continue;
-            if (ol.some((q) => mine.has(key(q)))) continue; // joined to the bridge, not under it
-            for (let a = 0; a + 1 < line.length; a++) for (let b = 0; b + 1 < ol.length; b++) {
-              const t = crossing(line[a], line[a + 1], ol[b], ol[b + 1]);
-              if (t == null) continue;
-              if (same && segmentAlign(line[a], line[a + 1], ol[b], ol[b + 1]) > TANGENT_COS) continue;
-              const x = pts[a][0] + (pts[a + 1][0] - pts[a][0]) * t, z = pts[a][1] + (pts[a + 1][1] - pts[a][1]) * t;
-              const under = (other.bridge ? sampleDecks(full.get(o), x, z) : null) ?? at.driveAt(x, z);
-              needs.push({ s: s[a] + (s[a + 1] - s[a]) * t, h: under + OVER_CLEAR });
-            }
-          }
-        }
-        const first = line[0], last = line[line.length - 1];
-        const deck = deckProfile(pts, [
-          endHeight(pts[0], !cut(first), at, ends.get(key(first))),
-          endHeight(pts[pts.length - 1], !cut(last), at, ends.get(key(last))),
-        ], at, needs, [!cut(first), !cut(last)], [!cut(first) && (through.get(key(first)) ?? 0) < 2, !cut(last) && (through.get(key(last)) ?? 0) < 2]);
-        decks.push(deck);
-        for (const [p, h] of [[first, deck.h[0]], [last, deck.h[deck.h.length - 1]]] as [XY, number][]) {
-          if (!cut(p)) next.set(key(p), Math.max(next.get(key(p)) ?? -Infinity, h));
-        }
-      }
-      full.set(i, decks);
-    }
-    ends = next;
-  }
-  // overlap past the tile edge so neighbour decks cover clip / OSM shortfalls
-  const seamPad = 3.5 * at.toMerc;
-  const plan = new Map<number, Planned>();
-  for (const [i, decks] of full) {
-    const clipped = decks.flatMap((d) => clipDeck(d, span, at, seamPad));
-    // tile-border tips must use the same formula on both sides — in-tile `needs`
-    // were lifting one half and leaving a step / hole at the seam
-    if (!context) for (const d of clipped) sealDeckBorderTips(d, span, at);
-    plan.set(i, { decks: clipped, rest: [] });
-  }
-  // approach ramps: ground ways meeting a bridge end that stands above the ground
-  for (const [i, way] of ways) {
-    if (way.bridge) continue;
-    let ramped = false;
-    const planned: Planned = { decks: [], rest: [] };
-    for (const line of way.lines) {
-      const lifts = line.map((q) => { const h = ends.get(key(q)); return h == null ? 0 : h - at.driveAt(q.x * k, q.y * k); });
-      if (!lifts.some((l) => l > 0.3)) { planned.rest.push(line); continue; }
-      ramped = true;
-      const { pts, s, at: vertexAt } = subdivide(line.map(toM), at.toMerc);
-      const sources = lifts.map((lift, v) => ({ lift, s: s[vertexAt[v]] })).filter((src) => src.lift > 0.3);
-      const lift = s.map((si) => Math.max(0, ...sources.map((src) => src.lift - RAMP_SLOPE * Math.abs(si - src.s) / at.toMerc)));
-      // runs of pieces, lifted or on the ground
-      const up = (n: number) => lift[n - 1] > 0.02 || lift[n] > 0.02;
-      let start = 0;
-      for (let n = 1; n < pts.length; n++) {
-        const lifted = up(n);
-        if (n + 1 < pts.length && up(n + 1) === lifted) continue;
-        const run = pts.slice(start, n + 1);
-        if (lifted) {
-          const sr = s.slice(start, n + 1).map((v) => v - s[start]);
-          const deck: Deck = { pts: run, s: sr, h: run.map(([x, z], m) => at.driveAt(x, z) + lift[start + m]), bed: run.map(([x, z]) => at.groundAt(x, z)), length: sr[sr.length - 1] };
-          // same seam pad as bridge decks — flush-cut ramps left a step at the tile edge
-          const pieces = clipDeck(deck, span, at, seamPad);
-          if (!context) for (const d of pieces) sealDeckBorderTips(d, span, at);
-          planned.decks.push(...pieces);
-        } else planned.rest.push(run.map(([x, z]) => ({ x: x / k, y: z / k })));
-        start = n;
-      }
-    }
-    if (ramped) plan.set(i, planned);
-  }
-  // Elevated ribbons that cross steeply (ramps included) must not share a deck
-  // height — that leaves parapets across the carriageway. Tangential merges stay put.
-  stackOrthogonalDecks(plan, at);
-  // Footbridges and split OSM ways often meet a few metres apart with different
-  // tip heights — snap those ends so the crossing is one continuous deck.
-  joinNearbyDeckEnds(plan, at.toMerc);
-  // Same-level / merge ribbons that still sit on top of each other: pull coplanar
-  // instead of leaving a crossed pile (common on Manhattan ramps).
-  coalesceCoplanarDecks(plan, at);
-  // facing stubs across a small air gap (split ways inside the tile): meet mid-way.
-  // Border tips stay put — the neighbour tile owns the other half of that seam.
-  closeFacingDeckGaps(plan, at.toMerc, span);
-  if (context) {
-    // planned with the neighbours: heights already agree across the edge. Their decks stay
-    // in the plan only where they reach our edge (clipDeck padded them): the car on our
-    // side of a ribbon that lies across the edge still has the deck under it
-    return plan;
-  }
-  // OSM ways that stop a few metres short of the tile edge leave an air gap with
-  // the neighbour — pull those tips onto the shared square before resealing.
-  extendNearBorderTips(plan, span, at.toMerc);
-  // stack / join / close lift tips again; floor + unify so both tiles share the edge
-  for (const planned of plan.values()) for (const d of planned.decks) sealDeckBorderTips(d, span, at);
-  unifyBorderEdgeTips(plan, span, at);
-  return plan;
+  return planRoadNetwork(waysInContext(ownWays, extra ?? new Map(), extent), extent, span, at);
 }
 
-/**
- * If an elevated tip sits just inside the tile and points straight at an edge,
- * snap it onto the shared square. Keep this tight: a long/diagonal pull turns
- * ramps into a fan of beams (the tangled эстакада screenshots).
- */
-function extendNearBorderTips(plan: Map<number, Planned>, span: number, toMerc: number) {
-  // only close a short OSM shortfall — seamPad already overlaps ~3.5 m past the edge
-  const reach = 8 * toMerc;
-  const eps = Math.max(1e-3 * span, 0.02 * toMerc);
-  // must aim mostly at the edge (not a glancing merge that would slide sideways)
-  const aim = 0.82;
-  for (const planned of plan.values()) for (const deck of planned.decks) {
-    if (deck.pts.length < 2) continue;
-    const tips = [0, deck.pts.length - 1];
-    for (const tip of tips) {
-      if (deck.h[tip] - deck.bed[tip] < 1.5) continue;
-      const [x, z] = deck.pts[tip];
-      if (x <= eps || z <= eps || x >= span - eps || z >= span - eps) continue;
-      const [odx, odz] = tipOutward(deck, tip);
-      let nx = x, nz = z, hit = false;
-      if (odx < -aim && x < reach) {
-        const dx = 0 - x;
-        const lateral = odz * dx / (odx || -1e-9);
-        // reject steep glances — those drew diagonal "ears" across the interchange
-        if (Math.abs(lateral) <= Math.abs(dx) * 0.4) { nx = 0; nz = z + lateral; hit = true; }
-      } else if (odx > aim && span - x < reach) {
-        const dx = span - x;
-        const lateral = odz * dx / (odx || 1e-9);
-        if (Math.abs(lateral) <= Math.abs(dx) * 0.4) { nx = span; nz = z + lateral; hit = true; }
-      } else if (odz < -aim && z < reach) {
-        const dz = 0 - z;
-        const lateral = odx * dz / (odz || -1e-9);
-        if (Math.abs(lateral) <= Math.abs(dz) * 0.4) { nz = 0; nx = x + lateral; hit = true; }
-      } else if (odz > aim && span - z < reach) {
-        const dz = span - z;
-        const lateral = odx * dz / (odz || 1e-9);
-        if (Math.abs(lateral) <= Math.abs(dz) * 0.4) { nz = span; nx = x + lateral; hit = true; }
-      }
-      if (!hit || nx < -reach || nx > span + reach || nz < -reach || nz > span + reach) continue;
-      nx = Math.max(0, Math.min(span, nx));
-      nz = Math.max(0, Math.min(span, nz));
-      deck.pts[tip] = [nx, nz];
-      if (tip === 0 && deck.pts.length > 1) {
-        const d = Math.hypot(deck.pts[1][0] - nx, deck.pts[1][1] - nz);
-        const old = deck.s[1] - deck.s[0];
-        const delta = d - old;
-        for (let k = 1; k < deck.s.length; k++) deck.s[k] += delta;
-        deck.length += delta;
-      } else if (tip > 0) {
-        const n = deck.pts.length - 1;
-        const d = Math.hypot(nx - deck.pts[n - 1][0], nz - deck.pts[n - 1][1]);
-        deck.s[n] = deck.s[n - 1] + d;
-        deck.length = deck.s[n];
-      }
-    }
-  }
-}
-
-/**
- * Shared floor for elevated tips near the tile edge. Uses driveAt only (already
- * sits above carved water) + OVER_CLEAR, quantized — never the wet/dry fork that
- * sent one tile to water+3 and its neighbour to ground+5.5.
- */
-function borderSealHeight(x: number, z: number, at: Surfaces) {
-  // sample on the tile plane (overhang tips still evaluate at 0 / span)
-  return Math.round((at.driveAt(x, z) + OVER_CLEAR) * 2) / 2;
-}
-
-/**
- * Floor elevated tips near the tile edge up to `borderSealHeight`. Never pull
- * the deck down (Math.min grades dug the V-shaped collapses in screenshots).
- */
-function sealDeckBorderTips(deck: Deck, span: number, at: Surfaces) {
-  if (deck.pts.length < 2) return;
-  // include overhang past the square (clipDeck pad)
-  const band = Math.max(4 * at.toMerc, 0.02 * span);
-  const onSeam = (x: number, z: number) =>
-    x <= band || z <= band || x >= span - band || z >= span - band;
-  const sampleAt = (x: number, z: number): Pt => {
-    let sx = x, sz = z;
-    if (sx <= band) sx = 0;
-    else if (sx >= span - band) sx = span;
-    if (sz <= band) sz = 0;
-    else if (sz >= span - band) sz = span;
-    return [sx, sz];
-  };
-  const seal = (tip: number) => {
-    const [x, z] = deck.pts[tip];
-    if (!onSeam(x, z)) return;
-    if (deck.h[tip] - deck.bed[tip] < 1.2) return;
-    const [sx, sz] = sampleAt(x, z);
-    const floor = borderSealHeight(sx, sz, at);
-    // raise only — keep clearance tents, don't dig a valley into the span
-    if (floor > deck.h[tip]) {
-      liftDeckClear(deck, deck.s[tip], floor, at.toMerc);
-      deck.h[tip] = floor;
-    }
-  };
-  seal(0);
-  seal(deck.pts.length - 1);
-}
-
-/**
- * Parallel elevated tips on the same tile edge (multi-lane overpass): lift all
- * to the highest tip so lanes don't step at the seam.
- */
-function unifyBorderEdgeTips(plan: Map<number, Planned>, span: number, at: Surfaces) {
-  const band = Math.max(4 * at.toMerc, 0.02 * span);
-  type End = { deck: Deck; tip: number; h: number; s: number; edge: 0 | 1 | 2 | 3 };
-  const ends: End[] = [];
-  for (const planned of plan.values()) for (const deck of planned.decks) {
-    if (deck.pts.length < 2) continue;
-    for (const tip of [0, deck.pts.length - 1]) {
-      if (deck.h[tip] - deck.bed[tip] < 1.5) continue;
-      const [x, z] = deck.pts[tip];
-      const edge: 0 | 1 | 2 | 3 | null =
-        x <= band ? 0 : x >= span - band ? 1 : z <= band ? 2 : z >= span - band ? 3 : null;
-      if (edge == null) continue;
-      ends.push({ deck, tip, h: deck.h[tip], s: deck.s[tip], edge });
-    }
-  }
-  for (const edge of [0, 1, 2, 3] as const) {
-    const group = ends.filter((e) => e.edge === edge);
-    if (group.length < 2) continue;
-    const target = Math.max(...group.map((e) => e.h), borderSealHeight(
-      edge === 0 ? 0 : edge === 1 ? span : group[0].deck.pts[group[0].tip][0],
-      edge === 2 ? 0 : edge === 3 ? span : group[0].deck.pts[group[0].tip][1],
-      at,
-    ));
-    for (const e of group) {
-      if (target - e.deck.h[e.tip] < 0.08) continue;
-      liftDeckClear(e.deck, e.s, target, at.toMerc);
-      e.deck.h[e.tip] = target;
-    }
-  }
-}
-
-/**
- * Raise matching elevated tips that nearly meet (common for пешеходный переход
- * pieces tagged as separate ways). Without this, one stub floats beside another
- * at a different height and the stair tower fills the gap as a black portal.
- */
-function tipOutward(deck: Deck, tip: number): [number, number] {
-  if (tip === 0) {
-    const [x0, z0] = deck.pts[0], [x1, z1] = deck.pts[1];
-    const len = Math.hypot(x0 - x1, z0 - z1) || 1;
-    return [(x0 - x1) / len, (z0 - z1) / len];
-  }
-  const n = deck.pts.length;
-  const [x0, z0] = deck.pts[n - 2], [x1, z1] = deck.pts[n - 1];
-  const len = Math.hypot(x1 - x0, z1 - z0) || 1;
-  return [(x1 - x0) / len, (z1 - z0) / len];
-}
-
-function joinNearbyDeckEnds(plan: Map<number, Planned>, toMerc: number) {
-  type End = { deck: Deck; tip: number; x: number; z: number; h: number; s: number };
-  const ends: End[] = [];
-  for (const planned of plan.values()) for (const deck of planned.decks) {
-    if (deck.pts.length < 2) continue;
-    const last = deck.pts.length - 1;
-    if (deck.h[0] - deck.bed[0] > 1.5) {
-      ends.push({ deck, tip: 0, x: deck.pts[0][0], z: deck.pts[0][1], h: deck.h[0], s: deck.s[0] });
-    }
-    if (deck.h[last] - deck.bed[last] > 1.5) {
-      ends.push({ deck, tip: last, x: deck.pts[last][0], z: deck.pts[last][1], h: deck.h[last], s: deck.s[last] });
-    }
-  }
-  const reach = 10 * toMerc;
-  for (let i = 0; i < ends.length; i++) {
-    for (let j = i + 1; j < ends.length; j++) {
-      const a = ends[i], b = ends[j];
-      if (a.deck === b.deck) continue;
-      if (Math.hypot(a.x - b.x, a.z - b.z) > reach) continue;
-      const target = Math.max(a.h, b.h);
-      if (target - a.h > 0.12) liftDeckClear(a.deck, a.s, target, toMerc);
-      if (target - b.h > 0.12) liftDeckClear(b.deck, b.s, target, toMerc);
-      a.deck.h[a.tip] = Math.max(a.deck.h[a.tip], target);
-      b.deck.h[b.tip] = Math.max(b.deck.h[b.tip], target);
-      a.h = a.deck.h[a.tip];
-      b.h = b.deck.h[b.tip];
-    }
-  }
-}
-
-/**
- * Two elevated stubs that point at each other across a few metres of air
- * (split OSM ways inside the tile): slide tips to the midpoint and match height.
- * Tips on the tile square stay glued — reseal owns those seams with the neighbour.
- */
-function closeFacingDeckGaps(plan: Map<number, Planned>, toMerc: number, span: number) {
-  type End = { deck: Deck; tip: number; x: number; z: number; h: number };
-  const eps = Math.max(1e-3 * span, 0.02 * toMerc);
-  const onBorder = (x: number, z: number) =>
-    x <= eps || z <= eps || x >= span - eps || z >= span - eps;
-  const ends: End[] = [];
-  for (const planned of plan.values()) for (const deck of planned.decks) {
-    if (deck.pts.length < 2) continue;
-    const last = deck.pts.length - 1;
-    if (deck.h[0] - deck.bed[0] > 1.5 && !onBorder(deck.pts[0][0], deck.pts[0][1])) {
-      ends.push({ deck, tip: 0, x: deck.pts[0][0], z: deck.pts[0][1], h: deck.h[0] });
-    }
-    if (deck.h[last] - deck.bed[last] > 1.5 && !onBorder(deck.pts[last][0], deck.pts[last][1])) {
-      ends.push({ deck, tip: last, x: deck.pts[last][0], z: deck.pts[last][1], h: deck.h[last] });
-    }
-  }
-  // keep short — long mid-point slides drew diagonal beams across interchanges
-  const maxGap = 10 * toMerc;
-  const used = new Set<number>();
-  for (let i = 0; i < ends.length; i++) {
-    if (used.has(i)) continue;
-    let best = -1, bestDist = maxGap;
-    const a = ends[i];
-    const [adx, adz] = tipOutward(a.deck, a.tip);
-    for (let j = i + 1; j < ends.length; j++) {
-      if (used.has(j)) continue;
-      const b = ends[j];
-      if (a.deck === b.deck) continue;
-      const dx = b.x - a.x, dz = b.z - a.z;
-      const dist = Math.hypot(dx, dz);
-      if (dist < 0.15 * toMerc || dist > bestDist) continue;
-      const [bdx, bdz] = tipOutward(b.deck, b.tip);
-      // opposite directions and each tip points toward the other
-      if (adx * bdx + adz * bdz > -0.35) continue;
-      if (dist > 1e-9 && (adx * dx + adz * dz) / dist < 0.55) continue;
-      if (dist > 1e-9 && (bdx * -dx + bdz * -dz) / dist < 0.55) continue;
-      if (Math.abs(a.h - b.h) > 4.5) continue;
-      best = j;
-      bestDist = dist;
-    }
-    if (best < 0) continue;
-    const b = ends[best];
-    used.add(i);
-    used.add(best);
-    const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2;
-    const mh = Math.max(a.h, b.h);
-    a.deck.pts[a.tip] = [mx, mz];
-    b.deck.pts[b.tip] = [mx, mz];
-    a.deck.h[a.tip] = mh;
-    b.deck.h[b.tip] = mh;
-    a.deck.bed[a.tip] = Math.min(a.deck.bed[a.tip], b.deck.bed[b.tip]);
-    b.deck.bed[b.tip] = a.deck.bed[a.tip];
-    // refresh length along the tip segment for sampling
-    const fixS = (deck: Deck, tip: number) => {
-      if (tip === 0 && deck.pts.length > 1) {
-        const d = Math.hypot(deck.pts[1][0] - deck.pts[0][0], deck.pts[1][1] - deck.pts[0][1]);
-        const old = deck.s[1] - deck.s[0];
-        const delta = d - old;
-        for (let k = 1; k < deck.s.length; k++) deck.s[k] += delta;
-        deck.length += delta;
-      } else if (tip > 0) {
-        const n = deck.pts.length - 1;
-        const d = Math.hypot(deck.pts[n][0] - deck.pts[n - 1][0], deck.pts[n][1] - deck.pts[n - 1][1]);
-        deck.s[n] = deck.s[n - 1] + d;
-        deck.length = deck.s[n];
-      }
-    };
-    fixS(a.deck, a.tip);
-    fixS(b.deck, b.tip);
-    liftDeckClear(a.deck, a.deck.s[a.tip], mh, toMerc);
-    liftDeckClear(b.deck, b.deck.s[b.tip], mh, toMerc);
-  }
-}
-
-/**
- * Split OSM ramps / parallel carriageways often cross a few metres apart in height
- * and draw as a tangled pile. If they are nearly coplanar (not a real stacked level),
- * pull both to the higher deck around the junction so the ribbon reads as one road.
- */
-function coalesceCoplanarDecks(plan: Map<number, Planned>, at: Surfaces) {
-  const toMerc = at.toMerc;
-  const ids = [...plan.keys()];
-  for (let round = 0; round < 2; round++) {
-    let changed = false;
-    for (let ai = 0; ai < ids.length; ai++) {
-      for (let bi = 0; bi < ai; bi++) {
-        const aDecks = plan.get(ids[ai])?.decks ?? [];
-        const bDecks = plan.get(ids[bi])?.decks ?? [];
-        for (const da of aDecks) {
-          for (const db of bDecks) {
-            for (let a = 1; a < da.pts.length; a++) {
-              for (let b = 1; b < db.pts.length; b++) {
-                const t = crossingMerc(da.pts[a - 1], da.pts[a], db.pts[b - 1], db.pts[b]);
-                if (t == null) continue;
-                const align = segmentAlign(
-                  { x: da.pts[a - 1][0], y: da.pts[a - 1][1] },
-                  { x: da.pts[a][0], y: da.pts[a][1] },
-                  { x: db.pts[b - 1][0], y: db.pts[b - 1][1] },
-                  { x: db.pts[b][0], y: db.pts[b][1] },
-                );
-                const x = da.pts[a - 1][0] + (da.pts[a][0] - da.pts[a - 1][0]) * t;
-                const z = da.pts[a - 1][1] + (da.pts[a][1] - da.pts[a - 1][1]) * t;
-                const ha = sampleDecks([da], x, z);
-                const hb = sampleDecks([db], x, z);
-                if (ha == null || hb == null) continue;
-                const gap = Math.abs(ha - hb);
-                if (gap < 0.4 || gap > 3.5) continue;
-                // real multi-level cross with clearance — leave the stack
-                if (align <= TANGENT_COS && gap > OVER_CLEAR * 0.5) continue;
-                const target = Math.max(ha, hb);
-                const sa = da.s[a - 1] + (da.s[a] - da.s[a - 1]) * t;
-                const sb = db.s[b - 1] + (db.s[b] - db.s[b - 1]) * t;
-                liftDeckClear(da, sa, target, toMerc);
-                liftDeckClear(db, sb, target, toMerc);
-                changed = true;
-              }
-            }
-          }
-        }
-      }
-    }
-    if (!changed) break;
-  }
-}
-
-/** True when another elevated deck tip sits here — the walkway continues, no stair. */
+/** True when this footbridge end continues into another planned deck. */
 function deckContinuesNear(plan: Map<number, Planned>, self: Deck, x: number, z: number, h: number, toMerc: number) {
-  const reach = 3.5 * toMerc;
-  for (const planned of plan.values()) {
-    for (const other of planned.decks) {
-      if (other === self || other.pts.length < 2) continue;
-      for (const tip of [0, other.pts.length - 1]) {
-        const [ox, oz] = other.pts[tip];
-        if (Math.hypot(ox - x, oz - z) > reach) continue;
-        if (Math.abs(other.h[tip] - h) < 2.8) return true;
-      }
+  for (const planned of plan.values()) for (const other of planned.decks) {
+    if (other === self) continue;
+    for (let i = 1; i < other.pts.length; i++) {
+      const [ax, az] = other.pts[i - 1], [bx, bz] = other.pts[i];
+      const dx = bx - ax, dz = bz - az;
+      const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz || 1)));
+      if (Math.hypot(x - ax - t * dx, z - az - t * dz) < 0.5 * toMerc && Math.abs(h - other.h[i - 1] - (other.h[i] - other.h[i - 1]) * t) < 0.1) return true;
     }
   }
   return false;
 }
 
-/**
- * Lift higher-id decks over lower-id ones wherever they cross at a steep angle
- * and sit within a clearance of each other. Several rounds so A-over-B-over-C settles.
- */
-function stackOrthogonalDecks(plan: Map<number, Planned>, at: Surfaces) {
-  const ids = [...plan.keys()].sort((a, b) => a - b);
-  for (let round = 0; round < 3; round++) {
-    let changed = false;
-    for (let ai = 0; ai < ids.length; ai++) {
-      for (let bi = 0; bi < ai; bi++) {
-        const hiId = ids[ai], loId = ids[bi];
-        const hiDecks = plan.get(hiId)?.decks ?? [];
-        const loDecks = plan.get(loId)?.decks ?? [];
-        for (const hi of hiDecks) for (const lo of loDecks) {
-          for (let a = 1; a < hi.pts.length; a++) for (let b = 1; b < lo.pts.length; b++) {
-            const t = crossingMerc(hi.pts[a - 1], hi.pts[a], lo.pts[b - 1], lo.pts[b]);
-            if (t == null) continue;
-            const align = segmentAlign(
-              { x: hi.pts[a - 1][0], y: hi.pts[a - 1][1] },
-              { x: hi.pts[a][0], y: hi.pts[a][1] },
-              { x: lo.pts[b - 1][0], y: lo.pts[b - 1][1] },
-              { x: lo.pts[b][0], y: lo.pts[b][1] },
-            );
-            if (align > TANGENT_COS) continue;
-            const x = hi.pts[a - 1][0] + (hi.pts[a][0] - hi.pts[a - 1][0]) * t;
-            const z = hi.pts[a - 1][1] + (hi.pts[a][1] - hi.pts[a - 1][1]) * t;
-            const hLo = sampleDecks([lo], x, z);
-            const hHi = sampleDecks([hi], x, z);
-            if (hLo == null || hHi == null) continue;
-            const need = hLo + OVER_CLEAR;
-            if (hHi >= need - 0.35) continue;
-            const sHi = hi.s[a - 1] + (hi.s[a] - hi.s[a - 1]) * t;
-            liftDeckClear(hi, sHi, need, at.toMerc);
-            changed = true;
-          }
-        }
-      }
-    }
-    if (!changed) break;
-  }
-}
-
 /** Lay a ribbon along the deck (the road or rail bed on it), piece by piece. */
-function deckRibbon(builder: RoadBuilder, deck: Pick<Deck, 'pts' | 'h'>, half: number, y: number, rgb: [number, number, number], joints: number) {
-  const saved = builder.groundAt;
-  for (let i = 1; i < deck.pts.length; i++) {
-    const [ax, az] = deck.pts[i - 1], [bx, bz] = deck.pts[i];
-    const ha = deck.h[i - 1], hb = deck.h[i];
-    const dx = bx - ax, dz = bz - az, len2 = dx * dx + dz * dz || 1;
-    builder.groundAt = (x, z) => ha + (hb - ha) * Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / len2));
-    builder.segment(ax, az, bx, bz, half, y, rgb);
-    // the join with the next piece: a wedge on the outer side of the bend, level with the
-    // joint — a flat round disc there stuck up through the next (sloping) piece, a row of
-    // scales along every ramp
-    if (joints && i + 1 < deck.pts.length) {
-      const [cx, cz] = deck.pts[i + 1];
-      builder.groundAt = () => hb;
-      builder.bevel(bx, bz, bx - ax, bz - az, cx - bx, cz - bz, half, y, rgb);
-    }
+function deckRibbon(builder: RoadBuilder, deck: Pick<Deck, 'pts' | 'h' | 'frame' | 'half'>, half: number, y: number, rgb: [number, number, number], _joints: number, physical = false) {
+  const sections = deckSections(deck, half, physical);
+  for (let i = 1; i < sections.length; i++) {
+    const a = sections[i - 1], b = sections[i];
+    builder.quad([[...a.left, a.h, y], [...b.left, b.h, y], [...b.right, b.h, y], [...a.right, a.h, y]], rgb, 'up');
   }
-  builder.groundAt = saved;
 }
 
 /**
@@ -1223,35 +517,43 @@ function stairTowers(
  * True when this deck span crosses another elevated ribbon at nearly the same
  * height (a coplanar junction). Parapets there would fence the crossing shut.
  */
-function coplanarDeckCross(deck: Deck, a: number, plan: Map<number, Planned> | undefined, selfId: number) {
-  if (!plan) return false;
-  const [ax, az] = deck.pts[a - 1], [bx, bz] = deck.pts[a];
-  const ha = deck.h[a - 1], hb = deck.h[a];
-  for (const [id, planned] of plan) {
-    if (id === selfId) continue;
-    for (const other of planned.decks) {
-      for (let b = 1; b < other.pts.length; b++) {
-        const t = crossingMerc(deck.pts[a - 1], deck.pts[a], other.pts[b - 1], other.pts[b]);
-        if (t == null) continue;
-        const align = segmentAlign(
-          { x: ax, y: az }, { x: bx, y: bz },
-          { x: other.pts[b - 1][0], y: other.pts[b - 1][1] },
-          { x: other.pts[b][0], y: other.pts[b][1] },
-        );
-        // only open parapets at steep crosses; tangential merges keep their walls
-        if (align > TANGENT_COS) continue;
-        const hHere = ha + (hb - ha) * t;
-        const hThere = other.h[b - 1] + (other.h[b] - other.h[b - 1]) * (
-          (() => {
-            const [cx, cz] = other.pts[b - 1], [dx, dz] = other.pts[b];
-            const px = ax + (bx - ax) * t, pz = az + (bz - az) * t;
-            const len2 = (dx - cx) ** 2 + (dz - cz) ** 2 || 1;
-            return Math.max(0, Math.min(1, ((px - cx) * (dx - cx) + (pz - cz) * (dz - cz)) / len2));
-          })()
-        );
-        if (Math.abs(hHere - hThere) < 2.2) return true;
+type DeckPiece = { id: number; deck: Deck; n: number };
+const deckPieceGrids = new WeakMap<Map<number, Planned>, Map<string, DeckPiece[]>>();
+function deckPiecesAt(plan: Map<number, Planned>, x: number, z: number): DeckPiece[] {
+  const cell = 32;
+  let grid = deckPieceGrids.get(plan);
+  if (!grid) {
+    grid = new Map();
+    for (const [id, p] of plan) for (const deck of p.decks) for (let n = 1; n < deck.pts.length; n++) {
+      const a = deck.pts[n - 1], b = deck.pts[n], pad = Math.max(deck.half?.[n - 1] ?? 8, deck.half?.[n] ?? 8) * 2;
+      const piece = { id, deck, n };
+      for (let cx = Math.floor((Math.min(a[0], b[0]) - pad) / cell); cx <= Math.floor((Math.max(a[0], b[0]) + pad) / cell); cx++) {
+        for (let cz = Math.floor((Math.min(a[1], b[1]) - pad) / cell); cz <= Math.floor((Math.max(a[1], b[1]) + pad) / cell); cz++) {
+          const key = `${cx},${cz}`, list = grid.get(key) ?? []; list.push(piece); grid.set(key, list);
+        }
       }
     }
+    deckPieceGrids.set(plan, grid);
+  }
+  return grid.get(`${Math.floor(x / cell)},${Math.floor(z / cell)}`) ?? [];
+}
+
+function deckSideCovered(deck: Deck, i: number, side: number, half: number, plan: Map<number, Planned> | undefined, selfId: number) {
+  if (!plan) return false;
+  const sections = deckSections(deck, half, true);
+  const a = sections[i - 1], b = sections[i];
+  const pa = side > 0 ? a.left : a.right, pb = side > 0 ? b.left : b.right;
+  for (const { id, deck: other, n } of deckPiecesAt(plan, (pa[0] + pb[0]) / 2, (pa[1] + pb[1]) / 2)) {
+    if (id === selfId) continue;
+      const [ax, az] = other.pts[n - 1], [bx, bz] = other.pts[n];
+      const dx = bx - ax, dz = bz - az, len2 = dx * dx + dz * dz || 1;
+      for (const t of [0.2, 0.5, 0.8]) {
+        const x = pa[0] + (pb[0] - pa[0]) * t, z = pa[1] + (pb[1] - pa[1]) * t;
+        const u = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / len2));
+        const w = (other.half?.[n - 1] ?? half) + ((other.half?.[n] ?? half) - (other.half?.[n - 1] ?? half)) * u;
+        const h = other.h[n - 1] + (other.h[n] - other.h[n - 1]) * u;
+        if (Math.hypot(x - ax - u * dx, z - az - u * dz) < w + 0.01 && Math.abs(a.h + (b.h - a.h) * t - h) < 0.4) return true;
+      }
   }
   return false;
 }
@@ -1280,37 +582,37 @@ function deckStructure(builder: RoadBuilder, deck: Deck, half: number, toMerc: n
   const side = (nx: number, nz: number) => 0.7 + 0.2 * (nx * 0.6 + nz * 0.8);
   const shade = (rgb: [number, number, number], f: number): [number, number, number] => [rgb[0] * f, rgb[1] * f, rgb[2] * f];
   const wall = 0.3 * toMerc;
+  const sections = deckSections(deck, half, true);
   for (let i = 1; i < n; i++) {
     if (!up[i - 1] && !up[i]) continue;
-    const [ax, az] = deck.pts[i - 1], [bx, bz] = deck.pts[i];
-    const len = Math.hypot(bx - ax, bz - az) || 1;
-    const nx = -(bz - az) / len, nz = (bx - ax) / len;
-    const ha = deck.h[i - 1], hb = deck.h[i];
-    const open = coplanarDeckCross(deck, i, plan, selfId);
+    const a = sections[i - 1], b = sections[i];
     const wide = [reach(i, -1), reach(i, 1)];
     for (const sgn of [-1, 1]) {
-      // a neighbour on this side: one plate with it, no wall between
       if (wide[sgn < 0 ? 0 : 1] != null) continue;
-      const ox = nx * half * sgn, oz = nz * half * sgn;
-      const ix = nx * (half - wall) * sgn, iz = nz * (half - wall) * sgn;
-      const f = side(nx * sgn, nz * sgn);
-      if (open) {
-        // slab edge only — leave the carriageway clear for the crossing road
-        builder.quad([[ax + ox, az + oz, ha, -SLAB], [bx + ox, bz + oz, hb, -SLAB], [bx + ox, bz + oz, hb, 0.05], [ax + ox, az + oz, ha, 0.05]], shade(CONCRETE, f));
-      } else {
-        // outer face: from under the slab to the parapet top
-        builder.quad([[ax + ox, az + oz, ha, -SLAB], [bx + ox, bz + oz, hb, -SLAB], [bx + ox, bz + oz, hb, PARAPET], [ax + ox, az + oz, ha, PARAPET]], shade(CONCRETE, f));
-        // parapet top and inner face
-        builder.quad([[ax + ox, az + oz, ha, PARAPET], [bx + ox, bz + oz, hb, PARAPET], [bx + ix, bz + iz, hb, PARAPET], [ax + ix, az + iz, ha, PARAPET]], PARAPET_TOP, 'up');
-        builder.quad([[ax + ix, az + iz, ha, PARAPET], [bx + ix, bz + iz, hb, PARAPET], [bx + ix, bz + iz, hb, 0.05], [ax + ix, az + iz, ha, 0.05]], shade(CONCRETE, 1.05 - f * 0.25));
+      const pa = sgn > 0 ? a.left : a.right, pb = sgn > 0 ? b.left : b.right;
+      const ia: Pt = [pa[0] - a.normal[0] * wall * sgn, pa[1] - a.normal[1] * wall * sgn];
+      const ib: Pt = [pb[0] - b.normal[0] * wall * sgn, pb[1] - b.normal[1] * wall * sgn];
+      const f = side(a.normal[0] * sgn, a.normal[1] * sgn);
+      const open = deckSideCovered(deck, i, sgn, half, plan, selfId);
+      builder.quad([[...pa, a.h, -SLAB], [...pb, b.h, -SLAB], [...pb, b.h, open ? 0.05 : PARAPET], [...pa, a.h, open ? 0.05 : PARAPET]], shade(CONCRETE, f));
+      if (!open) {
+        builder.quad([[...pa, a.h, PARAPET], [...pb, b.h, PARAPET], [...ib, b.h, PARAPET], [...ia, a.h, PARAPET]], PARAPET_TOP, 'up');
+        builder.quad([[...ia, a.h, PARAPET], [...ib, b.h, PARAPET], [...ib, b.h, 0.05], [...ia, a.h, 0.05]], shade(CONCRETE, 1.05 - f * 0.25));
       }
     }
-    // underside (and the top plate), out to a neighbour where there is one
-    const hl = wide[0] ?? half, hr = wide[1] ?? half;
-    builder.quad([[ax + nx * hr, az + nz * hr, ha, -SLAB], [bx + nx * hr, bz + nz * hr, hb, -SLAB], [bx - nx * hl, bz - nz * hl, hb, -SLAB], [ax - nx * hl, az - nz * hl, ha, -SLAB]], UNDERSIDE, 'down');
-    if (sides.plate) builder.quad([[ax + nx * hr, az + nz * hr, ha, 0.04], [bx + nx * hr, bz + nz * hr, hb, 0.04], [bx - nx * hl, bz - nz * hl, hb, 0.04], [ax - nx * hl, az - nz * hl, ha, 0.04]], sides.plate, 'up');
+    const sidePoint = (section: typeof a, sgn: number): Pt => {
+      const w = wide[sgn < 0 ? 0 : 1] ?? section.half;
+      return [section.x + section.normal[0] * w * sgn, section.z + section.normal[1] * w * sgn];
+    };
+    const al = sidePoint(a, 1), ar = sidePoint(a, -1), bl = sidePoint(b, 1), br = sidePoint(b, -1);
+    builder.quad([[...al, a.h, -SLAB], [...bl, b.h, -SLAB], [...br, b.h, -SLAB], [...ar, a.h, -SLAB]], UNDERSIDE, 'down');
+    if (sides.plate) {
+      const saved = builder.captureSurface; builder.captureSurface = true;
+      builder.quad([[...al, a.h, 0.04], [...bl, b.h, 0.04], [...br, b.h, 0.04], [...ar, a.h, 0.04]], sides.plate, 'up');
+      builder.captureSurface = saved;
+    }
   }
-  if (sides.truss) deckTruss(builder, deck, half, toMerc, up, (i, sgn) => reach(i, sgn) != null || coplanarDeckCross(deck, i, plan, selfId));
+  if (sides.truss) deckTruss(builder, deck, half, toMerc, up, (i, sgn) => reach(i, sgn) != null || deckSideCovered(deck, i, sgn, half, plan, selfId));
   // piers, evenly spaced, none right at the ends
   const meters = deck.length / toMerc;
   if (meters < 16) return;
@@ -1340,8 +642,6 @@ function deckStructure(builder: RoadBuilder, deck: Deck, half: number, toMerc: n
   }
 }
 
-/** a road bridge's shoulder each side of the carriageway (m) */
-const DECK_SHOULDER = 1.5;
 /** a railway bridge's half width (m), and its deck plate */
 const RAIL_DECK_HALF = 3.4;
 const RAIL_PLATE = hex('#77736c');
@@ -1655,7 +955,7 @@ function hedgeLawns(plants: { x: number; z: number; species: string; yaw: number
 }
 
 /** the share of a tile round ours whose neighbour roads go into the bridge plan */
-const CONTEXT_MARGIN = 0.25;
+const CONTEXT_MARGIN = 0.5;
 
 /** The neighbours' roads and railways in our tile frame: cut to their own squares and to a band round ours. */
 function neighbourWays(neighbours: { dx: number; dy: number; vt: VectorTile }[], extent: number): Map<number, Way> {
@@ -1673,17 +973,18 @@ function neighbourWays(neighbours: { dx: number; dy: number; vt: VectorTile }[],
       if (!lines.length) continue;
       const p = layer.feature(i).properties;
       const style = roadStyle(String(p.class ?? ''), String(p.subclass ?? ''), Number(p.ramp) === 1);
-      const half = style ? style.width / 2 + 0.18 + (style.width < 1.5 ? 0.35 : DECK_SHOULDER) : railKind(p)?.tram ? 2.1 : RAIL_DECK_HALF;
+      const half = style ? (style.width < 1.5 ? style.width / 2 + 0.53 : roadDeckHalf(style)) : railKind(p)?.tram ? 2.1 : RAIL_DECK_HALF;
       out.set(1e7 * (n + 1) + i, { ...way, lines, half });
     }
   });
   return out;
 }
 
-function roadMesh(vt: VectorTile, span: number, grid: number, at: Surfaces, bridges: number[], pitchLines: number[] = [], lawns: number[] = [], neighbours: { dx: number; dy: number; vt: VectorTile }[] = []): MeshData {
+function roadMesh(vt: VectorTile, span: number, grid: number, at: Surfaces, bridges: number[], surface: number[], pitchLines: number[] = [], lawns: number[] = [], neighbours: { dx: number; dy: number; vt: VectorTile }[] = []): MeshData {
   const towerSpots = new Set<string>();
   const { driveAt, groundAt: bedAt } = at;
   const builder = new RoadBuilder(driveAt, span / grid, grid);
+  builder.surface = surface;
   // white pitch markings, painted on the ground under the roads' ribbons
   const chalk = hex('#f4f4ee');
   for (let i = 0; i < pitchLines.length; i += 5) builder.segment(pitchLines[i], pitchLines[i + 1], pitchLines[i + 2], pitchLines[i + 3], 0.06 * at.toMerc, 0.04, chalk);
@@ -1706,7 +1007,16 @@ function roadMesh(vt: VectorTile, span: number, grid: number, at: Surfaces, brid
     // car on our side of the edge drives on it
     if (extra) for (const [id, planned] of plan) {
       const half = extra.get(id)?.half;
-      if (half != null) for (const deck of planned.decks) pushDeck(bridges, deck, half * toMerc);
+      if (half != null) for (const deck of planned.decks) {
+        pushDeck(bridges, deck, half * toMerc);
+        const sections = deckSections(deck, half * toMerc, true);
+        const lift = extra.get(id)?.rail ? 0.04 : 0.13;
+        for (let n = 1; n < sections.length; n++) {
+          const a = sections[n - 1], b = sections[n], pad = Math.max(a.half, b.half) * 2;
+          if (Math.max(a.x, b.x) < -pad || Math.max(a.z, b.z) < -pad || Math.min(a.x, b.x) > span + pad || Math.min(a.z, b.z) > span + pad) continue;
+          for (const [p, h] of [[a.left, a.h], [b.left, b.h], [b.right, b.h], [a.left, a.h], [b.right, b.h], [a.right, a.h]] as [Pt, number][]) surface.push(p[0], h + lift, p[1]);
+        }
+      }
     }
     railTracks(builder, layer, k, at, bridges, ways, plan);
     // the drawn roads round their corners (the plan's lines stay as they are for the rest)
@@ -1726,8 +1036,9 @@ function roadMesh(vt: VectorTile, span: number, grid: number, at: Surfaces, brid
         const planned = plan.get(i);
         // a road bridge has a shoulder each side, out to the parapets: room to drive on it
         // without dropping off (footbridges keep a narrow edge)
-        const edge = (style.width / 2 + 0.18 + (style.width < 1.5 ? 0.35 : DECK_SHOULDER)) * toMerc;
+        const edge = (style.width < 1.5 ? style.width / 2 + 0.53 : roadDeckHalf(style)) * toMerc;
         for (const deck of planned?.decks ?? []) {
+          builder.captureSurface = false;
           if (pass === 'casing') {
             // the parapets stand just outside the shoulders, on a concrete edge
             deckStructure(builder, deck, edge, toMerc, plan, i);
@@ -1735,10 +1046,13 @@ function roadMesh(vt: VectorTile, span: number, grid: number, at: Surfaces, brid
             if (style.width < 1.5) stairTowers(builder, deck, toMerc, span, towerSpots, plan);
             // the shoulders out to the parapets in the carriageway's own asphalt (one surface,
             // the casing reads as the edge line); round joins as smooth as the road's
-            deckRibbon(builder, deck, edge, y - 0.01, hex(style.fill), steps);
+            builder.captureSurface = true;
+            deckRibbon(builder, deck, edge, 0.13, hex(style.fill), steps, true);
           } else pushDeck(bridges, deck, edge);
-          deckRibbon(builder, deck, half, y, rgb, steps);
+          builder.captureSurface = pass === 'fill';
+          deckRibbon(builder, deck, half, pass === 'fill' ? 0.18 : 0.14, rgb, steps);
         }
+        builder.captureSurface = pass === 'fill';
         // footpaths on the ground: the fill alone — a casing round a path a metre wide
         // was a second ribbon (and a fifth of the road triangles) for a hairline edge
         if (pass === 'casing' && style.width < 1.5) continue;
@@ -1779,6 +1093,7 @@ function roadMesh(vt: VectorTile, span: number, grid: number, at: Surfaces, brid
           }
         }
         builder.groundAt = driveAt;
+        builder.captureSurface = false;
       }
     }
     laneMarkings(builder, layer, ways, drawn, plan, k, toMerc, driveAt);
@@ -2007,16 +1322,28 @@ export function buildWorldTile(buffer: ArrayBuffer, tile: TileId, options: World
   const dem = options.dem;
   // vector ground; everything placed on it follows the (water-carved) terrain mesh
   const ground = buildGround(vt, span, options.grid, dem, metersScale);
-  const groundAt = (x: number, z: number) => gridGround(ground.heights, options.grid, x / span, z / span);
+  const around = (options.neighbours ?? []).flatMap(({ dx, dy, buffer: b, dem }) => {
+    try { return b.byteLength ? [{ dx, dy, dem, vt: new VectorTile(new PbfReader(new Uint8Array(b))) }] : []; } catch { return []; }
+  });
+  const terrainAt = roadTerrain(ground, dem, around, span, options.grid, metersScale);
+  const groundAt = (x: number, z: number) => {
+    const { ground: g, u, v } = terrainAt(x, z);
+    return gridGround(g.heights, options.grid, u, v);
+  };
   // roads stay a finger above any nearby water — bank dips must not drown the pavement
   const ROAD_CLEAR = 0.18;
   const driveAt = (x: number, z: number) => {
-    const g = groundAt(x, z);
-    const water = gridWaterLevel(ground.waterLevel, options.grid, x / span, z / span);
+    const { ground: sample, u, v } = terrainAt(x, z);
+    const g = gridGround(sample.driveHeights, options.grid, u, v);
+    const water = gridWaterLevel(sample.waterLevel, options.grid, u, v);
     return water == null ? g : Math.max(g, water + ROAD_CLEAR);
   };
-  const waterAt = (x: number, z: number) => gridWaterLevel(ground.waterLevel, options.grid, x / span, z / span);
+  const waterAt = (x: number, z: number) => {
+    const { ground: g, u, v } = terrainAt(x, z);
+    return gridWaterLevel(g.waterLevel, options.grid, u, v);
+  };
   const bridgeList: number[] = [];
+  const surfaceList: number[] = [];
   // statues, fountains, bus shelters, pitch lines and goals
   const furniture = streetFurniture(vt, span, metersScale);
   const features: Record<string, GeoFeature[]> = {};
@@ -2030,10 +1357,7 @@ export function buildWorldTile(buffer: ArrayBuffer, tile: TileId, options: World
   // lawn a hedge stands on for the road mesh
   const streets = planStreets(corner, span, metersScale, features as unknown as Record<string, MapFeature[]>);
   // the tiles around: their roads go into the bridge plan (an unreadable one is left out)
-  const around = (options.neighbours ?? []).flatMap(({ dx, dy, buffer: b }) => {
-    try { return b.byteLength ? [{ dx, dy, vt: new VectorTile(new PbfReader(new Uint8Array(b))) }] : []; } catch { return []; }
-  });
-  const roads = roadMesh(vt, span, options.grid, { driveAt, groundAt, waterAt, toMerc: 1 / metersScale }, bridgeList, furniture.lines, hedgeLawns(streets.plants, 1 / metersScale), around);
+  const roads = roadMesh(vt, span, options.grid, { driveAt, groundAt, waterAt, toMerc: 1 / metersScale }, bridgeList, surfaceList, furniture.lines, hedgeLawns(streets.plants, 1 / metersScale), around);
   // streams sit on the water surface — following the carved bed made torn blue ribbons
   const streamAt = (x: number, z: number) => {
     const g = groundAt(x, z);
@@ -2042,8 +1366,9 @@ export function buildWorldTile(buffer: ArrayBuffer, tile: TileId, options: World
   };
   const streams = streamMesh(vt, span, metersScale, streamAt, options.grid);
   const bridges = new Float32Array(bridgeList);
+  const roadSurface = buildRoadSurface(new Float32Array(surfaceList));
   // on a bridge / causeway the surface is the deck
-  const surfaceAt = (x: number, z: number) => Math.max(groundAt(x, z), bridgeDeck(bridges, x, z) ?? -Infinity);
+  const surfaceAt = (x: number, z: number) => Math.max(groundAt(x, z), surfaceHeight(roadSurface, x, z) ?? -Infinity);
 
   return {
     tile,
@@ -2052,6 +1377,7 @@ export function buildWorldTile(buffer: ArrayBuffer, tile: TileId, options: World
     dem,
     ground,
     bridges,
+    roadSurface,
     roads,
     streams,
     buildings: buildTile(vt, tile, {
@@ -2066,7 +1392,7 @@ export function buildWorldTile(buffer: ArrayBuffer, tile: TileId, options: World
       detailed: { region: options.region },
       // no houses punching through overpasses — short sheds under the deck may stay
       onElevatedBridge: (x, z, crest, foot, top) => {
-        const deck = bridgeDeck(bridges, x, z, 1.55);
+        const deck = surfaceHeight(roadSurface, x, z);
         if (deck == null || deck - crest < 1.8) return false;
         const underside = deck - 1;
         return foot < deck + 1.2 && top > underside;
@@ -2082,6 +1408,7 @@ export function buildWorldTile(buffer: ArrayBuffer, tile: TileId, options: World
 export function worldTransferables(data: WorldTileData): ArrayBuffer[] {
   const out = [...buildingTransferables(data.buildings), ...vegetationTransferables(data.vegetation)];
   out.push(...groundTransferables(data.ground), data.bridges.buffer as ArrayBuffer);
+  out.push(data.roadSurface.triangles.buffer as ArrayBuffer, data.roadSurface.offsets.buffer as ArrayBuffer, data.roadSurface.entries.buffer as ArrayBuffer);
   for (const mesh of [data.roads, data.streams]) {
     out.push(mesh.positions.buffer as ArrayBuffer, mesh.ground.buffer as ArrayBuffer, mesh.index.buffer as ArrayBuffer);
     if (mesh.colors) out.push(mesh.colors.buffer as ArrayBuffer);

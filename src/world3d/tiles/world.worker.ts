@@ -79,14 +79,13 @@ scope.onmessage = async (event: MessageEvent<Request>) => {
   running.set(message.id, controller);
   const started = performance.now();
   try {
-    const [buffer, dem] = await Promise.all([
+    const [buffer, center, neighbourDems] = await Promise.all([
       cachedVector(message.vectorUrl),
-      message.demUrl ? cachedDem(message.demUrl).then(async (center) => {
-        if (!center) return null;
-        const [w, e, n, s, nw, ne, sw, se] = await Promise.all((message.demNeighbours ?? []).concat(Array(8).fill(null)).slice(0, 8).map((url) => (url ? cachedDem(url) : Promise.resolve(null))));
-        return padDem(center, { w, e, n, s, nw, ne, sw, se });
-      }) : Promise.resolve(null),
+      message.demUrl ? cachedDem(message.demUrl) : Promise.resolve(null),
+      Promise.all((message.demNeighbours ?? []).concat(Array(8).fill(null)).slice(0, 8).map(url => url ? cachedDem(url) : Promise.resolve(null))),
     ]);
+    const [w, e, n, s, nw, ne, sw, se] = neighbourDems;
+    const dem = center ? padDem(center, { w, e, n, s, nw, ne, sw, se }) : null;
     const sources = [{ tile: message.tile, buffer }];
     let buildingAssemblies;
     // Follow only buildings intersecting the requested tile. Continue past the
@@ -109,8 +108,9 @@ scope.onmessage = async (event: MessageEvent<Request>) => {
         if (!dx && !dy) return null;
         const tile = { z: message.tile.z, x: message.tile.x + dx, y: message.tile.y + dy };
         const url = message.vectorTemplate!.replace('{z}', String(tile.z)).replace('{x}', String(tile.x)).replace('{y}', String(tile.y));
-        try { return { dx, dy, buffer: (await cachedVector(url)).slice(0) }; } catch { return null; }
-      })))).filter((n): n is { dx: number; dy: number; buffer: ArrayBuffer } => !!n)
+        const demIndex = [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]].findIndex(([x, y]) => x === dx && y === dy);
+        try { return { dx, dy, buffer: (await cachedVector(url)).slice(0), dem: neighbourDems[demIndex] }; } catch { return null; }
+      })))).filter((n): n is { dx: number; dy: number; buffer: ArrayBuffer; dem: Float32Array | null } => !!n)
       : [];
     const fetchMs = performance.now() - started;
     if (controller.signal.aborted) return;

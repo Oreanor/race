@@ -38,6 +38,7 @@ export type GroundData = {
   layers: GroundMesh[];
   water: GroundMesh;
 };
+export type GroundHeights = Pick<GroundData, 'heights' | 'driveHeights' | 'waterLevel'>;
 
 const BACKGROUND = '#dcdad3';
 const BANK = '#cdc4ad';
@@ -251,7 +252,9 @@ function fillRings(rings: Pt[][], grid: number, cs: number): Uint8Array {
   return mask;
 }
 
-export function buildGround(vt: VectorTile, span: number, grid: number, dem: Float32Array | null, metersScale: number): GroundData {
+export function buildGround(vt: VectorTile, span: number, grid: number, dem: Float32Array | null, metersScale: number): GroundData;
+export function buildGround(vt: VectorTile, span: number, grid: number, dem: Float32Array | null, metersScale: number, heightsOnly: true): GroundHeights;
+export function buildGround(vt: VectorTile, span: number, grid: number, dem: Float32Array | null, metersScale: number, heightsOnly = false): GroundData | GroundHeights {
   const n = grid + 1;
   const cs = span / grid;
   const H = new Float32Array(n * n);
@@ -436,6 +439,8 @@ export function buildGround(vt: VectorTile, span: number, grid: number, dem: Flo
     const surface = Number.isFinite(waterLevel[k]) ? waterLevel[k] : H[k];
     driveHeights[k] = count ? Math.max(sum / count, surface + CLEAR) : surface + CLEAR;
   }
+
+  if (heightsOnly) return { heights: H, driveHeights, waterLevel };
 
   // ---- the cells a shoreline runs through, with the shore segments in each ----
   // The 20 m grid can't follow a bank: a slope between a dry and a wet grid point

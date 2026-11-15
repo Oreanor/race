@@ -5,7 +5,8 @@ import { PbfReader } from 'pbf';
 import type { ChunkData } from '../tiles/buildTile.ts';
 import { ROOF_STRIDE } from '../tiles/buildTile.ts';
 import type { GeoFeature, MeshData, WorldTileData } from '../tiles/worldTile.ts';
-import { bridgeDeck, gridGround, gridWaterLevel, pickDriveHeight } from '../tiles/worldTile.ts';
+import { gridGround, gridWaterLevel, pickDriveHeight } from '../tiles/worldTile.ts';
+import { surfaceHeight } from '../tiles/roadSurface.ts';
 import { tileTemplate } from '../tiles/tileSource.ts';
 import { tilesAround, tilesCovering, distanceToTile, type PlannedTile } from '../tiles/tilePlan.ts';
 import { latFromMercator, lngFromMercator, mercatorX, mercatorY, tileAt, tileCorner, tileSpan, WORLD_SIZE, type LngLat, type TileId } from '../mercator.ts';
@@ -909,12 +910,10 @@ export class WorldTiles {
     // carved baths are only visual — don't drop the car into a 2 m hole (launches on the way out)
     const water = gridWaterLevel(live.data.ground.waterLevel, this.options.grid, u, v);
     if (water != null && ground < water - 0.4) ground = water - 0.12;
-    // if already elevated, widen the ribbon so curve chords / deck seams don't miss
-    const hint = atAltitude == null ? undefined : atAltitude - ROAD_TOP;
-    const elevated = hint != null && hint > ground + 1.4;
-    const deck = bridgeDeck(live.data.bridges, x, z, elevated ? 1.45 : 1.22);
-    // roads lie on the terrain, lifted a little: wheels stand on the pavement, not in it
-    return pickDriveHeight(ground, deck, hint) + ROAD_TOP;
+    // The exact triangles drawn as pavement, including their shoulder widths and
+    // bends. Select a storey with the car's height rather than always the top deck.
+    const deck = surfaceHeight(live.data.roadSurface, x, z, atAltitude ?? ground + ROAD_TOP);
+    return pickDriveHeight(ground + ROAD_TOP, deck, atAltitude);
   }
 
   /**
@@ -926,8 +925,11 @@ export class WorldTiles {
     if (!live?.data.bridges.length) return false;
     const [cx, cy] = live.data.corner;
     const x = mercatorX(lng) - cx, z = cy - mercatorY(lat);
-    const deck = bridgeDeck(live.data.bridges, x, z, 1.45);
+    const deck = surfaceHeight(live.data.roadSurface, x, z, altitude);
     if (deck == null) return false;
+    const span = tileSpan(live.tile.z);
+    const bed = gridGround(live.data.ground.heights, this.options.grid, x / span, z / span);
+    if (deck - bed < 0.3) return false;
     // near the deck surface — under the bridge altitude is far below
     return altitude >= deck - 2.8 && altitude <= deck + 6;
   }

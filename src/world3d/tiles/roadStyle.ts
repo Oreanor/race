@@ -2,6 +2,11 @@
 
 export type RoadStyle = { width: number; fill: string; casing: string; lift: number };
 
+/** Physical deck width, used by the planner, pavement and bridge furniture. */
+export function roadDeckHalf(style: RoadStyle): number {
+  return style.width / 2 + (style.width < 1.5 ? 0.53 : 1.5);
+}
+
 /**
  * Widths match what MapLibre drew at the chase zoom (paintCity: rank × pavement
  * × zoom factor, ≈ 25.6 px/m at zoom 20.55), so the city reads the same.
