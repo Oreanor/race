@@ -2718,13 +2718,13 @@ export class GameEngine {
       heist.reinforce = 0;
     }
     // on the run, a patrol out in the traffic may spot us and join in: every 20 s a coin
-    // toss, at most 3 cars after us at once and 3 such patrols in a chase
+    // toss, up to 6 cars after us at once (14 sent in a chase at most, see sendPolice)
     const nowJoin = performance.now();
     heist.joinAt ??= nowJoin + POLICE_JOIN_MS;
     if (nowJoin >= heist.joinAt) {
       heist.joinAt = nowJoin + POLICE_JOIN_MS;
       const after = this.trafficBots.filter((bot) => bot.id.startsWith('police') && this.combatLayer?.isTargetAlive(bot.id) !== false).length;
-      if (after > 0 && after < 3 && (heist.joined ?? 0) < 3 && Math.random() < 0.5) {
+      if (after > 0 && after < 6 && Math.random() < 0.5) {
         heist.joined = (heist.joined ?? 0) + 1;
         this.sendPolice(1, true);
         this.say(t('heist.joined'), true);
