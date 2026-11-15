@@ -137,11 +137,13 @@ function addBeacons(root: THREE.Group, car: Car, size: THREE.Vector3, scale: num
 export function disposeObject(object: THREE.Object3D) {
   object.traverse((child) => {
     if (!(child instanceof THREE.Mesh)) return;
-    child.geometry.dispose();
+    // a copy of a cached car model: its own materials go, the shared geometry and textures stay
+    const shared = child.userData.shared === true;
+    if (!shared) child.geometry.dispose();
     if (child.userData.beacon) return;
     const materials = Array.isArray(child.material) ? child.material : [child.material];
     for (const material of materials) {
-      for (const value of Object.values(material)) if (value instanceof THREE.Texture) value.dispose();
+      if (!shared) for (const value of Object.values(material)) if (value instanceof THREE.Texture) value.dispose();
       material.dispose();
     }
   });
@@ -200,8 +202,15 @@ export async function loadCar(car: Car) {
     });
     models.set(car.path, built);
   }
-  // every caller disposes its copy on removal — clone, never hand out the cached root itself
-  return (await built).clone(true);
+  // a copy for every car: its own materials (it fades in, flashes when hit, chars when
+  // blown up — alone), the geometry and textures shared with the cached model
+  const copy = (await built).clone(true);
+  copy.traverse((child) => {
+    if (!(child instanceof THREE.Mesh) || child.userData.beacon) return;
+    child.material = Array.isArray(child.material) ? child.material.map((m) => m.clone()) : child.material.clone();
+    child.userData.shared = true;
+  });
+  return copy;
 }
 
 export function fallbackCar(color: string) {
