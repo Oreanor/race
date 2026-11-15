@@ -2651,12 +2651,19 @@ export class GameEngine {
    * yards and squares anyway), just not inside a house or in the water. The old road pick
    * (sampled randomAway) missed and fell back to any node, often ~1 km off.
    */
-  private policeSpawn(me: [number, number], angle: number, taken: [number, number][]): [number, number] | null {
-    for (const r of [150, 120, 180, 105, 195]) {
+  private policeSpawn(me: [number, number], angle: number, taken: [number, number][], far = false): [number, number] | null {
+    // the first call: 100–200 m, they pull away at once; reinforcements drive in from farther
+    for (const r of far ? [550, 480, 620, 450, 650] : [150, 120, 180, 105, 195]) {
       for (const turn of [0, 0.35, -0.35, 0.7, -0.7, 1.05, -1.05]) {
         const a = angle + turn;
         const spot = offsetPosition(me, Math.sin(a) * r, Math.cos(a) * r) as [number, number];
-        if (this.collisions.blocked(spot, spot, a + Math.PI) || this.water.covers(spot, true)) continue;
+        // our collision set only reaches 260 m: farther, ask the houses round the spot itself
+        let walls = this.collisions;
+        if (far) {
+          walls = new BuildingCollisions();
+          walls.update(spot, this.map.world.buildingsNear(spot, 30, this.map.exaggeration));
+        }
+        if (walls.blocked(spot, spot, a + Math.PI) || this.water.covers(spot, true)) continue;
         if (taken.some((other) => metersBetween(other, spot) < 12)) continue;
         taken.push(spot);
         return spot;
@@ -2665,8 +2672,8 @@ export class GameEngine {
     return null;
   }
 
-  /** Police cars 100–200 m out on the roads, spread round us, coming in. */
-  private sendPolice(count: number) {
+  /** Police cars 100–200 m out (reinforcements: 450–650 m), spread round us, coming in. */
+  private sendPolice(count: number, far = false) {
     const heist = this.heist;
     if (!heist) return;
     const me = this.vehicle.position as [number, number];
@@ -2676,8 +2683,9 @@ export class GameEngine {
     const spots: [number, number][] = [];
     for (let k = 0; k < count && heist.sent < 14; k++) {
       const angle = base + (k / count) * Math.PI * 2;
-      const spot = this.policeSpawn(me, angle, spots);
-      const around = spot ?? offsetPosition(me, Math.sin(angle) * 150, Math.cos(angle) * 150) as [number, number];
+      const spot = this.policeSpawn(me, angle, spots, far);
+      const r = far ? 550 : 150;
+      const around = spot ?? offsetPosition(me, Math.sin(angle) * r, Math.cos(angle) * r) as [number, number];
       const car = police[(heist.sent + k) % police.length] ?? carsConfig[0];
       const bot = createTrafficBot(`police-${heist.sent}`, t('heist.police'), car, this.trafficNetwork, around, angle + Math.PI, used, 'hunt', (heist.sent + 1) * 7919, { min: 0, max: 70 });
       if (spot) {
@@ -2706,7 +2714,8 @@ export class GameEngine {
   private updateHeist() {
     const heist = this.heist!;
     if (heist.reinforce > 0) {
-      this.sendPolice(heist.reinforce);
+      // reinforcements drive in from farther, not out of thin air beside us
+      this.sendPolice(heist.reinforce, true);
       heist.reinforce = 0;
     }
     if (this.playerHp > 0 && this.playerHp <= this.playerMaxHp * 0.35) this.combatLayer?.burnPlayer();
