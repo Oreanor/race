@@ -157,7 +157,7 @@ const wrapDegrees = (deg: number) => ((deg + 180) % 360 + 360) % 360 - 180;
 const CAMERA_STORE = 'race.camera';
 /** a racer looks this far (m) straight toward the flag: clear of houses and water → it cuts across */
 const RACE_LOOK_M = 400;
-/** hit a wall faster than this (km/h) and three coins jump out of it */
+/** hit a wall faster than this (km/h) and coins jump out of it (3; 5 from 150, 10 from 200) */
 const WALL_COIN_KMH = 100;
 /** …when the wall takes at least this much of the speed (m/s, ~40 km/h): a hit, not a graze */
 const WALL_COIN_HIT = 11;
@@ -2769,11 +2769,11 @@ export class GameEngine {
    * Coins jumping out of a wall we hit hard, the way bundles fly out of a bank's door:
    * from the wall at the bumper they bounce out 1.5–4.5 m, anywhere on our side of it.
    */
-  private wallCoins(at: [number, number], heading: number) {
+  private wallCoins(at: [number, number], heading: number, count = 3) {
     const now = performance.now();
     const nose = this.car.length * 0.55;
     const wall = offsetPosition(at, Math.sin(heading) * nose, Math.cos(heading) * nose) as [number, number];
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < count; i++) {
       // away from the wall: the half-circle behind the bumper
       const angle = heading + Math.PI + (Math.random() - 0.5) * Math.PI;
       let r = 1.5 + Math.random() * 3;
@@ -6036,7 +6036,9 @@ export class GameEngine {
           // faster than 100 km/h into a wall (not a graze): three coins jump out of it
           if (fast && wallHit > WALL_COIN_HIT && now - this.wallCoinsAt > 1500) {
             this.wallCoinsAt = now;
-            this.wallCoins(building.position as [number, number], oldHeading);
+            // the faster, the more: 100 km/h → 3, 150 → 5, 200 → 10
+            const kmh = Math.abs(this.vehicle.speed) * 3.6;
+            this.wallCoins(building.position as [number, number], oldHeading, kmh >= 200 ? 10 : kmh >= 150 ? 5 : 3);
           }
           if (building.stopped) {
             this.vehicle.position = building.position;
