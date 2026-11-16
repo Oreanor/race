@@ -870,6 +870,10 @@ export function vehicleLayer(
         if (shotGround) { shotE += side.n * other; shotN -= side.e * other; } else shotU += other;
       }
       const groundMark = shotGround ? offsetPosition(here, shotE, shotN) as Position : aim.ground;
+      // the ground's height where this shot actually lands (the scatter moves it up to a
+      // metre): the aim point's height buried marks and clods on a slope under the ground
+      const markAlt = shotGround ? (map.groundAt(groundMark) ?? groundAlt) : groundAlt;
+      if (shotGround) shotU = markAlt - carAlt;
       const cam = { position: offsetPosition(here, gunEast, gunNorth) as Position, altitude: carAlt + gunAlt, east: gunEast, north: gunNorth, up: gunAlt };
       const dx = shotE - cam.east;
       // shotU may sit below the muzzle (negative uy) so we can hit the kerb beside us
@@ -964,9 +968,9 @@ export function vehicleLayer(
       }
       if (!hit && !wallHit && !remoteHit && !trainHit && shotGround) {
         bestT = Math.min(bestT, rayLen);
-        hitUp = groundAlt - carAlt;
+        hitUp = markAlt - carAlt;
         groundHit = true;
-        markGround(groundMark, groundAlt);
+        markGround(groundMark, markAlt);
       }
 
       const end = offsetPosition(here, cam.east + ux * bestT, cam.north + uz * bestT);
