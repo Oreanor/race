@@ -20,7 +20,7 @@ function eastNorth(origin: Position, point: Position) {
 /** World offset relative to the car, meters. */
 export type Enu = { e: number; n: number; u: number };
 
-type Kind = 'flash' | 'flame' | 'spark' | 'chipspark' | 'fire' | 'smoke' | 'dust' | 'ring' | 'ember' | 'tracer' | 'tiresmoke' | 'grit' | 'water' | 'mist';
+type Kind = 'flash' | 'flame' | 'spark' | 'chipspark' | 'clod' | 'fire' | 'smoke' | 'dust' | 'ring' | 'ember' | 'tracer' | 'tiresmoke' | 'grit' | 'water' | 'mist';
 
 /** What the rear wheels are on: asphalt and pavements smoke, the rest throws dust and grit. */
 export type Surface = 'paved' | 'dirt' | 'grass' | 'sand';
@@ -41,8 +41,8 @@ type Particle = {
   tint?: [number, number, number];
 };
 
-const SHAPE: Record<Kind, number> = { flash: 0, flame: 0, spark: 0, chipspark: 0, ember: 0, fire: 0, smoke: 2, dust: 2, ring: 1, tracer: 0, tiresmoke: 2, grit: 0, water: 3, mist: 2 };
-const ADDITIVE: Record<Kind, boolean> = { flash: true, flame: true, spark: true, chipspark: true, ember: true, fire: true, smoke: false, dust: false, ring: true, tracer: true, tiresmoke: false, grit: false, water: false, mist: false };
+const SHAPE: Record<Kind, number> = { flash: 0, flame: 0, spark: 0, chipspark: 0, clod: 4, ember: 0, fire: 0, smoke: 2, dust: 2, ring: 1, tracer: 0, tiresmoke: 2, grit: 0, water: 3, mist: 2 };
+const ADDITIVE: Record<Kind, boolean> = { flash: true, flame: true, spark: true, chipspark: true, clod: false, ember: true, fire: true, smoke: false, dust: false, ring: true, tracer: true, tiresmoke: false, grit: false, water: false, mist: false };
 
 /** dust cloud, grit and tyre-smoke colours per surface (linear) */
 const SURFACE_FX: Record<Surface, { dust: [number, number, number]; grit: [number, number, number] }> = {
@@ -100,6 +100,7 @@ function shade(p: Particle, t: number): [number, number, number, number] {
       const c = p.tint ?? [0.68, 0.68, 0.66];
       return [c[0], c[1], c[2], 0.42 * Math.min(1, t * 5) * Math.pow(1 - t, 1.6)];
     }
+    case 'clod':
     case 'grit': {
       const c = p.tint ?? [0.3, 0.22, 0.15];
       return [c[0], c[1], c[2], 1 - t * t];
@@ -171,7 +172,12 @@ const FRAGMENT = /* glsl */ `
     float r = length(vUv);
     float a;
     vec3 rgb = vColor.rgb;
-    if (vMeta.x > 2.5) {
+    if (vMeta.x > 3.5) {
+      // a clod of earth: a crisp lumpy chunk, no glow
+      float ang = atan(vUv.y, vUv.x);
+      float edge = 0.78 + 0.12 * sin(ang * 3.0 + vMeta.y * 31.0) + 0.08 * sin(ang * 5.0 - vMeta.y * 17.0);
+      a = 1.0 - smoothstep(edge - 0.06, edge, r);
+    } else if (vMeta.x > 2.5) {
       // water spit: dense body, slight cool rim (not a blue ghost)
       float core = exp(-r * r * 3.2);
       float rim = smoothstep(0.22, 0.88, r) * smoothstep(1.05, 0.72, r);
@@ -566,14 +572,14 @@ export class WorldParticles {
       ? (options.surface === 'sand' ? [0.32, 0.24, 0.14] : [0.08, 0.05, 0.025])
       : [0.32, 0.31, 0.29];
     if (soil) {
-      // 5-10 big clods dart half a metre to the sides and vanish: nothing else
-      const clods = Math.round(rand(5, 10) * s);
+      // 3-6 small crisp clods dart a metre to the sides and vanish: nothing else
+      const clods = Math.round(rand(3, 6) * s);
       for (let i = 0; i < clods; i++) {
-        const angle = rand(0, Math.PI * 2), kick = rand(4.5, 6.5);
+        const angle = rand(0, Math.PI * 2), kick = rand(9, 13);
         this.add(here, { e: at.e, n: at.n, u: at.u + 0.05 }, {
-          kind: 'grit', tint: [tint[0] * rand(0.75, 1.1), tint[1] * rand(0.75, 1.1), tint[2] * rand(0.75, 1.1)],
+          kind: 'clod', tint: [tint[0] * rand(0.75, 1.1), tint[1] * rand(0.75, 1.1), tint[2] * rand(0.75, 1.1)],
           ve: Math.cos(angle) * kick, vn: Math.sin(angle) * kick, vu: rand(0.5, 1.5),
-          life: rand(90, 130), size0: rand(0.22, 0.34), size1: rand(0.2, 0.3), drag: 0, gravity: 0, stretch: 0,
+          life: rand(90, 130), size0: rand(0.09, 0.14), size1: rand(0.08, 0.12), drag: 0, gravity: 0, stretch: 0,
         }, now);
       }
       // and that is all: no puff
