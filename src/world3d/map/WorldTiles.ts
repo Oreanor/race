@@ -828,6 +828,7 @@ export class WorldTiles {
       footprintCells: null, footprintSeen: null, lampMap, spires: null, fade: 0, base: 2,
     };
     this.place(live);
+    this.byGroup.set(group, live);
     this.root.add(group);
     this.tiles.set(key, live);
 
@@ -2026,6 +2027,16 @@ export class WorldTiles {
   }
 
   /** Includes hidden meshes still waiting for their first GPU upload. */
+  /** Which loaded tile a group draws (for ranking its meshes' GPU uploads). */
+  private byGroup = new WeakMap<THREE.Object3D, Live>();
+
+  /** How far (m) the tile drawn by this group is from `focus`; Infinity for no tile. */
+  groupDistance(group: THREE.Object3D, focus: LngLat) {
+    const live = this.byGroup.get(group);
+    if (!live) return Infinity;
+    return distanceToTile(mercatorX(focus[0]), mercatorY(focus[1]), live.tile, Math.cos(focus[1] * Math.PI / 180));
+  }
+
   groupsAround(focus: LngLat, radius: number) {
     return tilesAround(focus, radius, this.options.zoom).flatMap(t => {
       const live = this.tiles.get(t.key);

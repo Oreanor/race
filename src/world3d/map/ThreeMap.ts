@@ -175,6 +175,9 @@ export class ThreeMap {
   /** first-frame shader compile so the opening lap does not hitch on program link */
   private programsWarmed = false;
   private gpuWarmQueue: THREE.Mesh[] = [];
+  /** when / at what length the warm queue was last put in order (see warmGpu) */
+  private gpuWarmSortedAt = 0;
+  private gpuWarmSortedLength = -1;
   private gpuWarmLayers = new WeakMap<THREE.Mesh, number>();
   private gpuWarmScene = new THREE.Scene();
   private gpuWarmTarget: THREE.WebGLRenderTarget | null = null;
@@ -934,23 +937,37 @@ export class ThreeMap {
       this.gpuWarmSubmitted = [];
     }
     if (this.streamingCalm() || !this.gpuWarmQueue.length) return;
-    if (this.streamDestination) {
-      const groups = new Set(this.world.groupsAround(this.streamDestination.at, this.streamDestination.radius));
-      const near = (mesh: THREE.Mesh) => {
-        for (let p: THREE.Object3D | null = mesh; p; p = p.parent) if (groups.has(p as THREE.Group)) return true;
-        return false;
-      };
-      const priority = this.gpuWarmQueue.filter(near);
-      if (priority.length) this.gpuWarmQueue = [...priority, ...this.gpuWarmQueue.filter(mesh => !near(mesh))];
+    // A mesh is hidden until it is warmed, so the order is what the player sees first: the
+    // ground, water and roads (negative render order) before buildings and plants, and the
+    // tiles nearest the car (or where it is being taken) before far ones. First come first
+    // served put the ground of the tile ahead behind thousands of plant batches of the tiles
+    // already passed — it showed up 5-20 s late, the car drove into black.
+    const nowWarm = performance.now();
+    if (this.gpuWarmQueue.length !== this.gpuWarmSortedLength || nowWarm - this.gpuWarmSortedAt > 400) {
+      const focus = this.streamDestination?.at ?? this.focusCar?.at ?? this.camera.state.center;
+      const rank = new Map<THREE.Mesh, number>();
+      const groupRank = new Map<THREE.Object3D, number>();
+      for (const mesh of this.gpuWarmQueue) {
+        let group: THREE.Object3D | null = mesh;
+        while (group?.parent && group.parent !== this.world.root) group = group.parent;
+        let d = group ? groupRank.get(group) : undefined;
+        if (d === undefined) { d = group ? Math.min(1e5, this.world.groupDistance(group, focus)) : 1e5; if (group) groupRank.set(group, d); }
+        rank.set(mesh, d + (mesh.renderOrder < 0 ? 0 : 400));
+      }
+      this.gpuWarmQueue.sort((a, b) => rank.get(a)! - rank.get(b)!);
+      this.gpuWarmSortedLength = this.gpuWarmQueue.length;
+      this.gpuWarmSortedAt = nowWarm;
     }
     const target = renderer.getRenderTarget();
     this.gpuWarmTarget ??= new THREE.WebGLRenderTarget(1, 1, { depthBuffer: false });
-    const deadline = performance.now() + (this.streamBurst ? 5 : 1.5);
-    let remaining = this.streamBurst ? 6 : 1;
+    // driving: several small uploads a frame (one a frame left a 10 000 mesh backlog)
+    const deadline = performance.now() + (this.streamBurst ? 5 : 2.5);
+    let remaining = this.streamBurst ? 6 : 8;
     try {
       renderer.setRenderTarget(this.gpuWarmTarget);
       while (remaining-- > 0 && this.gpuWarmQueue.length && performance.now() < deadline) {
         const source = this.gpuWarmQueue.shift()!;
+        this.gpuWarmSortedLength--;
         // Unloaded tiles detach their group; do not resurrect disposed buffers.
         if (!source.parent?.parent) continue;
         const geometry = source.geometry;
