@@ -141,6 +141,8 @@ type Live = {
   fade: number;
   /** the map-only (lite) tile this full one replaces: drawn until this one is fully up, then let go */
   retire?: Live;
+  /** how many of the first waiting steps are its ground, water and roads (shown before any tile's detail) */
+  base: number;
 };
 
 /** A tree, lamp, shelter or statue knocked over; stands up again once out of sight. */
@@ -581,14 +583,23 @@ export class WorldTiles {
     if (this.mapLite) budget = Math.min(budget, 2);
     // wanted first; soft-kept only when not calm (otherwise M leftovers hitch the intro fly-in)
     const uploadDeadline = performance.now() + (burst || mapBurst ? 8 : 2);
+    // every tile in view gets its ground, water and roads first, then the buildings and the
+    // plants: one tile at a time (all its detail before the next one's ground) left the map
+    // black for a minute behind a thousand queued steps
+    const step = (live: Live) => { live.waiting.shift()!(); if (live.base > 0) live.base--; budget--; };
     for (const plan of wanted) {
       const live = this.tiles.get(plan.key);
-      while (live && live.waiting.length && budget > 0 && performance.now() < uploadDeadline) { live.waiting.shift()!(); budget--; }
+      while (live && live.base > 0 && live.waiting.length && budget > 0 && performance.now() < uploadDeadline) step(live);
+      if (budget <= 0) break;
+    }
+    for (const plan of wanted) {
+      const live = this.tiles.get(plan.key);
+      while (live && live.waiting.length && budget > 0 && performance.now() < uploadDeadline) step(live);
       if (budget <= 0) break;
     }
     if (budget > 0 && !calm && !this.mapLite) {
       for (const live of this.tiles.values()) {
-        while (live.waiting.length && budget > 0 && performance.now() < uploadDeadline) { live.waiting.shift()!(); budget--; }
+        while (live.waiting.length && budget > 0 && performance.now() < uploadDeadline) step(live);
         if (budget <= 0) break;
       }
     }
@@ -800,7 +811,7 @@ export class WorldTiles {
     const live: Live = {
       key, bytes: tileBytes(data), usedAt: performance.now(), tile: data.tile, data, group, waiting: [], deferred: [], buildings: [], roads: null,
       disposables: [lampMap], extra: new Map(), props: new Map(), floraMeshes: null, propCells: null,
-      footprintCells: null, footprintSeen: null, lampMap, spires: null, fade: 0,
+      footprintCells: null, footprintSeen: null, lampMap, spires: null, fade: 0, base: 2,
     };
     this.place(live);
     this.root.add(group);
