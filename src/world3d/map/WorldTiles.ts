@@ -1470,7 +1470,7 @@ export class WorldTiles {
   private eachFootprint(
     center: LngLat,
     radius: number,
-    visit: (rings: () => [number, number][][], height: number, roof: RoofProfile, crest: number) => void,
+    visit: (rings: () => [number, number][][], height: number, roof: RoofProfile, crest: number, base: number) => void,
   ) {
     const mx = mercatorX(center[0]), my = mercatorY(center[1]);
     const query = ++this.footprintQuery;
@@ -1516,7 +1516,7 @@ export class WorldTiles {
                 ridgeB: { x: lngFromMercator(cx + roofs[o + 4]), z: latFromMercator(cy - roofs[o + 5]) },
               }
               : { eaves, peak, half: 0, ridgeA: null, ridgeB: null };
-            visit(rings, f.heights[b], roof, crest);
+            visit(rings, f.heights[b], roof, crest, f.bases?.[b] ?? 0);
           }
     }
   }
@@ -1966,13 +1966,16 @@ export class WorldTiles {
     const length = Math.hypot(dx, dy);
     if (length < 0.5) return null;
     const mid: LngLat = [(from[0] + to[0]) / 2, (from[1] + to[1]) / 2];
-    type Cand = { rings: [number, number][][]; crest: number; roof: RoofProfile; peak: number };
+    type Cand = { rings: [number, number][][]; crest: number; roof: RoofProfile; peak: number; under: number };
     const candidates: Cand[] = [];
-    this.eachFootprint(mid, length / 2 + 30, (rings, height, roof, crest) => {
+    this.eachFootprint(mid, length / 2 + 30, (rings, height, roof, crest, base) => {
       // a flat outline (a terrace, an underground part, a part with no height) is no wall:
       // its 'roof' lay on the ground and took the aim and the shots over a yard
       if (height < 1.5) return;
-      candidates.push({ rings: rings(), crest: crest * exaggeration, roof, peak: crest * exaggeration + height });
+      // a raised part (a canopy, a bridge between blocks, an overhang) has open space under
+      // it: a shot passes below its underside (it was a solid block down to the ground, and
+      // shots at the ground by houses went into it unseen)
+      candidates.push({ rings: rings(), crest: crest * exaggeration, roof, peak: crest * exaggeration + height, under: base > 0.3 ? crest * exaggeration + base : -Infinity });
     });
     if (!candidates.length) return null;
     const steps = Math.ceil(length / 0.75);
@@ -1982,7 +1985,7 @@ export class WorldTiles {
       const p: LngLat = [from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t];
       const altitude = fromAlt + (toAlt - fromAlt) * t;
       for (const c of candidates) {
-        if (altitude > c.peak) continue;
+        if (altitude > c.peak || altitude < c.under) continue;
         if (!insideLngLat(p, c.rings[0]) || c.rings.slice(1).some((hole) => insideLngLat(p, hole))) continue;
         const roofHere = c.crest + roofClearanceAt(0, 0, roofInMeters(c.roof, p[0], p[1]));
         if (altitude > roofHere) continue;

@@ -92,6 +92,8 @@ export type FootprintData = {
   buildingStart: Uint32Array;
   bounds: Float32Array;
   heights: Float32Array;
+  /** how high (m) each building's underside is off the ground: a raised part (min_height) has open space under it */
+  bases: Float32Array;
   roofs: Float32Array;
 };
 
@@ -412,6 +414,7 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
   const fpBuildings: number[] = [];
   const fpBounds: number[] = [];
   const fpHeights: number[] = [];
+  const fpBases: number[] = [];
   const fpRoofs: number[] = [];
 
   // walls are collected and resolved per tile, then emitted (see pass 2)
@@ -613,6 +616,7 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
         fpBounds.push(bx0, bz0, bx1, bz1);
         // peak filled in after the roof is chosen (wall height until then)
         fpHeights.push(height);
+        fpBases.push(base);
 
         const clear = height - base;
         // Facade: plinth, a window body tiled in whole floors, and a cap.
@@ -938,17 +942,18 @@ export function buildTile(buffer: ArrayBuffer | Uint8Array | VectorTile, tile: T
     buildingStart: new Uint32Array(fpBuildings),
     bounds: new Float32Array(fpBounds),
     heights: new Float32Array(fpHeights),
+    bases: new Float32Array(fpBases),
     roofs: new Float32Array(fpRoofs),
   };
   stats.bytes += footprints.coords.byteLength + footprints.ringStart.byteLength + footprints.buildingStart.byteLength
-    + footprints.bounds.byteLength + footprints.heights.byteLength + footprints.roofs.byteLength;
+    + footprints.bounds.byteLength + footprints.heights.byteLength + footprints.bases.byteLength + footprints.roofs.byteLength;
   return { tile, corner, metersScale, chunks, footprints, accents: { chimney: chimneys.done(), vent: vents.done(), antenna: antennas.done(), dish: dishes.done(), ac: coolers.done() }, stats };
 }
 
 /** Typed arrays to hand to postMessage as transferables. */
 export function transferables(data: TileData): ArrayBuffer[] {
   const f = data.footprints;
-  const out: ArrayBuffer[] = [f.coords.buffer, f.ringStart.buffer, f.buildingStart.buffer, f.bounds.buffer, f.heights.buffer, f.roofs.buffer] as ArrayBuffer[];
+  const out: ArrayBuffer[] = [f.coords.buffer, f.ringStart.buffer, f.buildingStart.buffer, f.bounds.buffer, f.heights.buffer, f.bases.buffer, f.roofs.buffer] as ArrayBuffer[];
   for (const set of [data.accents.chimney, data.accents.vent, data.accents.antenna, data.accents.dish, data.accents.ac]) out.push(set.matrices.buffer as ArrayBuffer, set.ground.buffer as ArrayBuffer, set.colors!.buffer as ArrayBuffer);
   for (const c of data.chunks) {
     out.push(c.positions.buffer as ArrayBuffer, c.normals.buffer as ArrayBuffer, c.colors.buffer as ArrayBuffer,

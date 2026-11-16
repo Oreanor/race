@@ -150,7 +150,7 @@ export class ThreeMap {
   private lighting: Lighting | null = null;
   private lightClock = 0;
   /** bullet holes on walls, roofs and ground; world positions, oldest replaced first */
-  private holes: { at: [number, number]; altitude: number; normal: [number, number, number] }[] = [];
+  private holes: { at: [number, number]; altitude: number; normal: [number, number, number]; size: number }[] = [];
   /**
    * Bullet hits on walls, kept apart from the hole decals: the pane a hit broke
    * stays broken until it leaves the drawn area (past the fog), not when its hole
@@ -719,7 +719,8 @@ export class ThreeMap {
   }
 
   private addHole(at: [number, number], altitude: number, normal: [number, number, number]) {
-    this.holes.push({ at: [...at], altitude, normal });
+    // its own size, kept for good (from its index it changed on every shot once the oldest went)
+    this.holes.push({ at: [...at], altitude, normal, size: 0.8 + Math.floor(Math.random() * 5) * 0.1 });
     if (this.holes.length > MAX_HOLES) this.holes.shift(); // the oldest hole goes
     if (Math.abs(normal[1]) < 0.5) this.addBrokenPane(at, altitude);
     this.holesDirty = true;
@@ -770,7 +771,7 @@ export class ThreeMap {
       // a mark in the ground is a small crater, and it is seen at a grazing angle: at the
       // wall size it shrank to a pixel and most shots into the ground seemed to leave none
       const grazing = Math.abs(h.normal[1]) > 0.5 ? 2.2 : 1;
-      m.compose(p, q, one.setScalar((0.8 + ((i * 7919) % 5) * 0.1) * grazing));
+      m.compose(p, q, one.setScalar(h.size * grazing));
       this.holeMesh.setMatrixAt(i, m);
     });
     this.holeMesh.count = this.holes.length;
