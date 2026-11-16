@@ -66,7 +66,7 @@ import { HIT_DAMAGE, PLAYER_HP } from '@/net/protocol';
   import { formatRange, MARKER_PIN_METERS, nameIndicator, placeIndicator } from './hud/indicators.ts';
 import { advanceTrafficBot, createTrafficBot, TrafficRoadNetwork, type TrafficBot } from './TrafficBots.ts';
 import { formatNumber, onLangChange, t } from '@/i18n';
-import { ThreeMap, ThreeMarker } from '@/world3d/map/ThreeMap';
+import { ThreeMap } from '@/world3d/map/ThreeMap';
 import { EVACUATION_COST, FuelTank, FUEL_PRICE, REPAIR_PRICE } from './Fuel.ts';
 import { atStation, banksFromFeatures, busStopsFromFeatures, courtsFromFeatures, dealershipsFromFeatures, hospitalsFromFeatures, landmarksFromFeatures, nearestStation, policeFromFeatures, prisonsFromFeatures, repairShopsFromFeatures, SERVICE_REACH, stationsFromFeatures, type CivicKind, type Landmark, type Station } from './poi.ts';
 import { metersBetween, offsetMeters } from './meters.ts';
@@ -75,6 +75,7 @@ import { fuelStationsLayer } from '@/rendering/FuelStationsLayer';
 import { isVintageTrain, trainsLayer } from '@/rendering/TrainsLayer';
 import { RailNetwork, TrainTraffic } from './Trains.ts';
 import { canCable, Hauler, type HaulHost } from './Hauler.ts';
+import { makeMapLabel, makeOffscreenIndicator, newMarker, paintMissionIndicator, setPinRange, type MapMarker } from './hud/mapPins.ts';
 import { hubAt, hubsFromFeatures, kilometres, nearestHub, ticketPrice, type Hub, type HubKind } from './Travel.ts';
 import { bearingTo, BOUNTY_RANGE_KM, loadBounty, makeBounty, saveBounty, type Bounty } from './Bounty.ts';
 import type { GameSave } from './save.ts';
@@ -189,14 +190,6 @@ function savedCamera(): { distance: number; pitch: number; orbit: number } | nul
 }
 const NO_FUEL_KEYS = new Set(['KeyW', 'Space']);
 
-type MapMarker = {
-  setLngLat(position: [number, number]): MapMarker;
-  /** stand at this height (m) instead of on the ground */
-  setAltitude(altitude: number | null): MapMarker;
-  addTo(map: ThreeMap): MapMarker;
-  remove(): unknown;
-  getElement(): HTMLElement;
-};
 
 /** One line of the "who is online" list. Distance in meters from our car. */
 export type { OnlinePlayer };
@@ -3286,14 +3279,14 @@ export class GameEngine {
     }
     for (const [id, spec] of wanted) {
       if (!this.errandMarkers.has(id)) {
-        this.errandMarkers.set(id, this.marker({
-          element: this.makeMapLabel(spec.className, spec.text, spec.text, spec.colors),
+        this.errandMarkers.set(id, newMarker({
+          element: makeMapLabel(spec.className, spec.text, spec.text, spec.colors),
           anchor: 'bottom',
         }).setLngLat(spec.position).addTo(this.map));
       }
       if (!this.errandIndicators.has(id) && this.eventIndicatorLayer) {
-        const tip = this.makeOffscreenIndicator('focus', spec.text);
-        this.paintMissionIndicator(tip.element, spec.kind);
+        const tip = makeOffscreenIndicator('focus', spec.text);
+        paintMissionIndicator(tip.element, spec.kind);
         this.eventIndicatorLayer.appendChild(tip.element);
         this.errandIndicators.set(id, tip);
       }
@@ -3326,7 +3319,7 @@ export class GameEngine {
       element.innerHTML = `<b></b><svg width="18" height="26" viewBox="0 0 28 40" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M14 0C6.268 0 0 6.268 0 14c0 9.8 14 26 14 26S28 23.8 28 14C28 6.268 21.732 0 14 0z" fill="#d8f06a" stroke="#1a2818" stroke-width="1.5"/></svg>`;
       const label = element.querySelector('b');
       if (label) label.textContent = t('you');
-      this.selfMarker = this.marker({ element, anchor: 'bottom' }).addTo(this.map);
+      this.selfMarker = newMarker({ element, anchor: 'bottom' }).addTo(this.map);
     }
     const element = this.selfMarker.getElement();
     element.style.display = '';
@@ -3384,81 +3377,9 @@ export class GameEngine {
     this.updateEventMarkers();
   }
 
-  /**
-   * Map label. With `tip` (default): text + range + same-size triangle as the offscreen arrow.
-   * Without tip: plain plaque (travel hubs / services).
-   */
-  private makeMapLabel(
-    className: string,
-    text: string,
-    label: string,
-    colors?: { main: string; soft: string },
-    tip = true,
-  ) {
-    const element = document.createElement('div');
-    element.className = tip ? `map-pin ${className}` : className;
-    element.setAttribute('aria-label', label);
-    if (colors) {
-      element.style.setProperty('--mission-color', colors.main);
-      element.style.setProperty('--mission-soft', colors.soft);
-      element.style.setProperty('--pin-color', colors.main);
-      element.style.setProperty('--pin-soft', colors.soft);
-    }
-    const title = document.createElement('span');
-    if (tip) title.className = 'map-pin-label';
-    title.textContent = text;
-    element.append(title);
-    if (tip) {
-      const distance = document.createElement('span');
-      distance.className = 'map-pin-distance';
-      distance.setAttribute('aria-hidden', 'true');
-      element.append(distance);
-      const arrow = document.createElement('span');
-      arrow.className = 'map-pin-tip';
-      arrow.setAttribute('aria-hidden', 'true');
-      element.append(arrow);
-    }
-    return element;
-  }
-
   /** Live range on a map pin while driving; blank on the M map (plaque only). */
   private setMapPinRange(marker: MapMarker | null | undefined, target: [number, number] | null, show: boolean) {
-    const el = marker?.getElement()?.querySelector('.map-pin-distance');
-    if (!(el instanceof HTMLElement)) return;
-    if (!show || !target || this.mapInspecting()) {
-      el.textContent = '';
-      return;
-    }
-    el.textContent = formatRange(metersBetween(this.vehicle.position, target));
-  }
-
-  private mapLabelColors(kind: keyof typeof MISSION_COLORS) {
-    return MISSION_COLORS[kind];
-  }
-
-  private paintMissionIndicator(element: HTMLElement, kind: keyof typeof MISSION_COLORS) {
-    const colors = MISSION_COLORS[kind];
-    element.style.setProperty('--mission-color', colors.main);
-    element.style.setProperty('--mission-soft', colors.soft);
-  }
-
-  private makeOffscreenIndicator(kind: 'focus' | 'finish', titleText: string) {
-    const element = document.createElement('div');
-    element.className = `mission-indicator ${kind === 'focus' ? 'mission-focus-indicator' : 'race-finish-indicator'}`;
-    this.paintMissionIndicator(element, kind === 'finish' ? 'finish' : 'arena');
-    const arrow = document.createElement('span');
-    arrow.className = 'mission-indicator-arrow';
-    const content = document.createElement('span');
-    content.className = 'mission-indicator-content';
-    const title = document.createElement('span');
-    title.className = 'mission-reward';
-    title.textContent = titleText;
-    const distance = document.createElement('span');
-    distance.className = 'mission-indicator-distance';
-    content.append(title, distance);
-    element.setAttribute('aria-label', titleText);
-    element.append(arrow, content);
-    return { element, arrow, title, distance };
+    setPinRange(marker, this.vehicle.position, target, show && !this.mapInspecting());
   }
 
   private nextCustomPinColor() {
@@ -3477,10 +3398,10 @@ export class GameEngine {
     }
     const id = `pin-${++this.customPinSeq}`;
     const label = t('marker.pin');
-    const element = this.makeMapLabel('custom-map-marker', label, label, { main: color.main, soft: color.soft });
+    const element = makeMapLabel('custom-map-marker', label, label, { main: color.main, soft: color.soft });
     element.style.pointerEvents = 'auto';
-    const marker = this.marker({ element, anchor: 'bottom' }).setLngLat(position).addTo(this.map);
-    const indicator = this.makeOffscreenIndicator('focus', label);
+    const marker = newMarker({ element, anchor: 'bottom' }).setLngLat(position).addTo(this.map);
+    const indicator = makeOffscreenIndicator('focus', label);
     indicator.element.classList.replace('mission-focus-indicator', 'custom-pin-indicator');
     indicator.element.style.setProperty('--pin-color', color.main);
     indicator.element.style.setProperty('--pin-soft', color.soft);
@@ -3579,8 +3500,8 @@ export class GameEngine {
       let marker = this.missionMarkers.get(mission.id);
       if (!marker) {
         const className = `${mission.kind}-map-marker`;
-        const colors = this.mapLabelColors(mission.kind);
-        marker = this.marker({ element: this.makeMapLabel(className, mission.label, mission.label, colors), anchor: 'bottom' })
+        const colors = MISSION_COLORS[mission.kind];
+        marker = newMarker({ element: makeMapLabel(className, mission.label, mission.label, colors), anchor: 'bottom' })
           .setLngLat(mission.position)
           .addTo(this.map);
         this.missionMarkers.set(mission.id, marker);
@@ -3589,7 +3510,7 @@ export class GameEngine {
         const el = marker.getElement();
         const label = el?.querySelector('.map-pin-label');
         if (label) label.textContent = mission.label;
-        const colors = this.mapLabelColors(mission.kind);
+        const colors = MISSION_COLORS[mission.kind];
         el?.style.setProperty('--mission-color', colors.main);
         el?.style.setProperty('--mission-soft', colors.soft);
       }
@@ -3597,7 +3518,7 @@ export class GameEngine {
       if (el) el.style.display = roaming ? '' : 'none';
     }
     if (!this.focusIndicator) {
-      this.focusIndicator = this.makeOffscreenIndicator('focus', t('marker.target'));
+      this.focusIndicator = makeOffscreenIndicator('focus', t('marker.target'));
       this.eventIndicatorLayer.appendChild(this.focusIndicator.element);
     }
   }
@@ -3617,8 +3538,8 @@ export class GameEngine {
       this.host.appendChild(this.eventIndicatorLayer);
     }
     if (!this.raceGoalMarker) {
-      this.raceGoalMarker = this.marker({
-        element: this.makeMapLabel('race-finish-marker', t('marker.finish'), t('marker.finishRace'), MISSION_COLORS.finish),
+      this.raceGoalMarker = newMarker({
+        element: makeMapLabel('race-finish-marker', t('marker.finish'), t('marker.finishRace'), MISSION_COLORS.finish),
         anchor: 'bottom',
       })
         .setLngLat(this.raceGoal)
@@ -3632,7 +3553,7 @@ export class GameEngine {
       const label = t('race.checkpoint', { n: index + 1, total: this.raceCourse!.checkpoints.length });
       let marker = this.raceCheckpointMarkers.get(index);
       if (!marker) {
-        marker = this.marker({ element: this.makeMapLabel('race-finish-marker', label, label,
+        marker = newMarker({ element: makeMapLabel('race-finish-marker', label, label,
           index === passed ? MISSION_COLORS.finish : MISSION_COLORS.arena), anchor: 'bottom' }).setLngLat(position).addTo(this.map);
         this.raceCheckpointMarkers.set(index, marker);
       }
@@ -3646,7 +3567,7 @@ export class GameEngine {
       }
     });
     if (!this.raceGoalIndicator) {
-      const made = this.makeOffscreenIndicator('finish', t('marker.finish'));
+      const made = makeOffscreenIndicator('finish', t('marker.finish'));
       this.raceGoalIndicator = made;
       this.eventIndicatorLayer.appendChild(this.raceGoalIndicator.element);
     }
@@ -4242,7 +4163,7 @@ export class GameEngine {
     const pin = pending ? this.bountyPickup : (bounty?.spot && !this.bountyFight ? bounty.spot : null);
     if (pin) {
       if (!this.bountyMarker) {
-        this.bountyMarker = this.marker({ element: this.makeMapLabel('bounty-map-marker', title, title, MISSION_COLORS.bounty), anchor: 'bottom' }).setLngLat(pin).addTo(this.map);
+        this.bountyMarker = newMarker({ element: makeMapLabel('bounty-map-marker', title, title, MISSION_COLORS.bounty), anchor: 'bottom' }).setLngLat(pin).addTo(this.map);
       } else {
         this.bountyMarker.setLngLat(pin);
         const el = this.bountyMarker.getElement();
@@ -4266,9 +4187,9 @@ export class GameEngine {
       this.host.appendChild(this.eventIndicatorLayer);
     }
     if (!this.bountyIndicator) {
-      this.bountyIndicator = this.makeOffscreenIndicator('focus', '');
+      this.bountyIndicator = makeOffscreenIndicator('focus', '');
       this.bountyIndicator.element.classList.replace('mission-focus-indicator', 'bounty-indicator');
-      this.paintMissionIndicator(this.bountyIndicator.element, 'bounty');
+      paintMissionIndicator(this.bountyIndicator.element, 'bounty');
       this.eventIndicatorLayer.appendChild(this.bountyIndicator.element);
     }
     const bot = this.trafficBots[0];
@@ -4307,7 +4228,7 @@ export class GameEngine {
     }
     const title = this.fire.active ? t('fire.marker.active') : t('fire.marker');
     if (!this.fireMarker) {
-      this.fireMarker = this.marker({ element: this.makeMapLabel('fire-map-marker', title, title, MISSION_COLORS.fire), anchor: 'bottom' }).setLngLat(pin).addTo(this.map);
+      this.fireMarker = newMarker({ element: makeMapLabel('fire-map-marker', title, title, MISSION_COLORS.fire), anchor: 'bottom' }).setLngLat(pin).addTo(this.map);
     } else {
       this.fireMarker.setLngLat(pin);
       const el = this.fireMarker.getElement();
@@ -4329,7 +4250,7 @@ export class GameEngine {
     }
     const title = drop ? t('impound.marker.drop') : this.impoundActive ? t('impound.marker.car') : t('impound.marker');
     if (!this.impoundMarker) {
-      this.impoundMarker = this.marker({ element: this.makeMapLabel('impound-map-marker', title, title, MISSION_COLORS.impound), anchor: 'bottom' }).setLngLat(pin).addTo(this.map);
+      this.impoundMarker = newMarker({ element: makeMapLabel('impound-map-marker', title, title, MISSION_COLORS.impound), anchor: 'bottom' }).setLngLat(pin).addTo(this.map);
     } else {
       this.impoundMarker.setLngLat(pin);
       const el = this.impoundMarker.getElement();
@@ -4350,7 +4271,7 @@ export class GameEngine {
     }
     const title = this.taxi.active ? t('taxi.marker.drop') : t('taxi.marker');
     if (!this.taxiMarker) {
-      this.taxiMarker = this.marker({ element: this.makeMapLabel('taxi-map-marker', title, title, MISSION_COLORS.taxi), anchor: 'bottom' }).setLngLat(pin).addTo(this.map);
+      this.taxiMarker = newMarker({ element: makeMapLabel('taxi-map-marker', title, title, MISSION_COLORS.taxi), anchor: 'bottom' }).setLngLat(pin).addTo(this.map);
     } else {
       this.taxiMarker.setLngLat(pin);
       const el = this.taxiMarker.getElement();
@@ -4373,7 +4294,7 @@ export class GameEngine {
       ? t('ambulance.marker.drop')
       : this.ambulance.site === 'burn' ? t('ambulance.marker.burn') : t('ambulance.marker.crash');
     if (!this.ambulanceMarker) {
-      this.ambulanceMarker = this.marker({ element: this.makeMapLabel('ambulance-map-marker', title, title, MISSION_COLORS.ambulance), anchor: 'bottom' }).setLngLat(pin).addTo(this.map);
+      this.ambulanceMarker = newMarker({ element: makeMapLabel('ambulance-map-marker', title, title, MISSION_COLORS.ambulance), anchor: 'bottom' }).setLngLat(pin).addTo(this.map);
     } else {
       this.ambulanceMarker.setLngLat(pin);
       const el = this.ambulanceMarker.getElement();
@@ -4396,7 +4317,7 @@ export class GameEngine {
       ? (this.busTour.place || t('bus.drop'))
       : t('bus.marker');
     if (!this.busTourMarker) {
-      this.busTourMarker = this.marker({ element: this.makeMapLabel('bus-map-marker', title, title, MISSION_COLORS.bus), anchor: 'bottom' }).setLngLat(pin).addTo(this.map);
+      this.busTourMarker = newMarker({ element: makeMapLabel('bus-map-marker', title, title, MISSION_COLORS.bus), anchor: 'bottom' }).setLngLat(pin).addTo(this.map);
     } else {
       this.busTourMarker.setLngLat(pin);
       const el = this.busTourMarker.getElement();
@@ -4435,8 +4356,8 @@ export class GameEngine {
       const mission = nearest.find(m => m.kind === kind);
       let tip = this.missionTypeIndicators.get(kind);
       if (!tip && mission && this.eventIndicatorLayer) {
-        tip = this.makeOffscreenIndicator('focus', mission.label);
-        this.paintMissionIndicator(tip.element, kind);
+        tip = makeOffscreenIndicator('focus', mission.label);
+        paintMissionIndicator(tip.element, kind);
         this.eventIndicatorLayer.appendChild(tip.element);
         this.missionTypeIndicators.set(kind, tip);
       }
@@ -4444,7 +4365,7 @@ export class GameEngine {
     }
     for (const [kind, tip] of this.missionTypeIndicators) if (!this.missionKinds().includes(kind)) tip.element.style.display = 'none';
     if (!this.focusIndicator && roaming && focused) {
-      this.focusIndicator = this.makeOffscreenIndicator('focus', t('marker.target'));
+      this.focusIndicator = makeOffscreenIndicator('focus', t('marker.target'));
       if (!this.eventIndicatorLayer) {
         this.eventIndicatorLayer = document.createElement('div');
         this.eventIndicatorLayer.className = 'mission-indicators';
@@ -4452,7 +4373,7 @@ export class GameEngine {
       }
       this.eventIndicatorLayer.appendChild(this.focusIndicator.element);
     }
-    if (this.focusIndicator && focused) this.paintMissionIndicator(this.focusIndicator.element, focused.color);
+    if (this.focusIndicator && focused) paintMissionIndicator(this.focusIndicator.element, focused.color);
     this.updateOffscreenMarker(
       this.focusIndicator,
       focused?.position ?? null,
@@ -4466,7 +4387,7 @@ export class GameEngine {
     const errandPins = this.errandPins();
     for (const pin of errandPins) {
       const tip = this.errandIndicators.get(pin.id);
-      if (tip) this.paintMissionIndicator(tip.element, pin.kind);
+      if (tip) paintMissionIndicator(tip.element, pin.kind);
       this.updateOffscreenMarker(tip ?? null, pin.position, this.driving, pin.label);
     }
     for (const [id, tip] of this.errandIndicators) {
@@ -4524,7 +4445,7 @@ export class GameEngine {
       const el = document.createElement('div');
       el.className = 'spawn-marker';
       el.innerHTML = `<svg width="18" height="26" viewBox="0 0 28 40" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M14 0C6.268 0 0 6.268 0 14c0 9.8 14 26 14 26S28 23.8 28 14C28 6.268 21.732 0 14 0z" fill="#d8f06a" stroke="#1a2818" stroke-width="1.5"/></svg>`;
-      this.spawnMarker = this.marker({ element: el, anchor: 'bottom' })
+      this.spawnMarker = newMarker({ element: el, anchor: 'bottom' })
         .setLngLat(position)
         .addTo(this.map);
     } else {
@@ -4767,7 +4688,7 @@ export class GameEngine {
       }
       if (this.serviceMarkers.has(id)) continue;
       const text = title ?? label[kind];
-      this.serviceMarkers.set(id, this.marker({ element: this.makeMapLabel(`travel-hub-marker is-${kind}`, text, text, undefined, false), anchor: 'bottom' }).setLngLat(station.place ?? station.position).setAltitude(station.top ?? null).addTo(this.map));
+      this.serviceMarkers.set(id, newMarker({ element: makeMapLabel(`travel-hub-marker is-${kind}`, text, text, undefined, false), anchor: 'bottom' }).setLngLat(station.place ?? station.position).setAltitude(station.top ?? null).addTo(this.map));
     }
   }
 
@@ -4803,8 +4724,8 @@ export class GameEngine {
       const marker = this.hubMarkers.get(hub.id);
       if (show && !marker) {
         const text = hubLabel[hub.kind];
-        this.hubMarkers.set(hub.id, this.marker({
-          element: this.makeMapLabel(`hub-map-marker is-${hub.kind}`, text, text, hubColor[hub.kind]),
+        this.hubMarkers.set(hub.id, newMarker({
+          element: makeMapLabel(`hub-map-marker is-${hub.kind}`, text, text, hubColor[hub.kind]),
           anchor: 'bottom',
         }).setLngLat(hub.position).addTo(this.map));
       } else if (!show && marker) {
@@ -4968,10 +4889,6 @@ export class GameEngine {
     const towSpot = near ? near.station.position : this.nearbyRoadSpot();
     if (towSpot && this.mapLoaded) this.placeCarAt(towSpot, finish);
     else finish();
-  }
-
-  private marker(options: { element: HTMLElement; anchor: 'bottom' | 'center' }): MapMarker {
-    return new ThreeMarker(options) as unknown as MapMarker;
   }
 
   /** Pitched chase-style framing (fly-in / resume), not the intro menu. */
