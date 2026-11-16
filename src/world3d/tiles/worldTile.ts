@@ -18,7 +18,7 @@ import { planStreets } from './streetscape.ts';
 import { roadStyle, isPedestrian, roadDeckHalf, SLEEPER_PITCH, TRACK_HALF } from './roadStyle.ts';
 import { planRoadNetwork, type RoadDeck as Deck, type RoadWay as Way, type PlannedRoad as Planned, type RoadSurfaces as Surfaces, type RoadXY as XY } from './roadNetwork.ts';
 import { buildRoadSurface, deckSections, deckSideOpening, surfaceHeight, type RoadSurfaceData } from './roadSurface.ts';
-import { streetFurniture } from './furniture.ts';
+import { emptyFurniture, streetFurniture } from './furniture.ts';
 import type { MapFeature } from '../../game/WaterCollisionController.ts';
 
 /** Layers decoded to GeoJSON up front: gameplay reads them every few seconds. */
@@ -1451,7 +1451,7 @@ export function buildWorldTile(buffer: ArrayBuffer, tile: TileId, options: World
   const surfaceList: number[] = [];
   // statues, fountains, bus shelters, pitch lines and goals
   // a map-only tile has no benches, shelters or pitch lines (nobody stands next to them)
-  const furniture = options.lite ? { monuments: [], fountains: [], shelters: [], goals: [], lines: [] } as unknown as ReturnType<typeof streetFurniture> : streetFurniture(vt, span, metersScale);
+  const furniture = options.lite ? emptyFurniture() : streetFurniture(vt, span, metersScale);
   const features: Record<string, GeoFeature[]> = {};
   for (const name of GAMEPLAY_LAYERS) {
     const layer = vt.layers[name];

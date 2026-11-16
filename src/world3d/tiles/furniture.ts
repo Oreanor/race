@@ -24,10 +24,15 @@ const MONUMENT_NAME = /pelourinho|est[áa]tua|statue|monument|memorial|obelis|de
 const FOUNTAIN_NAME = /\b(fonte|fontaine|fountain|fuente|fontana|brunnen|chafariz)\b|фонтан/i;
 
 /** Everything of the tile, one list per kind. */
+/** No furniture (a map-only tile). */
+export function emptyFurniture(): Furniture {
+  return { monuments: [], fountains: [], shelters: [], goals: [], lines: [] };
+}
+
 export function streetFurniture(vt: VectorTile, span: number, metersScale: number): Furniture {
   const toMerc = 1 / metersScale;
   const roads = roadSegments(vt, span, metersScale);
-  const out: Furniture = { monuments: [], fountains: [], shelters: [], goals: [], lines: [] };
+  const out = emptyFurniture();
   const poi = vt.layers.poi;
   if (poi) {
     const k = span / poi.extent;
@@ -117,21 +122,18 @@ function nearestRoad(segs: number[], x: number, z: number): Street | null {
 }
 
 function closerRoad(segs: number[], s: number, x: number, z: number, best: Street | null): Street | null {
-  {
-    const ax = segs[s], az = segs[s + 1], bx = segs[s + 2], bz = segs[s + 3];
-    const dx = bx - ax, dz = bz - az, len2 = dx * dx + dz * dz;
-    if (len2 < 1e-12) return best;
-    const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / len2));
-    const px = ax + dx * t, pz = az + dz * t;
-    const distance = Math.hypot(x - px, z - pz);
-    if (best && distance >= best.distance) return best;
-    // the normal toward the point; a point on the line takes the left side
-    const len = Math.sqrt(len2);
-    let nx = -dz / len, nz = dx / len;
-    if (distance > 1e-9 && (x - px) * nx + (z - pz) * nz < 0) { nx = -nx; nz = -nz; }
-    best = { distance, half: segs[s + 4], px, pz, nx, nz };
-  }
-  return best;
+  const ax = segs[s], az = segs[s + 1], bx = segs[s + 2], bz = segs[s + 3];
+  const dx = bx - ax, dz = bz - az, len2 = dx * dx + dz * dz;
+  if (len2 < 1e-12) return best;
+  const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / len2));
+  const px = ax + dx * t, pz = az + dz * t;
+  const distance = Math.hypot(x - px, z - pz);
+  if (best && distance >= best.distance) return best;
+  // the normal toward the point; a point on the line takes the left side
+  const len = Math.sqrt(len2);
+  let nx = -dz / len, nz = dx / len;
+  if (distance > 1e-9 && (x - px) * nx + (z - pz) * nz < 0) { nx = -nx; nz = -nz; }
+  return { distance, half: segs[s + 4], px, pz, nx, nz };
 }
 
 /** Yaw that turns a model's +Z toward the street. */

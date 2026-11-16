@@ -62,16 +62,17 @@ function segmentDistance(p: Position, a: Position, b: Position) {
  */
 function areaGrid(areas: Area[], pad: number, cell = 64) {
   const cells = new Map<string, Area[]>();
+  const huge: Area[] = [];
   for (const area of areas) {
     const [a, b, c, d] = area.bounds;
     const x0 = Math.floor((a - pad) / cell), x1 = Math.floor((c + pad) / cell), y0 = Math.floor((b - pad) / cell), y1 = Math.floor((d + pad) / cell);
-    if ((x1 - x0 + 1) * (y1 - y0 + 1) > 4096) { for (const list of [cells.get('*') ?? []]) { list.push(area); cells.set('*', list); } continue; }
+    // an area spanning a huge number of cells (a big forest) is tested everywhere
+    if ((x1 - x0 + 1) * (y1 - y0 + 1) > 4096) { huge.push(area); continue; }
     for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) {
       const key = x + ',' + y, list = cells.get(key);
       if (list) list.push(area); else cells.set(key, [area]);
     }
   }
-  const huge = cells.get('*') ?? [];
   return (p: Position) => {
     const list = cells.get(Math.floor(p[0] / cell) + ',' + Math.floor(p[1] / cell));
     return huge.length ? [...(list ?? []), ...huge] : list ?? [];
