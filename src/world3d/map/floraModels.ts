@@ -33,8 +33,11 @@ class Shape {
   limb(a: V, b: V, r0: number, r1: number, sides = 5) {
     const length = a.distanceTo(b);
     if (length < 1e-4) return;
-    const g = new THREE.CylinderGeometry(r1, r0, length, sides, 1, true);
-    g.translate(0, length / 2, 0);
+    // each piece reaches a little past both its ends, so at a bend the next piece overlaps
+    // it: butted end to end, the outside of an elbow opened a wedge you could see through
+    const back = r0 * 0.6, ahead = r1 * 0.6;
+    const g = new THREE.CylinderGeometry(r1, r0, length + back + ahead, sides, 1, true);
+    g.translate(0, (length + ahead - back) / 2, 0);
     g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(UP, b.clone().sub(a).normalize()));
     g.translate(a.x, a.y, a.z);
     this.add(g, false);
