@@ -77,6 +77,7 @@ import { MissionBotDriver, type BotDriverHost } from './traffic/MissionBots.ts';
 import { Shops, type ShopsHost } from './economy/Shops.ts';
 import { Dealership, type DealershipHost } from './economy/Dealership.ts';
 import { Ramp, type RampHost } from './Ramp.ts';
+import { SoundScene } from './SoundScene.ts';
 import { WorldFeed } from './world/WorldFeed.ts';
 import { Ground } from './Ground.ts';
 import { Spawn } from './world/Spawn.ts';
@@ -222,7 +223,7 @@ export class GameEngine {
   private approachElapsed = 0;
   /** Full intro→chase flight, including its gentle start and stop. */
   private approachMs = 2200;
-  private approachFrom: CameraView | null = null;
+  approachFrom: CameraView | null = null;
   onApproach: (active: boolean) => void = () => {};
   onBoot: (ready: boolean) => void = () => {};
   message = '';
@@ -260,11 +261,9 @@ export class GameEngine {
   players!: NetPlayers;
   /** our police car's lights (F) */
   /** our police lights (F): off by default */
-  private beaconsOn = false;
+  beaconsOn = false;
   /** all game sound (synthesised) */
   audio = new GameAudio();
-  /** trains' lead cars last frame: for their speed (Doppler, clack rate) */
-  private trainHeard = new Map<string, { at: number; front: [number, number] }>();
   /** The special cars' jobs: fire calls for the fire truck, fares for the taxi, crash and fire (see Jobs) */
   readonly jobs: Jobs = new Jobs(this);
   /** Coins and cash lying about: along the roads and on open fields, out of wrecks, walls and (see Coins) */
@@ -281,10 +280,12 @@ export class GameEngine {
   readonly ground: Ground = new Ground(this);
   /** The world coming in: new tiles' roads, water, buildings and places taken into the game a (see WorldFeed) */
   readonly feed: WorldFeed = new WorldFeed(this);
+  /** The world as heard each frame, and the trains on the real tracks: our engine and tyres (see SoundScene) */
+  readonly sound: SoundScene = new SoundScene(this);
   /** the game as its parts see it (see context) */
   private ctx = this.context();
   /** the nitro bar under the speedometer */
-  private nitro = new Nitro();
+  nitro = new Nitro();
   /** the wanted car: the offer, the hunt and the fight (see Wanted) */
   readonly wanted = new Wanted(this.ctx);
   /** the race on now, or being planned (see Race) */
@@ -1526,21 +1527,6 @@ export class GameEngine {
     return { site: 'crash', cars };
   }
 
-  /** Trains run in the menu and while driving; born and retired out of sight. */
-  private updateTrains(dt: number) {
-    if (!this.trainLayer || !this.mapShown) return;
-    const center = this.map.getCenter();
-    const here: [number, number] = this.driving ? this.vehicle.position : [center.lng, center.lat];
-    const bearing = this.map.getBearing();
-    // behind the camera = more than ~110° off where it looks
-    const hidden = (p: [number, number]) => {
-      const off = Math.abs(((bearingTo(here, p) - bearing + 540) % 360) - 180);
-      return off > 110;
-    };
-    this.trainTraffic.update(dt, here, hidden);
-    this.trainLayer.setCars(this.trainTraffic.poses(), here, this.settings.terrain);
-  }
-
   /** Map label for the fire call; HUD tip comes from the focus cycle. */
 
   /** Category chips + world plaques: only while the M map is open. */
@@ -2146,7 +2132,7 @@ export class GameEngine {
     if (!this.approachFrom) {
       // UI pause stops simulation but not map activity population/loading.
       if (this.driving) this.board.refillMissions();
-      this.updateTrains(dt);
+      this.sound.updateTrains(dt);
       // players first: the bars must sit where their cars are drawn this frame, not the last one
       this.players.update();
       // Offscreen arrows must track every frame — 10 Hz made them stutter on turn
@@ -2158,7 +2144,7 @@ export class GameEngine {
         this.updateSelfMarker();
       }
     }
-    this.soundFrame(now);
+    this.sound.soundFrame(now);
     this.coins.updateFieldCoins(now);
     if (now - this.hudTime > 100) {
       this.hudTime = now;
@@ -2182,64 +2168,6 @@ export class GameEngine {
       if (this.map.perfMonitor) this.map.reportUpdateCpu(performance.now() - cpuStart);
     }
   };
-
-  /** The scene as heard this frame: our car, the street, sirens, engines and trains around. */
-  private soundFrame(now: number) {
-    const velocityOf = (speed: number, heading: number): [number, number] => [Math.sin(heading) * speed, Math.cos(heading) * speed];
-    if (now - this.coins.urbanAt > 2000) {
-      this.coins.urbanAt = now;
-      // houses in the collision reach around us: a crowded street hums, a field is quiet
-      this.coins.urbanLevel = Math.min(1, this.collisions.polygons.length / 400);
-    }
-    const alive = (id: string) => this.combatLayer?.isTargetAlive(id) !== false;
-    const police = this.crime.heist
-      ? this.trafficBots.filter((bot) => bot.id.startsWith('police') && alive(bot.id))
-        .map((bot) => ({ id: bot.id, position: bot.position as [number, number], velocity: velocityOf(bot.controller.speed, bot.controller.heading) }))
-      : [];
-    const engines = [
-      ...this.trafficBots.filter((bot) => !bot.id.startsWith('police') && alive(bot.id)),
-      ...this.sharedTraffic.drivenBodies().map((body) => ({ id: body.id, position: body.controller.position, controller: body.controller })),
-    ].map((bot) => ({ id: bot.id, position: bot.position as [number, number], velocity: velocityOf(bot.controller.speed, bot.controller.heading) }));
-    // trains: the lead car of each, its speed from the last frame
-    const trains = [];
-    const seen = new Set<string>();
-    for (const car of this.trainTraffic.poses()) {
-      if (car.index !== 0) continue;
-      seen.add(car.trainId);
-      const last = this.trainHeard.get(car.trainId);
-      const dt = last ? (now - last.at) / 1000 : 0;
-      const velocity: [number, number] = last && dt > 0
-        ? [(car.front[0] - last.front[0]) * 111_319.49 * Math.cos(car.front[1] * Math.PI / 180) / dt, (car.front[1] - last.front[1]) * 111_319.49 / dt]
-        : [0, 0];
-      this.trainHeard.set(car.trainId, { at: now, front: [...car.front] as [number, number] });
-      trains.push({ id: car.trainId, position: [...car.front] as [number, number], velocity, kind: car.kind, vintage: isVintageTrain(car.trainId) });
-    }
-    for (const id of this.trainHeard.keys()) if (!seen.has(id)) this.trainHeard.delete(id);
-    // our own siren while our lights are on
-    const ownSiren = !this.beaconsOn ? null
-      : this.car.id === AMBULANCE_ID ? 'ambulance' as const
-        : POLICE_IDS.has(this.car.id) || this.car.id === FIRE_TRUCK_ID ? 'police' as const : null;
-    const travel = this.vehicle.heading - this.vehicle.slip;
-    this.audio.frame({
-      active: this.driving && !this.paused && !this.approachFrom && !this.ground.plunge,
-      revs: this.vehicle.revs,
-      speed: this.vehicle.speed,
-      throttle: this.keys.has('KeyW'),
-      boost: this.nitro.active && !this.fuel.empty,
-      slip: this.vehicle.slip,
-      litres: this.car.engine,
-      position: this.vehicle.position as [number, number],
-      heading: this.vehicle.heading,
-      velocity: velocityOf(this.vehicle.speed, travel),
-      ear: this.map.cameraRange(),
-      night: this.map.nightLevel(),
-      urban: this.coins.urbanLevel,
-      police,
-      ownSiren,
-      engines,
-      trains,
-    });
-  }
 
   dispose() {
     this.race.cancelPreparation();
