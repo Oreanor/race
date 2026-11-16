@@ -246,7 +246,7 @@ test('a paused tow commits the loaded camera, car and payment together', () => {
       setStreamDestination: p => { streamAt = p; }, features: () => [], groundAt: () => 20,
       setScreenStream() {}, setFocusCar() {}, jumpTo(view) { center = view.center; },
     },
-    onTransfer() {}, stopGun() {}, setMapViewUi() {}, setOverviewMapNav() {},
+    onTransfer() {}, stopGun() {}, setMapViewUi() {}, camera: { setOverviewMapNav() {} },
     spawn: { findFreeRoad: () => ({ position: destination, heading: 0 }) },
   });
   engine.placeCarAt(destination, () => { paid = true; });

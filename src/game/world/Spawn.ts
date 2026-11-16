@@ -6,7 +6,7 @@ import { newMarker, type MapMarker } from '../hud/mapPins.ts';
 import type { GameEngine } from '../GameEngine.ts';
 
 /** What this part reads and drives in the game. */
-export type SpawnGame = Pick<GameEngine, 'accumulator' | 'altitude' | 'bearing' | 'cachedRoads' | 'cachedWater' | 'collisionDirty' | 'collisionTime' | 'collisions' | 'driving' | 'map' | 'mapLoaded' | 'mapShown' | 'renderVehicle' | 'setTargetVehicles' | 'settings' | 'showIntroMap' | 'vehicle' | 'water'>;
+export type SpawnGame = Pick<GameEngine, 'accumulator' | 'altitude' | 'bearing' | 'cachedRoads' | 'cachedWater' | 'camera' | 'collisionDirty' | 'collisionTime' | 'collisions' | 'driving' | 'map' | 'mapLoaded' | 'mapShown' | 'renderVehicle' | 'setTargetVehicles' | 'settings' | 'vehicle' | 'water'>;
 
 /**
  * Where the car starts: the player's own spot (clicked on the menu map) or a free road near the
@@ -86,7 +86,7 @@ export class Spawn {
       this.game.collisionTime = 0;
       this.placeSpawnMarker(this.defaultSpawn.position);
       this.game.setTargetVehicles(this.defaultSpawn.position, this.defaultSpawn.heading);
-      if (this.game.mapShown && !this.game.driving) this.game.showIntroMap();
+      if (this.game.mapShown && !this.game.driving) this.game.camera.showIntroMap();
     } else {
       this.placeSpawnMarker(null);
     }

@@ -870,7 +870,7 @@ export default function Game() {
     <main className={`game-shell${driving ? ' is-driving' : ''}`} data-theme={settings.theme}>
       <div ref={host} className="map" />
       <div ref={aimRef} className="aim-reticle" aria-hidden="true"><span /></div>
-      <div className="compass" role="button" tabIndex={-1} title={t('compass.north')} onDoubleClick={() => engine.current?.faceNorth()}>
+      <div className="compass" role="button" tabIndex={-1} title={t('compass.north')} onDoubleClick={() => engine.current?.camera.faceNorth()}>
         <div className="compass-rose" ref={compassRef}>
           <i className="compass-needle" />
           <b className="compass-n">N</b>

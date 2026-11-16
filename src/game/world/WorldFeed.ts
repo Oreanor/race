@@ -11,7 +11,7 @@ import type { GameEngine } from '../GameEngine.ts';
 const NEAR_TILE_METERS = 2600;
 
 /** What this part reads and drives in the game. */
-export type WorldFeedGame = Pick<GameEngine, 'altitude' | 'bootAt' | 'bootChaseWarmed' | 'cachedLanduse' | 'cachedRoads' | 'cachedWater' | 'collectWorldSteps' | 'collisionDirty' | 'collisionTime' | 'distance' | 'driving' | 'featureReadFailures' | 'focusTime' | 'ground' | 'groundHits' | 'map' | 'mapLoaded' | 'mapShown' | 'overview' | 'places' | 'rails' | 'ready' | 'revealMap' | 'say' | 'setTargetVehicles' | 'settings' | 'spawn' | 'syncedAt' | 'tilesIngested' | 'trafficNetwork' | 'vehicle' | 'water'>;
+export type WorldFeedGame = Pick<GameEngine, 'altitude' | 'bootAt' | 'bootChaseWarmed' | 'cachedLanduse' | 'cachedRoads' | 'cachedWater' | 'camera' | 'collectWorldSteps' | 'collisionDirty' | 'collisionTime' | 'distance' | 'driving' | 'featureReadFailures' | 'focusTime' | 'ground' | 'groundHits' | 'map' | 'mapLoaded' | 'mapShown' | 'overview' | 'places' | 'rails' | 'ready' | 'say' | 'setTargetVehicles' | 'settings' | 'spawn' | 'syncedAt' | 'tilesIngested' | 'trafficNetwork' | 'vehicle' | 'water'>;
 
 /**
  * The world coming in: new tiles' roads, water, buildings and places taken into the game a
@@ -125,7 +125,7 @@ export class WorldFeed {
       this.settleFrames++;
       return;
     }
-    this.game.revealMap();
+    this.game.camera.revealMap();
   }
 
   readSourceLayer(layer: string) {

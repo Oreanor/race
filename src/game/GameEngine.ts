@@ -1,75 +1,33 @@
 import { roadStart } from './roadStart.ts';
 import { cameraTransition, type CameraView } from './cameraTransition.ts';
 import { PreparedTransfer } from './PreparedTransfer.ts';
-import { missionAreas, missionRoadSpot, nearestOfEachKind } from './missionPopulation.ts';
 import { VehiclePose } from './VehiclePose.ts';
-import { leavesSupport, supportAltitude, type GroundSample } from './groundSupport.ts';
 import { BuildingCollisions } from './BuildingCollisions.ts';
 import { WaterCollisionController, type MapFeature } from './WaterCollisionController.ts';
 import { mapConfig, cars as carsConfig, carPrice, GIFT_CARS, STARTING_CASH, type City, type Car, vehicleConfig } from '@/config/vehicle.config';
 import { cameraConfig, lookAheadFor, zoomForDistance } from '@/config/camera.config';
-import { VehicleController, bumpDamage, vehicleImpact, offsetPosition, resolveVehicleCollision, type Position } from './VehicleController.ts';
+import { VehicleController, offsetPosition, type Position } from './VehicleController.ts';
 import { GameAudio } from '@/audio/GameAudio';
-import { DROP_MS, vehicleLayer, type PickupVisual, type TargetVehicle, type VehicleSceneLayer } from '@/rendering/VehicleLayer';
-import {
-  completeFireCall,
-  createFireCallState,
-  onFireWindowOut as noteFireWindowOut,
-  startFireCall,
-  suspendFireCall,
-  updateFireCall,
-  type FireCallWorld,
-} from './missions/fireCall.ts';
+import { vehicleLayer, type TargetVehicle, type VehicleSceneLayer } from '@/rendering/VehicleLayer';
 import { facadeMarker } from '@/rendering/BurningHouse';
-import {
-  acceptTaxiFare,
-  createTaxiFareState,
-  declineTaxiFare,
-  suspendTaxiFare,
-  updateTaxiFare,
-  type TaxiFareWorld,
-} from './missions/taxiFare.ts';
-import {
-  acceptAmbulanceCall,
-  createAmbulanceCallState,
-  declineAmbulanceCall,
-  suspendAmbulanceCall,
-  updateAmbulanceCall,
-  type AmbulanceCallWorld,
-  type AmbulanceSite,
-} from './missions/ambulanceCall.ts';
-import {
-  createBusStopState,
-  updateBusStops,
-  type BusStopWorld,
-} from './missions/busStop.ts';
-import {
-  acceptBusTour,
-  createBusTourState,
-  declineBusTour,
-  suspendBusTour,
-  updateBusTour,
-  type BusTourWorld,
-} from './missions/busTour.ts';
+import { type AmbulanceSite } from './missions/ambulanceCall.ts';
+import { suspendBusTour } from './missions/busTour.ts';
 import type { ChatLine, NetNotice } from '@/net/NetClient';
-import { distanceToTile } from '@/world3d/tiles/tilePlan';
-import { mercatorX, mercatorY, tileCorner, tileSpan } from '@/world3d/mercator';
 
-import { NetPlayers, PLAYER_MARKER_COLOR, type OnlinePlayer } from './net/NetPlayers.ts';
+import { NetPlayers, type OnlinePlayer } from './net/NetPlayers.ts';
 import { SharedTraffic } from './net/SharedTraffic.ts';
-import { HealthMeters, type Meter } from './hud/HealthMeters.ts';
+import { HealthMeters } from './hud/HealthMeters.ts';
 import { TestTargets } from './TestTargets.ts';
-import { HIT_DAMAGE, PLAYER_HP } from '@/net/protocol';
+import { HIT_DAMAGE } from '@/net/protocol';
   import { formatRange, MARKER_PIN_METERS, nameIndicator, placeIndicator } from './hud/indicators.ts';
 import { createTrafficBot, TrafficRoadNetwork, type TrafficBot } from './TrafficBots.ts';
 import { formatNumber, onLangChange, t } from '@/i18n';
 import { ThreeMap } from '@/world3d/map/ThreeMap';
 import { EVACUATION_COST, FuelTank } from './Fuel.ts';
-import { atStation, banksFromFeatures, busStopsFromFeatures, courtsFromFeatures, dealershipsFromFeatures, hospitalsFromFeatures, landmarksFromFeatures, nearestStation, policeFromFeatures, prisonsFromFeatures, repairShopsFromFeatures, SERVICE_REACH, stationsFromFeatures, type CivicKind, type Landmark, type Station } from './poi.ts';
+import { atStation, nearestStation, SERVICE_REACH, type CivicKind, type Station } from './poi.ts';
 import { metersBetween, offsetMeters } from './meters.ts';
-import { defaultMapLabelFilters, type MapLabelFilters, type MapLabelKind } from './mapLabels.ts';
 import { fuelStationsLayer } from '@/rendering/FuelStationsLayer';
-import { isVintageTrain, trainsLayer } from '@/rendering/TrainsLayer';
+import { trainsLayer } from '@/rendering/TrainsLayer';
 import { RailNetwork, TrainTraffic } from './Trains.ts';
 import { canCable, Hauler, type HaulHost } from './Hauler.ts';
 import { Heist, type HeistHost } from './crime/Heist.ts';
@@ -77,6 +35,7 @@ import { MissionBotDriver, type BotDriverHost } from './traffic/MissionBots.ts';
 import { Shops, type ShopsHost } from './economy/Shops.ts';
 import { Dealership, type DealershipHost } from './economy/Dealership.ts';
 import { Ramp, type RampHost } from './Ramp.ts';
+import { CameraRig, CAMERA_STORE, wrapDegrees } from './CameraRig.ts';
 import { SoundScene } from './SoundScene.ts';
 import { WorldFeed } from './world/WorldFeed.ts';
 import { Ground } from './Ground.ts';
@@ -91,59 +50,13 @@ import { CustomPins, type CustomPinsHost } from './hud/CustomPins.ts';
 import { Race, type RaceHost } from './events/Race.ts';
 import { Wanted, type WantedHost } from './events/Wanted.ts';
 import { Nitro } from './Nitro.ts';
-import { JobPin, makeMapLabel, makeOffscreenIndicator, newMarker, paintMissionIndicator, setPinRange, type MapMarker } from './hud/mapPins.ts';
-import { hubsFromFeatures, kilometres, nearestHub } from './Travel.ts';
-import { bearingTo, BOUNTY_RANGE_KM, saveBounty } from './Bounty.ts';
+import { newMarker, setPinRange, type MapMarker } from './hud/mapPins.ts';
+import { kilometres, nearestHub } from './Travel.ts';
+import { BOUNTY_RANGE_KM, saveBounty } from './Bounty.ts';
 import type { GameSave } from './save.ts';
-import { BOX_REACH_M, COLLECT_BOXES, COLLECT_REWARD, deliveryReward, DELIVERY_MAX_M, DELIVERY_MIN_M, DELIVERY_REACH_M, randomItem, scatterBoxes, type DeliveryItem, type Errand } from './Errands.ts';
-import type {
-  EventOffer,
-  EventResult,
-  FuelHud,
-  HudParticipant,
-  MissionKind,
-  PlayerCarry,
-  RideOffer as RideOfferType,
-  Settings,
-} from './offers.ts';
-import {
-  ARENA_FEE,
-  ARENA_PRIZE,
-  RACE_FEE,
-  RACE_PRIZE,
-  randomDriverNames,
-  CASH_BUNDLE,
-  ERRAND_BEACONS,
-  AMBULANCE_HOSPITAL_M,
-  AMBULANCE_ID,
-  ambulanceWreckId,
-  isAmbulanceWreckId,
-  BUS_ID,
-  BATMOBILE_ID,
-  FIRE_TRUCK_ID,
-  TAXI_ID,
-  carShootsGuns,
-  GRAVITY,
-  COIN_RESPAWN_M,
-  COIN_SPACING_M,
-  HAULER_ID,
-  IMPOUND_ARRIVE_M,
-  IMPOUND_REWARD,
-  METERS_PER_DEGREE,
-  MISSION_COLORS,
-  MISSION_PICKUP_M,
-  BOUNTY_CAR_IDS,
-  POLICE_IDS,
-  RAMP,
-  TOW_CAR_ID,
-  TRAFFIC_MARKER_COLORS,
-  WRECK_COSTS,
-} from './tuning.ts';
+import type { EventOffer, EventResult, FuelHud, HudParticipant, MissionKind, PlayerCarry, Settings } from './offers.ts';
+import { AMBULANCE_ID, ambulanceWreckId, isAmbulanceWreckId, BUS_ID, BATMOBILE_ID, FIRE_TRUCK_ID, TAXI_ID, carShootsGuns, HAULER_ID, BOUNTY_CAR_IDS, POLICE_IDS, TOW_CAR_ID } from './tuning.ts';
 
-/** An angle in degrees as −180 … 180 (the same turn, the short way). */
-const wrapDegrees = (deg: number) => ((deg + 180) % 360 + 360) % 360 - 180;
-/** where the camera (zoom, tilt, turn) is kept between reloads */
-const CAMERA_STORE = 'race.camera';
 /** a tow, a ticket, a respawn: the ground this far (m) round the arrival must be in first */
 const ARRIVAL_M = 400;
 /** hit a wall faster than this (km/h) and coins jump out of it (3; 5 from 150, 10 from 200) */
@@ -206,8 +119,8 @@ export class GameEngine {
   distance = savedCamera()?.distance ?? cameraConfig.distance;
   orbit = savedCamera()?.orbit ?? 0;
   pitch = savedCamera()?.pitch ?? cameraConfig.pitch;
-  private cameraSavedAt = 0;
-  private cameraSaved = '';
+  cameraSavedAt = 0;
+  cameraSaved = '';
   bearing = 0;
   last = 0;
   accumulator = 0;
@@ -282,6 +195,8 @@ export class GameEngine {
   readonly feed: WorldFeed = new WorldFeed(this);
   /** The world as heard each frame, and the trains on the real tracks: our engine and tyres (see SoundScene) */
   readonly sound: SoundScene = new SoundScene(this);
+  /** The camera's moves outside the chase itself: the M map from above (in, free pan and zoom (see CameraRig) */
+  readonly camera: CameraRig = new CameraRig(this);
   /** the game as its parts see it (see context) */
   private ctx = this.context();
   /** the nitro bar under the speedometer */
@@ -345,73 +260,35 @@ export class GameEngine {
   private garage = new Set<string>();
   /** key M: camera rises straight up for a ~2 × 2 km view from above (0 chase … 1 overview) */
   overview = 0;
-  private overviewTarget = 0;
+  overviewTarget = 0;
   /** once overview is open: pan/zoom freely; blend back from here when closing */
-  private overviewFree = false;
+  overviewFree = false;
   /** keep stream calm after M lands so the first free frames don't upload towers */
   private mapCalmUntil = 0;
-  private overviewLeave: { center: [number, number]; zoom: number } | null = null;
+  overviewLeave: { center: [number, number]; zoom: number } | null = null;
   /** the menu camera to return to after the view from above */
-  private menuView: { center: [number, number]; zoom: number; pitch: number; bearing: number } | null = null;
-
-  /** ~1.4 km across the screen height — 2 km of Manhattan rooftops murdered the GPU */
-  private overviewZoom(lat: number) {
-    const height = this.map.getCanvas().clientHeight || 800;
-    const mercPerMeter = 1 / (2 * Math.PI * 6371008.8 * Math.cos(lat * Math.PI / 180));
-    return Math.log2((height / 1400) / mercPerMeter / 512);
-  }
+  menuView: { center: [number, number]; zoom: number; pitch: number; bearing: number } | null = null;
 
   /** Driving map mode (M): inspect the city, no gun. */
   mapInspecting() {
     return this.driving && (this.overviewTarget > 0 || this.overview > 0.4);
   }
 
-  private setOverviewMapNav(on: boolean) {
-    if (on) this.map.setInteractive({ pan: true, rotate: false });
-    else if (this.driving) this.map.setInteractive({ pan: false, rotate: false });
-    else if (!this.driving && this.mapShown) this.map.setInteractive({ pan: true, rotate: false });
-  }
-
-  private toggleOverview() {
-    if (this.overviewTarget) {
-      // closing — remember where the player was looking
-      const c = this.map.getCenter();
-      this.overviewLeave = { center: [c.lng, c.lat], zoom: this.map.getZoom() };
-      this.overviewTarget = 0;
-      this.overviewFree = false;
-      this.setOverviewMapNav(false);
-      this.setMapViewUi(false);
-      // calm through the descent — burst mid-blend was the 5–7 FPS stall
-      this.map.setStreamCalm(true);
-    } else {
-      this.overviewLeave = null;
-      this.overviewTarget = 1;
-      this.overviewFree = false;
-      this.stopGun();
-      this.lookPointer = null;
-      this.lookOrigin = null;
-      this.lookDragging = false;
-      this.dragging = false;
-      this.setMapViewUi(true);
-      this.map.setScreenStream(true);
-      this.map.setStreamCalm(true);
-    }
-  }
   private carry: PlayerCarry | null = null;
   get money() { return this.playerMoney; }
   /** where the run (re)started: saved coins without a place come back once we leave it */
   collectedFrom: Position | null = null;
   /** true once the run's purse/coins/hp are in place — before that a snapshot would wipe the save */
-  private runReady = false;
+  runReady = false;
   /** the run's purse/coins/hp have been applied (see runReady) */
   get runStarted() { return this.runReady; }
   playerMoney = 0;
   get booted() { return this.mapShown; }
   private aimingFire = false;
   /** LMB: drag to look around; hold still to aim/fire (no permanent reticle). */
-  private lookPointer: number | null = null;
-  private lookOrigin: { x: number; y: number } | null = null;
-  private lookDragging = false;
+  lookPointer: number | null = null;
+  lookOrigin: { x: number; y: number } | null = null;
+  lookDragging = false;
   private city: City;
   constructor(el: HTMLElement, city: City, car: Car, settings: Settings, private hud: (speed: number, distance: number, fps: number, participants: HudParticipant[]) => void, private status: (s: string, toast?: boolean) => void, private aimHud: (x: number, y: number, visible: boolean, firing?: boolean) => void, carry: PlayerCarry | null = null) {
     this.city = city;
@@ -590,7 +467,7 @@ export class GameEngine {
       if (!this.driving || this.paused) return;
       if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'ShiftLeft', 'ShiftRight', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyR', 'Tab', 'KeyM', 'KeyJ', 'KeyE'].includes(e.code)) e.preventDefault();
       if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'ShiftLeft', 'ShiftRight', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) this.keys.add(e.code);
-      if (e.code === 'KeyR') this.resetCamera();
+      if (e.code === 'KeyR') this.camera.resetCamera();
       if (e.code === 'Tab' && !e.repeat) {
         if (this.dealer.tryOpen()) { /* showroom takes Tab on the lot */ }
         else this.board.cycleMissionFocus();
@@ -600,7 +477,7 @@ export class GameEngine {
       if (e.code === 'KeyH' && !e.repeat) this.crime.tryHijack();
       if (e.code === 'KeyF' && !e.repeat) { this.beaconsOn = !this.beaconsOn; this.combatLayer?.setBeacons(this.beaconsOn); }
       if (e.code === 'KeyG' && !e.repeat) this.audio.hornOn(true);
-      if (e.code === 'KeyM' && !e.repeat) this.toggleOverview();
+      if (e.code === 'KeyM' && !e.repeat) this.camera.toggleOverview();
     }) as EventListener);
     listen(window, 'keyup', ((e: KeyboardEvent) => {
       this.keys.delete(e.code);
@@ -726,7 +603,7 @@ export class GameEngine {
     this.status(text, toast);
   }
 
-  private stopGun() {
+  stopGun() {
     this.aimScreen = null;
     this.aimingFire = false;
     this.combatLayer?.setFiring(false);
@@ -983,31 +860,6 @@ export class GameEngine {
     this.board.syncMissionVisuals(true);
   }
 
-  nudgeCamera(dt: number) {
-    const yaw = Number(this.keys.has('ArrowRight')) - Number(this.keys.has('ArrowLeft'));
-    if (yaw) this.orbit += yaw * dt * 75 * this.settings.sensitivity;
-    const zoom = Number(this.keys.has('ArrowDown')) - Number(this.keys.has('ArrowUp'));
-    if (!zoom) return;
-    const next = this.distance * Math.exp(zoom * dt * 0.9 * this.settings.sensitivity);
-    this.distance = Math.max(cameraConfig.minDistance, Math.min(cameraConfig.maxDistance, next));
-  }
-
-  /** Remember the camera (at most once a second, and only when it moved). */
-  private saveCamera(now: number) {
-    if (now - this.cameraSavedAt < 1000) return;
-    this.cameraSavedAt = now;
-    const text = JSON.stringify({ distance: +this.distance.toFixed(2), pitch: +this.pitch.toFixed(2), orbit: +wrapDegrees(this.orbit).toFixed(2) });
-    if (text === this.cameraSaved) return;
-    this.cameraSaved = text;
-    try { localStorage.setItem(CAMERA_STORE, text); } catch { /* private mode: this session only */ }
-  }
-
-  resetCamera() {
-    this.orbit = 0;
-    this.distance = cameraConfig.distance;
-    this.pitch = cameraConfig.pitch;
-  }
-
   setTargetVehicles(position: [number, number], heading: number) {
     this.mode = 'roam';
     this.eventOffer = null;
@@ -1202,28 +1054,7 @@ export class GameEngine {
   hitNoticeAt = 0;
 
   /** the camera keeps north up (compass double-click) until the player turns it */
-  private northUp = false;
-
-  /**
-   * Turn the view to north up, smoothly. Driving, it stays so (the car turns under
-   * it) until the player turns the view; on the menu and the map it simply turns.
-   */
-  faceNorth() {
-    if (this.driving) {
-      this.northUp = true;
-      this.orbit = 0;
-      return;
-    }
-    const from = this.map.getBearing();
-    const start = performance.now();
-    const step = () => {
-      const t = Math.min(1, (performance.now() - start) / 650);
-      const eased = t * t * (3 - 2 * t);
-      this.map.jumpTo({ bearing: from * (1 - eased) });
-      if (t < 1 && !this.disposed) requestAnimationFrame(step);
-    };
-    step();
-  }
+  northUp = false;
 
   /** Is the ground round this arrival point already loaded (no wait to land there)? */
   private arrivalReady(position: Position) {
@@ -1328,7 +1159,7 @@ export class GameEngine {
     this.overviewLeave = null;
     this.map.setScreenStream(false);
     this.setMapViewUi(false);
-    this.setOverviewMapNav(false);
+    this.camera.setOverviewMapNav(false);
     this.orbit = 0;
     this.distance = cameraConfig.distance;
     this.pitch = cameraConfig.pitch;
@@ -1534,7 +1365,7 @@ export class GameEngine {
     return this.overviewTarget > 0 || this.overview > 0.4;
   }
 
-  private setMapViewUi(open: boolean) {
+  setMapViewUi(open: boolean) {
     if (this.mapViewUi === open) {
       this.places.refreshMapLabels(true);
       return;
@@ -1595,55 +1426,6 @@ export class GameEngine {
     const towSpot = near ? near.station.position : this.spawn.nearbyRoadSpot();
     if (towSpot && this.mapLoaded) this.placeCarAt(towSpot, finish);
     else finish();
-  }
-
-  /** Pitched chase-style framing (fly-in / resume), not the intro menu. */
-  introView() {
-    return {
-      center: this.vehicle.position as [number, number],
-      zoom: 16.8,
-      pitch: 57,
-      bearing: this.vehicle.heading * 180 / Math.PI - 25,
-      elevation: this.altitude,
-    };
-  }
-
-  /** Intro menu: top-down city map (same as M while driving) — pan/zoom, click to place spawn. */
-  showIntroMap() {
-    const center = this.vehicle.position as [number, number];
-    this.overview = 1;
-    this.overviewTarget = 1;
-    this.overviewFree = true;
-    this.overviewLeave = null;
-    this.menuView = null;
-    this.map.setScreenStream(true);
-    this.map.setStreamCalm(false);
-    this.map.jumpTo({
-      center,
-      zoom: this.overviewZoom(center[1]),
-      pitch: 0,
-      bearing: 0,
-      elevation: this.altitude,
-    });
-    this.map.setInteractive({ pan: true, rotate: false });
-    this.setMapViewUi(true);
-    queueMicrotask(() => { if (!this.driving && this.overviewFree) this.places.refreshMapLabels(true); });
-  }
-
-  revealMap() {
-    if (this.mapShown || this.disposed) return;
-    // never an intro before the run's purse and garage are in (whatever way the spawn
-    // was settled): the intro and the engine must agree on what we own
-    if (!this.runReady) this.setTargetVehicles([...this.vehicle.position] as [number, number], this.vehicle.heading);
-    this.mapShown = true;
-    // The ring is prepared while hidden. Visible frames use the normal upload budget.
-    this.map.endStreamBurst();
-    this.feed.bootBurstUntil = 0;
-    this.showIntroMap();
-    this.host.style.transition = 'opacity .7s ease';
-    this.host.style.opacity = '1';
-    this.onBoot(true);
-    this.say(t('status.ready'));
   }
 
   setPaused(value: boolean) {
@@ -1710,7 +1492,7 @@ export class GameEngine {
       const moving = this.approachFrom != null;
       this.approachFrom = null;
       if (moving) this.onApproach(false);
-      if (this.mapShown) this.showIntroMap();
+      if (this.mapShown) this.camera.showIntroMap();
       return true;
     }
     if (this.spawn.spawnMarker) {
@@ -2040,7 +1822,7 @@ export class GameEngine {
       this.ground.plantWheels(dt, now);
       this.hauler.update(now);
       this.rampTool.update(now, dt);
-      this.nudgeCamera(dt);
+      this.camera.nudgeCamera(dt);
       const chaseDistance = this.distance;
       // north up (compass double-click) until the player turns the view themselves
       if (this.northUp && this.orbit !== 0) {
@@ -2071,7 +1853,7 @@ export class GameEngine {
       if (this.overviewTarget > 0 && this.overview > 0.98) {
         if (!this.overviewFree) {
           this.overviewFree = true;
-          this.setOverviewMapNav(true);
+          this.camera.setOverviewMapNav(true);
           this.stopGun();
           // labels next tick — same frame as leaving calm was hitching the open
           queueMicrotask(() => { if (this.overviewFree) this.places.refreshMapLabels(true); });
@@ -2084,7 +1866,7 @@ export class GameEngine {
         this.places.refreshMapLabels();
       } else if (this.overview > 0) {
         const e = this.overview * this.overview * (3 - 2 * this.overview);
-        const topZoom = this.overviewZoom(this.renderVehicle.position[1]);
+        const topZoom = this.camera.overviewZoom(this.renderVehicle.position[1]);
         const here = this.renderVehicle.position;
         if (this.overviewTarget < 1 && this.overviewLeave) {
           // leaving: from the inspected spot back to chase
@@ -2101,7 +1883,7 @@ export class GameEngine {
         bearingNow -= (((bearingNow + 540) % 360) - 180) * e;
         if (this.overviewFree) {
           this.overviewFree = false;
-          this.setOverviewMapNav(false);
+          this.camera.setOverviewMapNav(false);
         }
       } else if (this.overviewLeave) {
         this.overviewLeave = null;
@@ -2124,7 +1906,7 @@ export class GameEngine {
           const ground = this.map.groundAt(this.vehicle.position);
           if (ground != null) this.altitude = ground;
         } else this.altitude = 0;
-        const view = this.introView();
+        const view = this.camera.introView();
         const center = this.map.getCenter();
         if (Math.abs(center.lng - view.center[0]) > 1e-8 || Math.abs(center.lat - view.center[1]) > 1e-8 || Math.abs(this.map.getCenterElevation() - view.elevation) > 0.25 || Math.abs(this.map.getZoom() - view.zoom) > 0.001) this.map.jumpTo(view);
       }
@@ -2148,7 +1930,7 @@ export class GameEngine {
     this.coins.updateFieldCoins(now);
     if (now - this.hudTime > 100) {
       this.hudTime = now;
-      if (!this.approachFrom) this.saveCamera(now);
+      if (!this.approachFrom) this.camera.saveCamera(now);
       this.hud(this.vehicle.speed * 3.6, this.vehicle.distance, this.fps, this.combat.hudParticipants());
       if (!this.approachFrom) {
         const near = nearestStation(this.vehicle.position, [...this.places.stations.values()]);
