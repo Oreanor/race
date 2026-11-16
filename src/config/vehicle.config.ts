@@ -45,7 +45,7 @@ export type City = typeof cities[number];
 export type Car = typeof cars[number];
 
 /** Coins on a fresh start; enough to buy one of the cheapest 3–4 cars. */
-export const STARTING_CASH = 5300;
+export const STARTING_CASH = 5000;
 
 /** Always join the player's garage (gifts / unlocks), even on an old save. Full fleet only in local `next dev`. */
 export const GIFT_CARS =
