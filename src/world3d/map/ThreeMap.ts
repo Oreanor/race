@@ -450,7 +450,7 @@ export class ThreeMap {
     return this.lastScreenBounds;
   }
 
-  /** GeoJSON features of a tile layer near the view (all loaded layers, incl. poiâ€¦). */
+  /** GeoJSON features of a tile layer near the view (all loaded layers, incl. poi…). */
   features(layer: string, focus: LngLat = this.camera.state.center): GeoFeature[] {
     return this.world.features(layer, focus);
   }
@@ -1028,9 +1028,6 @@ export class ThreeMap {
     const above = Math.max(0, cam.cameraAltitude() - cam.state.elevation);
     const mapView = this.screenStream || (cam.state.pitch < 25 && above > 900);
     const screen = mapView ? this.screenGroundBounds() : null;
-    // never blank walls/trees for the M-map — keep the city drawn
-    this.world.setMapLite(false);
-    this.world.setPropsHidden(false);
     this.world.update(
       cam.state.center,
       streamHeading,
