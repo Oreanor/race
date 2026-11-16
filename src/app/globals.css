@@ -259,7 +259,7 @@
 .ui-dialog.is-wide{width:min(460px,100%)}
 /* how to play: a long read with the car table. Title and button stay put, only the body
    scrolls — inset from the card's edge, with a slim scrollbar in the UI's own colours */
-.ui-dialog.rules{width:min(820px,100%);max-height:calc(100dvh - 72px);overflow:hidden;padding:24px 10px 20px 28px;gap:16px}
+.ui-dialog.rules{width:min(660px,100%);max-height:calc(100dvh - 72px);overflow:hidden;padding:24px 10px 20px 28px;gap:16px}
 .ui-dialog.rules .ui-title,.ui-dialog.rules .ui-actions{flex:none;margin-right:18px}
 .rules-body{flex:1 1 auto;min-height:0;overflow-y:auto;padding-right:14px;display:flex;flex-direction:column;gap:18px;font-size:14px;line-height:1.5;color:var(--ui-ink);
   scrollbar-width:thin;scrollbar-color:color-mix(in srgb,var(--ui-ink) 28%,transparent) transparent}
