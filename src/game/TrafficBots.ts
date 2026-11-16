@@ -1,4 +1,5 @@
 import type { Car } from '@/config/vehicle.config';
+import { Nitro } from './Nitro.ts';
 import type { MapFeature } from './WaterCollisionController.ts';
 import { VehicleController, type Position, metersBetween, METERS_PER_DEGREE, offsetPosition } from './VehicleController.ts';
 import { raceCourse, RACE_CHECKPOINTS, type RaceCourse } from './RaceCourse.ts';
@@ -600,6 +601,8 @@ export type TrafficBot = {
   turnBack?: boolean;
   /** how long the gas has been down with the car not moving (s) */
   stalledFor?: number;
+  /** its nitro bar: the same rules as ours (made on its first boost) */
+  nitro?: Nitro;
   mood: BotMood;
   huntId: string | null;
   huntRange: number;
@@ -855,6 +858,9 @@ export function advanceTrafficBot(
     bot.stalledFor = (bot.stalledFor ?? 0) + dt;
     if (bot.stalledFor > 1.5) backOff(bot, Math.random() < 0.5 ? 1 : -1, now);
   } else if (bot.stalledFor) bot.stalledFor = Math.max(0, bot.stalledFor - dt);
+  // the boost is the nitro, as for us: it burns a bar and refills; empty, no boost
+  bot.nitro ??= new Nitro();
+  if (!bot.nitro.tick(dt, keys.has('Space'))) keys.delete('Space');
   bot.controller.step(dt, keys, config);
   bot.position = [...bot.controller.position];
   bot.heading = bot.controller.heading;

@@ -80,6 +80,7 @@ import { MissionBotDriver, type BotDriverHost } from './traffic/MissionBots.ts';
 import { Shops, type ShopsHost } from './economy/Shops.ts';
 import { Dealership, type DealershipHost } from './economy/Dealership.ts';
 import { Ramp, type RampHost } from './Ramp.ts';
+import { Nitro } from './Nitro.ts';
 import { JobPin, makeMapLabel, makeOffscreenIndicator, newMarker, paintMissionIndicator, setPinRange, type MapMarker } from './hud/mapPins.ts';
 import { hubAt, hubsFromFeatures, kilometres, nearestHub, ticketPrice, type Hub, type HubKind } from './Travel.ts';
 import { bearingTo, BOUNTY_RANGE_KM, loadBounty, makeBounty, saveBounty, type Bounty } from './Bounty.ts';
@@ -172,9 +173,6 @@ function savedCamera(): { distance: number; pitch: number; orbit: number } | nul
   }
 }
 const NO_FUEL_KEYS = new Set(['KeyW', 'Space']);
-/** nitro: a full bar burns in this long (s), and refills from empty in this long (s) */
-const NITRO_BURN_S = 10;
-const NITRO_REFILL_S = 20;
 
 
 /** One line of the "who is online" list. Distance in meters from our car. */
@@ -359,9 +357,8 @@ export class GameEngine {
     ambulance: new JobPin('ambulance-map-marker', 'ambulance'),
     bus: new JobPin('bus-map-marker', 'bus'),
   };
-  /** the nitro bar under the speedometer: 0…1 left, whether it is burning now, and
-   *  `spent`: run dry with Space still down — it waits for Space to be let go */
-  private nitro = { level: 1, active: false, spent: false };
+  /** the nitro bar under the speedometer */
+  private nitro = new Nitro();
   /** J: the ramp we put down (see Ramp) */
   private rampTool = new Ramp(this.rampHost());
   /** the car dealership and the garage swap (see Dealership) */
@@ -893,20 +890,9 @@ export class GameEngine {
     return this.nitro;
   }
 
-  /**
-   * Space held: the nitro burns the bar (a full one in NITRO_BURN_S); let go and it stops
-   * and refills by itself (empty to full in NITRO_REFILL_S). Run dry with Space still
-   * down, it waits for a fresh press — else every refilled drop would flicker it on.
-   */
+  /** Space held: the nitro burns its bar; let go, it refills (see Nitro). */
   private tickNitro(dt: number) {
-    const n = this.nitro;
-    const held = this.keys.has('Space');
-    if (!held) n.spent = false;
-    n.active = held && !n.spent && n.level > 0 && !this.fuel.empty;
-    if (n.active) {
-      n.level = Math.max(0, n.level - dt / NITRO_BURN_S);
-      if (n.level <= 0) { n.spent = true; n.active = false; }
-    } else n.level = Math.min(1, n.level + dt / NITRO_REFILL_S);
+    this.nitro.tick(dt, this.keys.has('Space'), !this.fuel.empty);
   }
 
   /** The ramp's window on the game. */
