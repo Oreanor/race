@@ -91,3 +91,40 @@ export function makeOffscreenIndicator(kind: 'focus' | 'finish', titleText: stri
   element.append(arrow, content);
   return { element, arrow, title, distance };
 }
+
+/**
+ * The one pin of a special car's job (fire, taxi, ambulance, bus tour, impound): where the
+ * job is now and what it says; shown with a null spot, it comes down.
+ */
+export class JobPin {
+  private marker: MapMarker | null = null;
+  private at: [number, number] | null = null;
+
+  constructor(private className: string, private color: MissionColor) {}
+
+  show(map: ThreeMap, at: [number, number] | null, title: string) {
+    this.at = at;
+    if (!at) { this.remove(); return; }
+    const colors = MISSION_COLORS[this.color];
+    if (!this.marker) {
+      this.marker = newMarker({ element: makeMapLabel(this.className, title, title, colors), anchor: 'bottom' }).setLngLat(at).addTo(map);
+      return;
+    }
+    this.marker.setLngLat(at);
+    const el = this.marker.getElement();
+    const label = el?.querySelector('.map-pin-label');
+    if (label) label.textContent = title;
+    paintMissionIndicator(el, this.color);
+  }
+
+  /** the range under its label, from us */
+  range(from: Position, show: boolean) {
+    setPinRange(this.marker, from, this.at, show);
+  }
+
+  /** taken down (a new language, the drive over): the next show makes it again */
+  remove() {
+    this.marker?.remove();
+    this.marker = null;
+  }
+}

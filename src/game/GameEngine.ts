@@ -75,7 +75,7 @@ import { fuelStationsLayer } from '@/rendering/FuelStationsLayer';
 import { isVintageTrain, trainsLayer } from '@/rendering/TrainsLayer';
 import { RailNetwork, TrainTraffic } from './Trains.ts';
 import { canCable, Hauler, type HaulHost } from './Hauler.ts';
-import { makeMapLabel, makeOffscreenIndicator, newMarker, paintMissionIndicator, setPinRange, type MapMarker } from './hud/mapPins.ts';
+import { JobPin, makeMapLabel, makeOffscreenIndicator, newMarker, paintMissionIndicator, setPinRange, type MapMarker } from './hud/mapPins.ts';
 import { hubAt, hubsFromFeatures, kilometres, nearestHub, ticketPrice, type Hub, type HubKind } from './Travel.ts';
 import { bearingTo, BOUNTY_RANGE_KM, loadBounty, makeBounty, saveBounty, type Bounty } from './Bounty.ts';
 import type { GameSave } from './save.ts';
@@ -341,32 +341,22 @@ export class GameEngine {
   private bountyMarker: MapMarker | null = null;
   /** fire call (fire truck only): marker → burning house → put out every window */
   private fire = createFireCallState();
-  private fireIndicator: { element: HTMLElement; arrow: HTMLElement; title: HTMLElement; distance: HTMLElement } | null = null;
-  private fireMarker: MapMarker | null = null;
   /** taxi fare (Chevy Taxi): marker → told the address → drop-off pays 100/km */
   private taxi = createTaxiFareState();
-  private taxiIndicator: { element: HTMLElement; arrow: HTMLElement; title: HTMLElement; distance: HTMLElement } | null = null;
-  private taxiMarker: MapMarker | null = null;
   /** ambulance: crash or burned house → hospital, 1000 per victim */
   private ambulance = createAmbulanceCallState();
-  private ambulanceIndicator: { element: HTMLElement; arrow: HTMLElement; title: HTMLElement; distance: HTMLElement } | null = null;
-  private ambulanceMarker: MapMarker | null = null;
   /** city bus: approach OSM bus stops → board/alight modal + coins */
   private bus = createBusStopState();
   private busStops = new Map<string, Station>();
   /** bus tour: group → named hotel/museum */
   private busTour = createBusTourState();
   private landmarks = new Map<string, Landmark>();
-  private busTourIndicator: { element: HTMLElement; arrow: HTMLElement; title: HTMLElement; distance: HTMLElement } | null = null;
-  private busTourMarker: MapMarker | null = null;
   /** Howler: marker → load a car → any police station for a premium */
   private impoundPickup: [number, number] | null = null;
   private impoundActive = false;
   private impoundSpot: [number, number] | null = null;
   private impoundOfferAt = performance.now() + 25000;
   private impoundDeliveredAt = 0;
-  private impoundIndicator: { element: HTMLElement; arrow: HTMLElement; title: HTMLElement; distance: HTMLElement } | null = null;
-  private impoundMarker: MapMarker | null = null;
   /** our police car's lights (F) */
   /** our police lights (F): off by default */
   private beaconsOn = false;
@@ -379,6 +369,14 @@ export class GameEngine {
   private fieldAt = 0;
   private urbanLevel = 0;
   private urbanAt = 0;
+  /** the special cars' job pins on the map */
+  private jobPins = {
+    fire: new JobPin('fire-map-marker', 'fire'),
+    impound: new JobPin('impound-map-marker', 'impound'),
+    taxi: new JobPin('taxi-map-marker', 'taxi'),
+    ambulance: new JobPin('ambulance-map-marker', 'ambulance'),
+    bus: new JobPin('bus-map-marker', 'bus'),
+  };
   /** the Howler's and the Batmobile's cable (see Hauler) */
   private hauler = new Hauler(this.haulHost());
   /** us on the map (M): a dot with an arrow along our heading */
@@ -3346,18 +3344,7 @@ export class GameEngine {
     this.syncErrandMarkers();
     this.bountyMarker?.remove();
     this.bountyMarker = null;
-    this.fireMarker?.remove();
-    this.fireMarker = null;
-    if (this.fireIndicator) this.fireIndicator.element.setAttribute('aria-label', t('fire.goal'));
-    this.impoundMarker?.remove();
-    this.impoundMarker = null;
-    if (this.impoundIndicator) this.impoundIndicator.element.setAttribute('aria-label', t('impound.goal'));
-    this.taxiMarker?.remove();
-    this.taxiMarker = null;
-    if (this.taxiIndicator) this.taxiIndicator.element.setAttribute('aria-label', t('taxi.goal'));
-    this.busTourMarker?.remove();
-    this.busTourMarker = null;
-    if (this.busTourIndicator) this.busTourIndicator.element.setAttribute('aria-label', t('bus.tour'));
+    for (const pin of Object.values(this.jobPins)) pin.remove();
     this.raceGoalMarker?.remove();
     this.raceGoalMarker = null;
     this.raceGoalIndicator?.element.remove();
@@ -4219,113 +4206,43 @@ export class GameEngine {
   }
 
   /** Map label for the fire call; HUD tip comes from the focus cycle. */
+  /** Whether a special car's job pin is up: in that car, driving, nothing bigger on. */
+  private jobPinShown(inCar: boolean) {
+    return inCar && this.driving && !this.errand && !this.bountyFight;
+  }
+
   private updateFireMarkers() {
-    if (this.fireIndicator) this.fireIndicator.element.style.display = 'none';
     const pin = this.fire.active ? this.fire.spot : this.fire.pickup;
-    if (!this.isFireTruck() || !this.driving || !pin || this.errand || this.bountyFight) {
-      if (this.fireMarker) { this.fireMarker.remove(); this.fireMarker = null; }
-      return;
-    }
-    const title = this.fire.active ? t('fire.marker.active') : t('fire.marker');
-    if (!this.fireMarker) {
-      this.fireMarker = newMarker({ element: makeMapLabel('fire-map-marker', title, title, MISSION_COLORS.fire), anchor: 'bottom' }).setLngLat(pin).addTo(this.map);
-    } else {
-      this.fireMarker.setLngLat(pin);
-      const el = this.fireMarker.getElement();
-      const label = el?.querySelector('.map-pin-label');
-      if (label) label.textContent = title;
-      el?.style.setProperty('--mission-color', MISSION_COLORS.fire.main);
-      el?.style.setProperty('--mission-soft', MISSION_COLORS.fire.soft);
-    }
+    this.jobPins.fire.show(this.map, this.jobPinShown(this.isFireTruck()) ? pin : null, this.fire.active ? t('fire.marker.active') : t('fire.marker'));
   }
 
   /** Map label for the Howler impound job; HUD tip comes from the focus cycle. */
   private updateImpoundMarkers() {
-    if (this.impoundIndicator) this.impoundIndicator.element.style.display = 'none';
     const drop = this.impoundDropPin();
     const pin = this.impoundActive ? (drop ?? this.impoundSpot) : this.impoundPickup;
-    if (!this.isHauler() || !this.driving || !pin || this.errand || this.bountyFight) {
-      if (this.impoundMarker) { this.impoundMarker.remove(); this.impoundMarker = null; }
-      return;
-    }
     const title = drop ? t('impound.marker.drop') : this.impoundActive ? t('impound.marker.car') : t('impound.marker');
-    if (!this.impoundMarker) {
-      this.impoundMarker = newMarker({ element: makeMapLabel('impound-map-marker', title, title, MISSION_COLORS.impound), anchor: 'bottom' }).setLngLat(pin).addTo(this.map);
-    } else {
-      this.impoundMarker.setLngLat(pin);
-      const el = this.impoundMarker.getElement();
-      const label = el?.querySelector('.map-pin-label');
-      if (label) label.textContent = title;
-      el?.style.setProperty('--mission-color', MISSION_COLORS.impound.main);
-      el?.style.setProperty('--mission-soft', MISSION_COLORS.impound.soft);
-    }
+    this.jobPins.impound.show(this.map, this.jobPinShown(this.isHauler()) ? pin : null, title);
   }
 
   /** Map label for the taxi fare; HUD tip comes from the focus cycle. */
   private updateTaxiMarkers() {
-    if (this.taxiIndicator) this.taxiIndicator.element.style.display = 'none';
     const pin = this.taxi.active ? this.taxi.goal : this.taxi.pickup;
-    if (!this.isTaxi() || !this.driving || !pin || this.errand || this.bountyFight) {
-      if (this.taxiMarker) { this.taxiMarker.remove(); this.taxiMarker = null; }
-      return;
-    }
-    const title = this.taxi.active ? t('taxi.marker.drop') : t('taxi.marker');
-    if (!this.taxiMarker) {
-      this.taxiMarker = newMarker({ element: makeMapLabel('taxi-map-marker', title, title, MISSION_COLORS.taxi), anchor: 'bottom' }).setLngLat(pin).addTo(this.map);
-    } else {
-      this.taxiMarker.setLngLat(pin);
-      const el = this.taxiMarker.getElement();
-      const label = el?.querySelector('.map-pin-label');
-      if (label) label.textContent = title;
-      el?.style.setProperty('--mission-color', MISSION_COLORS.taxi.main);
-      el?.style.setProperty('--mission-soft', MISSION_COLORS.taxi.soft);
-    }
+    this.jobPins.taxi.show(this.map, this.jobPinShown(this.isTaxi()) ? pin : null, this.taxi.active ? t('taxi.marker.drop') : t('taxi.marker'));
   }
 
   /** Map label for the ambulance call; HUD tip comes from the focus cycle. */
   private updateAmbulanceMarkers() {
-    if (this.ambulanceIndicator) this.ambulanceIndicator.element.style.display = 'none';
     const pin = this.ambulance.active ? this.ambulance.goal : this.ambulance.pickup;
-    if (!this.isAmbulance() || !this.driving || !pin || this.errand || this.bountyFight) {
-      if (this.ambulanceMarker) { this.ambulanceMarker.remove(); this.ambulanceMarker = null; }
-      return;
-    }
     const title = this.ambulance.active
       ? t('ambulance.marker.drop')
       : this.ambulance.site === 'burn' ? t('ambulance.marker.burn') : t('ambulance.marker.crash');
-    if (!this.ambulanceMarker) {
-      this.ambulanceMarker = newMarker({ element: makeMapLabel('ambulance-map-marker', title, title, MISSION_COLORS.ambulance), anchor: 'bottom' }).setLngLat(pin).addTo(this.map);
-    } else {
-      this.ambulanceMarker.setLngLat(pin);
-      const el = this.ambulanceMarker.getElement();
-      const label = el?.querySelector('.map-pin-label');
-      if (label) label.textContent = title;
-      el?.style.setProperty('--mission-color', MISSION_COLORS.ambulance.main);
-      el?.style.setProperty('--mission-soft', MISSION_COLORS.ambulance.soft);
-    }
+    this.jobPins.ambulance.show(this.map, this.jobPinShown(this.isAmbulance()) ? pin : null, title);
   }
 
   /** Map label for the bus tour; HUD tip comes from the focus cycle. */
   private updateBusTourMarkers() {
-    if (this.busTourIndicator) this.busTourIndicator.element.style.display = 'none';
     const pin = this.busTour.active ? this.busTour.goal : this.busTour.pickup;
-    if (!this.isBus() || !this.driving || !pin || this.errand || this.bountyFight) {
-      if (this.busTourMarker) { this.busTourMarker.remove(); this.busTourMarker = null; }
-      return;
-    }
-    const title = this.busTour.active
-      ? (this.busTour.place || t('bus.drop'))
-      : t('bus.marker');
-    if (!this.busTourMarker) {
-      this.busTourMarker = newMarker({ element: makeMapLabel('bus-map-marker', title, title, MISSION_COLORS.bus), anchor: 'bottom' }).setLngLat(pin).addTo(this.map);
-    } else {
-      this.busTourMarker.setLngLat(pin);
-      const el = this.busTourMarker.getElement();
-      const label = el?.querySelector('.map-pin-label');
-      if (label) label.textContent = title;
-      el?.style.setProperty('--mission-color', MISSION_COLORS.bus.main);
-      el?.style.setProperty('--mission-soft', MISSION_COLORS.bus.soft);
-    }
+    this.jobPins.bus.show(this.map, this.jobPinShown(this.isBus()) ? pin : null, this.busTour.active ? (this.busTour.place || t('bus.drop')) : t('bus.marker'));
   }
 
   private updateEventMarkers() {
@@ -4417,19 +4334,12 @@ export class GameEngine {
       this.setMapPinRange(marker, this.raceCourse.checkpoints[index], pinRange && this.mode === 'race');
     }
     this.setMapPinRange(this.bountyMarker, this.bountyPickup ?? this.bounty?.spot ?? null, pinRange && this.canHuntBounty());
-    this.setMapPinRange(this.fireMarker, this.fire.active ? this.fire.spot : this.fire.pickup, pinRange && this.isFireTruck());
-    this.setMapPinRange(
-      this.impoundMarker,
-      this.impoundActive ? (this.impoundDropPin() ?? this.impoundSpot) : this.impoundPickup,
-      pinRange && this.isHauler(),
-    );
-    this.setMapPinRange(this.taxiMarker, this.taxi.active ? this.taxi.goal : this.taxi.pickup, pinRange && this.isTaxi());
-    this.setMapPinRange(this.ambulanceMarker, this.ambulance.active ? this.ambulance.goal : this.ambulance.pickup, pinRange && this.isAmbulance());
-    this.setMapPinRange(
-      this.busTourMarker,
-      this.busTour.active ? this.busTour.goal : this.busTour.pickup,
-      pinRange && this.isBus(),
-    );
+    const jobRange = pinRange && !this.mapInspecting();
+    this.jobPins.fire.range(this.vehicle.position, jobRange && this.isFireTruck());
+    this.jobPins.impound.range(this.vehicle.position, jobRange && this.isHauler());
+    this.jobPins.taxi.range(this.vehicle.position, jobRange && this.isTaxi());
+    this.jobPins.ambulance.range(this.vehicle.position, jobRange && this.isAmbulance());
+    this.jobPins.bus.range(this.vehicle.position, jobRange && this.isBus());
     for (const pin of errandPins) {
       this.setMapPinRange(this.errandMarkers.get(pin.id), pin.position, pinRange);
     }
@@ -6170,11 +6080,7 @@ export class GameEngine {
     this.bountyMarker?.remove();
     for (const marker of this.raceCheckpointMarkers.values()) marker.remove();
     this.raceCheckpointMarkers.clear();
-    this.fireMarker?.remove();
-    this.impoundMarker?.remove();
-    this.taxiMarker?.remove();
-    this.ambulanceMarker?.remove();
-    this.busTourMarker?.remove();
+    for (const pin of Object.values(this.jobPins)) pin.remove();
     this.combatLayer?.setFireHouse(null);
     this.trafficBots = this.trafficBots.filter((b) => !isAmbulanceWreckId(b.id));
     this.eventIndicatorLayer?.remove();
