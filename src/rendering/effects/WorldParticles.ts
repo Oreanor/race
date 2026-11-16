@@ -316,13 +316,16 @@ export class WorldParticles {
     const len = Math.hypot(d.e, d.n, d.u);
     if (len < 2) return;
     const life = Math.min(140, Math.max(40, len * 0.9)); // ~1 km/s
-    const speed = len / (life / 1000);
-    // a long glowing streak (~40% of the shot, 6-40 m): a 1.6 m one flew by in a few frames
-    // and was hardly ever seen
-    const streak = Math.min(40, Math.max(6, len * 0.4));
-    this.add(here, from, {
-      kind: 'tracer', ve: d.e / len * speed, vn: d.n / len * speed, vu: d.u / len * speed,
-      life, size0: 0.1, size1: 0.1, drag: 0, gravity: 0, stretch: streak / speed,
+    // a long glowing streak (~40% of the shot, 6-40 m; a 1.6 m one flew by in a few frames
+    // and was hardly ever seen). It is drawn centred on the particle, so the particle runs
+    // from half a streak past the muzzle to half a streak short of the hit: the streak
+    // stays between the two and its head stops right at the hit
+    const streak = Math.min(40, Math.max(6, len * 0.4), len * 0.8), half = streak / 2;
+    const ue = d.e / len, un = d.n / len, uu = d.u / len;
+    const speed = (len - streak) / (life / 1000);
+    this.add(here, { e: from.e + ue * half, n: from.n + un * half, u: from.u + uu * half }, {
+      kind: 'tracer', ve: ue * speed, vn: un * speed, vu: uu * speed,
+      life, size0: 0.1, size1: 0.1, drag: 0, gravity: 0, stretch: streak / Math.max(speed, 1e-3),
     }, now);
   }
 
