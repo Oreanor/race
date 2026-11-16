@@ -15,7 +15,7 @@ import { AMBULANCE_HOSPITAL_M, isAmbulanceWreckId, BUS_ID, FIRE_TRUCK_ID, HAULER
 import type { GameEngine } from '../GameEngine.ts';
 
 /** What this part reads and drives in the game. */
-export type JobsGame = Pick<GameEngine, 'civics' | 'combatLayer' | 'dialogOpen' | 'driving' | 'errand' | 'hauler' | 'isAmbulance' | 'isBus' | 'isFireTruck' | 'isHauler' | 'isTaxi' | 'landmarks' | 'map' | 'missions' | 'mode' | 'onEventResult' | 'onMission' | 'pickBeaconSpot' | 'playerMoney' | 'say' | 'setAmbulanceScene' | 'syncMissionVisuals' | 'targetVehicles' | 'trafficBots' | 'trafficNetwork' | 'vehicle' | 'wanted'>;
+export type JobsGame = Pick<GameEngine, 'board' | 'civics' | 'combatLayer' | 'dialogOpen' | 'driving' | 'hauler' | 'isAmbulance' | 'isBus' | 'isFireTruck' | 'isHauler' | 'isTaxi' | 'landmarks' | 'map' | 'mode' | 'onEventResult' | 'pickBeaconSpot' | 'playerMoney' | 'say' | 'setAmbulanceScene' | 'targetVehicles' | 'trafficBots' | 'trafficNetwork' | 'vehicle' | 'wanted'>;
 
 /**
  * The special cars' jobs: fire calls for the fire truck, fares for the taxi, crash and fire
@@ -65,7 +65,7 @@ export class Jobs {
   onRideOffer: (offer: RideOfferType | null) => void = () => {};
 
   fireWorld(): FireCallWorld {
-    const avoid = this.game.missions.map((mission) => mission.position);
+    const avoid = this.game.board.missions.map((mission) => mission.position);
     if (this.game.wanted.pickup) avoid.push(this.game.wanted.pickup);
     return {
       position: this.game.vehicle.position,
@@ -73,13 +73,13 @@ export class Jobs {
       mode: this.game.mode,
       busy: Boolean(this.game.dialogOpen()),
       bountyFight: this.game.wanted.fight,
-      errand: Boolean(this.game.errand),
-      onMission: this.game.onMission(),
+      errand: Boolean(this.game.board.errand),
+      onMission: this.game.board.onMission(),
       avoid,
       fireFacadesNear: (at, radius) => this.game.map.fireFacadesNear(at, radius),
       pickBeaconSpot: (here, heading, seed, spots) => this.game.pickBeaconSpot(here, heading, seed, spots),
       setFireHouse: (site) => this.game.combatLayer?.setFireHouse(site),
-      syncMissionVisuals: (show) => this.game.syncMissionVisuals(show),
+      syncMissionVisuals: (show) => this.game.board.syncMissionVisuals(show),
       say: (text, toast) => this.game.say(text, toast),
       addMoney: (amount) => { this.game.playerMoney += amount; },
       onResult: (cash, windows) => this.game.onEventResult({ kind: 'fire', won: true, cash, name: String(windows) }),
@@ -110,7 +110,7 @@ export class Jobs {
   }
 
   taxiWorld(): TaxiFareWorld {
-    const avoid = this.game.missions.map((mission) => mission.position);
+    const avoid = this.game.board.missions.map((mission) => mission.position);
     if (this.game.wanted.pickup) avoid.push(this.game.wanted.pickup);
     if (this.fire.pickup) avoid.push(this.fire.pickup);
     if (this.impoundPickup) avoid.push(this.impoundPickup);
@@ -120,13 +120,13 @@ export class Jobs {
       mode: this.game.mode,
       busy: Boolean(this.game.dialogOpen() || this.taxi.pending || this.busTour.pending),
       bountyFight: this.game.wanted.fight,
-      errand: Boolean(this.game.errand),
-      onMission: this.game.onMission(),
+      errand: Boolean(this.game.board.errand),
+      onMission: this.game.board.onMission(),
       avoid,
       pickBeaconSpot: (here, heading, seed, spots) => this.game.pickBeaconSpot(here, heading, seed, spots),
       pickDropoff: (from, minM, maxM, seed) =>
         this.game.trafficNetwork.randomAway(from, new Set(), minM, maxM, seed)?.position ?? null,
-      syncMissionVisuals: (show) => this.game.syncMissionVisuals(show),
+      syncMissionVisuals: (show) => this.game.board.syncMissionVisuals(show),
       say: (text, toast) => this.game.say(text, toast),
       addMoney: (amount) => { this.game.playerMoney += amount; },
       onOffer: (offer) => this.onRideOffer(offer),
@@ -157,7 +157,7 @@ export class Jobs {
   }
 
   ambulanceWorld(): AmbulanceCallWorld {
-    const avoid = this.game.missions.map((mission) => mission.position);
+    const avoid = this.game.board.missions.map((mission) => mission.position);
     if (this.game.wanted.pickup) avoid.push(this.game.wanted.pickup);
     if (this.fire.pickup) avoid.push(this.fire.pickup);
     if (this.impoundPickup) avoid.push(this.impoundPickup);
@@ -168,8 +168,8 @@ export class Jobs {
       mode: this.game.mode,
       busy: Boolean(this.game.dialogOpen() || this.taxi.pending || this.busTour.pending || this.ambulance.pending),
       bountyFight: this.game.wanted.fight,
-      errand: Boolean(this.game.errand),
-      onMission: this.game.onMission(),
+      errand: Boolean(this.game.board.errand),
+      onMission: this.game.board.onMission(),
       avoid,
       pickBeaconSpot: (here, heading, seed, spots) => this.game.pickBeaconSpot(here, heading, seed, spots),
       nearestHospital: (from) => {
@@ -194,7 +194,7 @@ export class Jobs {
         return band ?? near;
       },
       setScene: (kind, at) => this.game.setAmbulanceScene(kind, at),
-      syncMissionVisuals: (show) => this.game.syncMissionVisuals(show),
+      syncMissionVisuals: (show) => this.game.board.syncMissionVisuals(show),
       say: (text, toast) => this.game.say(text, toast),
       addMoney: (amount) => { this.game.playerMoney += amount; },
       onOffer: (offer) => this.onRideOffer(offer),
@@ -239,7 +239,7 @@ export class Jobs {
   }
 
   busTourWorld(): BusTourWorld {
-    const avoid = this.game.missions.map((mission) => mission.position);
+    const avoid = this.game.board.missions.map((mission) => mission.position);
     if (this.game.wanted.pickup) avoid.push(this.game.wanted.pickup);
     if (this.fire.pickup) avoid.push(this.fire.pickup);
     if (this.impoundPickup) avoid.push(this.impoundPickup);
@@ -250,12 +250,12 @@ export class Jobs {
       mode: this.game.mode,
       busy: Boolean(this.game.dialogOpen() || this.taxi.pending || this.busTour.pending),
       bountyFight: this.game.wanted.fight,
-      errand: Boolean(this.game.errand),
-      onMission: this.game.onMission(),
+      errand: Boolean(this.game.board.errand),
+      onMission: this.game.board.onMission(),
       avoid,
       landmarks: [...this.game.landmarks.values()],
       pickBeaconSpot: (here, heading, seed, spots) => this.game.pickBeaconSpot(here, heading, seed, spots),
-      syncMissionVisuals: (show) => this.game.syncMissionVisuals(show),
+      syncMissionVisuals: (show) => this.game.board.syncMissionVisuals(show),
       say: (text, toast) => this.game.say(text, toast),
       addMoney: (amount) => { this.game.playerMoney += amount; },
       onOffer: (offer) => this.onRideOffer(offer),
@@ -317,20 +317,20 @@ export class Jobs {
       return;
     }
     if (this.impoundPickup) {
-      if (this.game.mode === 'roam' && !this.game.wanted.fight && !this.game.errand && !this.fire.active
+      if (this.game.mode === 'roam' && !this.game.wanted.fight && !this.game.board.errand && !this.fire.active
         && metersBetween(here, this.impoundPickup) <= IMPOUND_ARRIVE_M) this.startImpound();
       return;
     }
-    if (this.game.mode !== 'roam' || this.game.wanted.fight || this.game.errand || this.game.onMission()) return;
+    if (this.game.mode !== 'roam' || this.game.wanted.fight || this.game.board.errand || this.game.board.onMission()) return;
     const busy = this.game.dialogOpen();
     if (busy || now < this.impoundOfferAt) return;
     const seed = Math.round(here[0] * 1e5) ^ Math.round(here[1] * 1e5) ^ (now | 0);
-    const avoid = this.game.missions.map((mission) => mission.position);
+    const avoid = this.game.board.missions.map((mission) => mission.position);
     if (this.game.wanted.pickup) avoid.push(this.game.wanted.pickup);
     if (this.fire.pickup) avoid.push(this.fire.pickup);
     if (this.taxi.pickup) avoid.push(this.taxi.pickup);
     this.impoundPickup = this.game.pickBeaconSpot(here as [number, number], this.game.vehicle.heading, seed ^ 0x70a1, avoid);
-    this.game.syncMissionVisuals(true);
+    this.game.board.syncMissionVisuals(true);
     this.game.say(t('mission.new', { label: t('impound.goal') }), true);
   }
 
@@ -354,7 +354,7 @@ export class Jobs {
     bot.goal = null;
     this.game.trafficBots = [...this.game.trafficBots.filter((b) => b.id !== TOW_CAR_ID), bot];
     this.game.combatLayer?.setTargets(this.game.targetVehicles());
-    this.game.syncMissionVisuals(true);
+    this.game.board.syncMissionVisuals(true);
     this.game.say(t('impound.start', { car: car.name, reward: formatNumber(IMPOUND_REWARD) }), true);
   }
 
@@ -371,7 +371,7 @@ export class Jobs {
     }
     this.game.playerMoney += IMPOUND_REWARD;
     this.impoundOfferAt = performance.now() + 50000;
-    this.game.syncMissionVisuals(true);
+    this.game.board.syncMissionVisuals(true);
     this.game.onEventResult({ kind: 'impound', won: true, cash: IMPOUND_REWARD });
   }
 
@@ -381,7 +381,7 @@ export class Jobs {
     this.game.trafficBots = this.game.trafficBots.filter((b) => b.id !== TOW_CAR_ID);
     this.game.combatLayer?.setTargets(this.game.targetVehicles());
     this.impoundOfferAt = performance.now() + 20000;
-    this.game.syncMissionVisuals(true);
+    this.game.board.syncMissionVisuals(true);
     this.game.say(t('impound.lost'), true);
   }
 
@@ -395,12 +395,12 @@ export class Jobs {
       this.impoundOfferAt = performance.now() + 12000;
       this.game.say(t('impound.aborted'), true);
     }
-    this.game.syncMissionVisuals(true);
+    this.game.board.syncMissionVisuals(true);
   }
 
   /** Whether a special car's job pin is up: in that car, driving, nothing bigger on. */
   jobPinShown(inCar: boolean) {
-    return inCar && this.game.driving && !this.game.errand && !this.game.wanted.fight;
+    return inCar && this.game.driving && !this.game.board.errand && !this.game.wanted.fight;
   }
 
   updateFireMarkers() {

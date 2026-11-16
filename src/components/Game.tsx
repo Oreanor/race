@@ -1207,10 +1207,10 @@ export default function Game() {
         <Dialog
           title={t(`event.${eventOffer.kind}`)}
           actions={<>
-            <button type="button" className="ui-btn" autoFocus disabled={eventOffer.preparing} onClick={() => engine.current?.acceptEvent()}>
+            <button type="button" className="ui-btn" autoFocus disabled={eventOffer.preparing} onClick={() => engine.current?.board.acceptEvent()}>
               {eventOffer.preparing ? t('race.preparing') : eventOffer.kind === 'delivery' || eventOffer.kind === 'collect' ? t('event.take') : t('event.play')}
             </button>
-            <button type="button" className="ui-btn is-ghost" onClick={() => engine.current?.declineEvent()}>{t('event.later')}</button>
+            <button type="button" className="ui-btn is-ghost" onClick={() => engine.current?.board.declineEvent()}>{t('event.later')}</button>
           </>}
         >
           <p className="ui-text">

@@ -18,7 +18,7 @@ const FIELD_GRIDS: [number, number][] = [[1, 5], [1, 7], [1, 8], [1, 10], [1, 10
 export type ActivePickup = { position: [number, number]; color: string; kind: 'coin' | 'cash'; drop?: { from: [number, number]; at: number; up?: number } };
 
 /** What this part reads and drives in the game. */
-export type CoinsGame = Pick<GameEngine, 'audio' | 'cachedWater' | 'car' | 'collectedFrom' | 'collisions' | 'combatLayer' | 'crime' | 'driving' | 'errand' | 'map' | 'mode' | 'pendingIngest' | 'playerMoney' | 'say' | 'trafficBots' | 'trafficNetwork' | 'vehicle' | 'water'>;
+export type CoinsGame = Pick<GameEngine, 'audio' | 'board' | 'cachedWater' | 'car' | 'collectedFrom' | 'collisions' | 'combatLayer' | 'crime' | 'driving' | 'map' | 'mode' | 'pendingIngest' | 'playerMoney' | 'say' | 'trafficBots' | 'trafficNetwork' | 'vehicle' | 'water'>;
 
 /**
  * Coins and cash lying about: along the roads and on open fields, out of wrecks, walls and
@@ -82,7 +82,7 @@ export class Coins {
   }
 
   pickupVisuals(): PickupVisual[] {
-    const boxes = this.game.errand?.kind === 'collect' ? this.game.errand.boxes : [];
+    const boxes = this.game.board.errand?.kind === 'collect' ? this.game.board.errand.boxes : [];
     return [
       ...[...this.pickups].map(([id, pickup]) => ({
         id,

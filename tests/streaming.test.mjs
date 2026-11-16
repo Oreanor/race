@@ -29,6 +29,7 @@ const { MapCamera } = await import('../src/world3d/map/camera.ts');
 const { GameEngine } = await import('../src/game/GameEngine.ts');
 const { Heist } = await import('../src/game/crime/Heist.ts');
 const { Race } = await import('../src/game/events/Race.ts');
+const { Missions } = await import('../src/game/events/Missions.ts');
 const { PreparedTransfer } = await import('../src/game/PreparedTransfer.ts');
 const { missionAreas } = await import('../src/game/missionPopulation.ts');
 const { cameraTransition } = await import('../src/game/cameraTransition.ts');
@@ -287,17 +288,17 @@ test('paused map population follows the inspected area, keeps starts apart and p
   const features = () => missionAreas(bounds()).map(area => ({ properties: { class: 'minor' }, geometry: {
     type: 'LineString', coordinates: [offsetPosition(area.at, -100, 0), offsetPosition(area.at, 100, 0)],
   } }));
-  const engine = Object.assign(Object.create(GameEngine.prototype), {
+  const game = {
     mode: 'roam', driving: true, paused: true, vehicle: { position: focus },
-    missions: [], missionSeq: { arena: 0, race: 0, delivery: 0, collect: 0 },
-    missionPopulationAt: 0, missionPopulationKey: '', missionRespawnAt: 0,
-    transfer: new PreparedTransfer(), onMission: () => active, carShoots: () => true,
-    mapInspecting: () => true, syncMissionVisuals() {},
+    transfer: new PreparedTransfer(), carShoots: () => true,
+    mapInspecting: () => true,
     map: {
       visibleGroundBounds: bounds, groundAt: () => 10, waterLevelAt: () => null,
       world: { tileKeys: () => tilesAround(focus, 6000, 14).map(t => t.key), featuresOf: features },
     },
-  });
+  };
+  const engine = new Missions(game);
+  Object.assign(engine, { onMission: () => active, syncMissionVisuals() {} });
   engine.refillMissions();
   assert.equal(engine.missions.length, 16);
   assert.equal(new Set(engine.missions.map(m => m.kind)).size, 4);
@@ -306,7 +307,7 @@ test('paused map population follows the inspected area, keeps starts apart and p
   engine.refillMissions();
   assert.deepEqual(engine.missions.map(m => m.id), originalIds, 'an unchanged map does not shuffle its starts');
   focus = offsetPosition(focus, 12000, 0);
-  engine.vehicle.position = focus;
+  game.vehicle.position = focus;
   engine.missionPopulationAt = 0;
   engine.refillMissions();
   assert.equal(engine.missions.length, 16);
