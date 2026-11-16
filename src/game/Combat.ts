@@ -13,7 +13,7 @@ import { TRAFFIC_MARKER_COLORS, WRECK_COSTS } from './tuning.ts';
 import type { GameEngine } from './GameEngine.ts';
 
 /** What this part reads and drives in the game. */
-export type CombatGame = Pick<GameEngine, 'altitude' | 'audio' | 'board' | 'car' | 'carShoots' | 'collisions' | 'combatLayer' | 'crime' | 'driving' | 'hauler' | 'hitNoticeAt' | 'host' | 'isPropBot' | 'map' | 'mapInspecting' | 'mapLoaded' | 'mode' | 'nearbyRoadSpot' | 'nearestRescue' | 'onBridgeDeck' | 'placeCarAt' | 'placeTargetIndicator' | 'playerHp' | 'playerMaxHp' | 'playerMoney' | 'playerName' | 'players' | 'renderVehicle' | 'say' | 'sharedTraffic' | 'targetScratch' | 'testCars' | 'trafficBots' | 'vehicle' | 'wanted' | 'water'>;
+export type CombatGame = Pick<GameEngine, 'altitude' | 'audio' | 'board' | 'car' | 'carShoots' | 'collisions' | 'combatLayer' | 'crime' | 'driving' | 'hauler' | 'hitNoticeAt' | 'host' | 'isPropBot' | 'map' | 'mapInspecting' | 'mapLoaded' | 'mode' | 'nearestRescue' | 'onBridgeDeck' | 'placeCarAt' | 'placeTargetIndicator' | 'playerHp' | 'playerMaxHp' | 'playerMoney' | 'playerName' | 'players' | 'renderVehicle' | 'say' | 'sharedTraffic' | 'spawn' | 'targetScratch' | 'testCars' | 'trafficBots' | 'vehicle' | 'wanted' | 'water'>;
 
 /**
  * Cars against cars: who is a target, bumps and rams between them, the hunters' guns, damage
@@ -289,7 +289,7 @@ export class Combat {
     const kind = drop?.kind ?? 'here';
     const fine = WRECK_COSTS[kind];
     this.game.playerMoney = Math.max(0, this.game.playerMoney - fine);
-    const wreckSpot = drop ? drop.position : this.game.nearbyRoadSpot();
+    const wreckSpot = drop ? drop.position : this.game.spawn.nearbyRoadSpot();
     if (wreckSpot && this.game.mapLoaded) this.game.placeCarAt(wreckSpot);
     else { this.game.vehicle.speed = 0; this.game.vehicle.throttle = 0; }
     const bill = t(`wreck.${kind}`, { fine: formatNumber(fine) });

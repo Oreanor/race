@@ -79,6 +79,7 @@ import { MissionBotDriver, type BotDriverHost } from './traffic/MissionBots.ts';
 import { Shops, type ShopsHost } from './economy/Shops.ts';
 import { Dealership, type DealershipHost } from './economy/Dealership.ts';
 import { Ramp, type RampHost } from './Ramp.ts';
+import { Spawn } from './world/Spawn.ts';
 import { Combat } from './Combat.ts';
 import { Places } from './world/Places.ts';
 import { Missions } from './events/Missions.ts';
@@ -183,8 +184,6 @@ export class GameEngine {
   water = new WaterCollisionController();
   collisionDirty = true;
   collisionTime = 0;
-  spawnResolved = false;
-  private spawnWaits = 0;
   /** the map's first frame is in: layers added, features can be read */
   mapLoaded = false;
   map: ThreeMap;
@@ -213,12 +212,8 @@ export class GameEngine {
   accumulator = 0;
   hudTime = 0;
   dragging = false;
-  private spawnMarker: MapMarker | null = null;
-  private defaultSpawn: { position: [number, number]; heading: number } | null = null;
-  private customSpawn: { position: [number, number]; heading: number } | null = null;
-  onSpawnSet: (position: [number, number] | null) => void = () => {};
   host: HTMLElement;
-  private mapShown = false;
+  mapShown = false;
   private bootAt = 0;
   private groundHits = 0;
   private lastGround: number | null = null;
@@ -246,7 +241,7 @@ export class GameEngine {
   private worldWork: Generator<null, void> | null = null;
   private featureReadFailures = new Set<string>();
   cachedWater: MapFeature[] = [];
-  private cachedRoads: MapFeature[] = [];
+  cachedRoads: MapFeature[] = [];
   private cachedLanduse: MapFeature[] = [];
   private tilesIngested = false;
   /** tiles whose roads/water/poi are already in the gameplay caches / traffic graph */
@@ -296,6 +291,8 @@ export class GameEngine {
   readonly places: Places = new Places(this);
   /** Cars against cars: who is a target, bumps and rams between them, the hunters' guns, damage (see Combat) */
   readonly combat: Combat = new Combat(this);
+  /** Where the car starts: the player's own spot (clicked on the menu map) or a free road near the (see Spawn) */
+  readonly spawn: Spawn = new Spawn(this);
   /** the game as its parts see it (see context) */
   private ctx = this.context();
   /** the nitro bar under the speedometer */
@@ -432,7 +429,7 @@ export class GameEngine {
     this.fuel = new FuelTank(car.fuel);
     this.carry = carry;
     // Reload mid-drive: pin spawn so the first setTargetVehicles keeps money/hp/coins.
-    if (carry?.at) this.customSpawn = { position: [...carry.at.position], heading: carry.at.heading };
+    if (carry?.at) this.spawn.customSpawn = { position: [...carry.at.position], heading: carry.at.heading };
     // Drop leftover worldwide hunts — bounties are local (≤ 10 km) now.
     if (this.wanted.bounty) {
       const at = this.wanted.bounty.spot ?? this.wanted.bounty.place.coords;
@@ -581,7 +578,7 @@ export class GameEngine {
       // Map click → menu spawn, or (M overview) a custom tracked pin
       this.map.on('click', (e) => {
         const lngLat = e.lngLat as { lng: number; lat: number };
-        if (!this.driving && this.mapShown) this.setSpawnFromClick(lngLat);
+        if (!this.driving && this.mapShown) this.spawn.setSpawnFromClick(lngLat);
         else if (this.mapInspecting()) this.pins.place([lngLat.lng, lngLat.lat]);
       });
     });
@@ -869,7 +866,7 @@ export class GameEngine {
       onEventResult: (result) => game.onEventResult(result),
       get audio() { return game.audio; },
       nearestCivic: () => game.nearestCivic(),
-      nearbyRoadSpot: () => game.nearbyRoadSpot(),
+      nearbyRoadSpot: () => game.spawn.nearbyRoadSpot(),
       placeCarAt: (position) => game.placeCarAt(position),
       onBridgeDeck: (at, altitude) => game.onBridgeDeck(at, altitude),
       get keys() { return game.keys; },
@@ -1022,29 +1019,7 @@ export class GameEngine {
     this.pitch = cameraConfig.pitch;
   }
 
-  setSpawnFromClick(lngLat: { lng: number; lat: number }) {
-    if (!this.mapLoaded) return;
-    const origin: [number, number] = [lngLat.lng, lngLat.lat];
-    const start = this.findFreeRoad(origin, 140)
-      ?? roadStart(this.map, origin, () => false, 140);
-    const position: [number, number] = start ? [...start.position] : origin;
-    const heading = start ? start.heading : this.vehicle.heading;
-    this.customSpawn = { position, heading };
-    this.vehicle.position = [...position];
-    this.vehicle.heading = heading;
-    this.bearing = heading * 180 / Math.PI;
-    this.renderVehicle.reset(this.vehicle);
-    this.setTargetVehicles(position, heading);
-    this.collisionDirty = true;
-    if (this.settings.terrain) {
-      const ground = this.map.groundAt(position);
-      if (ground != null) this.altitude = ground;
-    }
-    this.placeSpawnMarker(position);
-    this.onSpawnSet(position);
-  }
-
-  private setTargetVehicles(position: [number, number], heading: number) {
+  setTargetVehicles(position: [number, number], heading: number) {
     this.mode = 'roam';
     this.eventOffer = null;
     this.eventCooldown = 0;
@@ -1114,15 +1089,15 @@ export class GameEngine {
 
   /** Put the car back where a save left it (before setDriving from the menu). */
   resumeFrom(at: { position: [number, number]; heading: number }) {
-    this.customSpawn = { position: [...at.position], heading: at.heading };
+    this.spawn.customSpawn = { position: [...at.position], heading: at.heading };
     this.vehicle.position = [...at.position];
     this.vehicle.heading = at.heading;
     this.bearing = at.heading * 180 / Math.PI;
     this.renderVehicle.reset(this.vehicle);
     // Spawn already applied money/hp/coins via carry — do not reset them again.
     // (a boot timeout can mark the spawn resolved while the saved purse is still pending)
-    if (!this.spawnResolved || this.carry) {
-      this.spawnResolved = true;
+    if (!this.spawn.spawnResolved || this.carry) {
+      this.spawn.spawnResolved = true;
       this.setTargetVehicles(at.position, at.heading);
     }
   }
@@ -1153,9 +1128,9 @@ export class GameEngine {
   /** Wipe the purse and garage (only for a hard reset — not the usual exit). */
   resetRun() {
     this.leaveToMenu();
-    this.customSpawn = null;
-    this.defaultSpawn = null;
-    this.spawnResolved = false;
+    this.spawn.customSpawn = null;
+    this.spawn.defaultSpawn = null;
+    this.spawn.spawnResolved = false;
     this.runReady = false;
     this.playerMoney = 0;
     this.carry = null;
@@ -1165,7 +1140,7 @@ export class GameEngine {
     this.coins.pickups.clear();
     this.combatLayer?.setPickups([]);
     this.fuel.level = this.fuel.spec.tank;
-    this.onSpawnSet(null);
+    this.spawn.onSpawnSet(null);
   }
 
   clearEventBots() {
@@ -1280,11 +1255,6 @@ export class GameEngine {
     return ready;
   }
 
-  /** A free spot on a loaded road near us, for when no fitting place is loaded: no wait. */
-  nearbyRoadSpot(): Position | null {
-    return this.findFreeRoad(this.vehicle.position, 800)?.position ?? null;
-  }
-
   /** The closest hospital or filling station to us (of those already loaded, if any). */
   nearestRescue(): { kind: 'hospital' | 'station'; position: Position } | null {
     const places: { kind: 'hospital' | 'station'; position: Position }[] = [];
@@ -1339,7 +1309,7 @@ export class GameEngine {
     // Destination data may be far outside the old gameplay caches.
     this.cachedWater = this.map.features('water', position) as MapFeature[];
     this.cachedRoads = this.map.features('transportation', position) as MapFeature[];
-    const start = this.findFreeRoad(position, 120)
+    const start = this.spawn.findFreeRoad(position, 120)
       ?? roadStart(this.map, position, () => false, 120);
     this.vehicle.position = start ? [...start.position] : [...position];
     if (start) this.vehicle.heading = start.heading;
@@ -1413,7 +1383,7 @@ export class GameEngine {
     this.modelRoll = 0.22 * Math.sin(t * Math.PI) * (t > 0.15 ? 1 : 0);
     if (age < 1700) return true;
     // wide rivers: search farther than a normal wreck drop
-    const start = this.findFreeRoad(this.vehicle.position, 280)
+    const start = this.spawn.findFreeRoad(this.vehicle.position, 280)
       ?? roadStart(this.map, this.vehicle.position, () => false, 280);
     if (start) this.placeCarAt(start.position);
     else this.placeCarAt(this.vehicle.position);
@@ -1690,53 +1660,6 @@ export class GameEngine {
 
   /** Map label for the fire call; HUD tip comes from the focus cycle. */
 
-  private placeSpawnMarker(position: [number, number] | null) {
-    if (!position) {
-      this.spawnMarker?.remove();
-      this.spawnMarker = null;
-      return;
-    }
-    if (!this.spawnMarker) {
-      const el = document.createElement('div');
-      el.className = 'spawn-marker';
-      el.innerHTML = `<svg width="18" height="26" viewBox="0 0 28 40" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M14 0C6.268 0 0 6.268 0 14c0 9.8 14 26 14 26S28 23.8 28 14C28 6.268 21.732 0 14 0z" fill="#d8f06a" stroke="#1a2818" stroke-width="1.5"/></svg>`;
-      this.spawnMarker = newMarker({ element: el, anchor: 'bottom' })
-        .setLngLat(position)
-        .addTo(this.map);
-    } else {
-      this.spawnMarker.setLngLat(position);
-    }
-    const element = this.spawnMarker.getElement();
-    if (element) element.style.display = this.driving ? 'none' : '';
-  }
-
-  clearCustomSpawn() {
-    this.customSpawn = null;
-    if (this.defaultSpawn) {
-      this.vehicle.position = [...this.defaultSpawn.position];
-      this.vehicle.heading = this.defaultSpawn.heading;
-      this.bearing = this.defaultSpawn.heading * 180 / Math.PI;
-      this.renderVehicle.reset(this.vehicle);
-      this.accumulator = 0;
-      this.collisionDirty = true;
-      this.collisionTime = 0;
-      this.placeSpawnMarker(this.defaultSpawn.position);
-      this.setTargetVehicles(this.defaultSpawn.position, this.defaultSpawn.heading);
-      if (this.mapShown && !this.driving) this.showIntroMap();
-    } else {
-      this.placeSpawnMarker(null);
-    }
-    this.onSpawnSet(null);
-  }
-
-  getSpawnPosition(): [number, number] {
-    return this.customSpawn ? [this.customSpawn.position[0], this.customSpawn.position[1]] : [this.vehicle.position[0], this.vehicle.position[1]];
-  }
-
-  getSpawnHeading(): number {
-    return this.customSpawn ? this.customSpawn.heading : this.vehicle.heading;
-  }
-
   /** Category chips + world plaques: only while the M map is open. */
   mapViewOpen() {
     return this.overviewTarget > 0 || this.overview > 0.4;
@@ -1800,7 +1723,7 @@ export class GameEngine {
       this.say(near ? t('tow.done') : t('tow.none'), true);
     };
     // no station loaded: a free spot on a road nearby (the tank is filled all the same)
-    const towSpot = near ? near.station.position : this.nearbyRoadSpot();
+    const towSpot = near ? near.station.position : this.spawn.nearbyRoadSpot();
     if (towSpot && this.mapLoaded) this.placeCarAt(towSpot, finish);
     else finish();
   }
@@ -1817,7 +1740,7 @@ export class GameEngine {
   }
 
   /** Intro menu: top-down city map (same as M while driving) — pan/zoom, click to place spawn. */
-  private showIntroMap() {
+  showIntroMap() {
     const center = this.vehicle.position as [number, number];
     this.overview = 1;
     this.overviewTarget = 1;
@@ -1863,20 +1786,20 @@ export class GameEngine {
   private settleBoot() {
     if (this.mapShown || !this.ready) return;
     const waited = performance.now() - this.bootAt;
-    if (!this.spawnResolved) {
+    if (!this.spawn.spawnResolved) {
       this.say(t('status.placing'));
       if (waited > 12000) {
         // Last resort: any nearby road segment, even if solids are still thin.
-        const start = this.findFreeRoad(this.vehicle.position, 800)
+        const start = this.spawn.findFreeRoad(this.vehicle.position, 800)
           ?? roadStart(this.map, this.vehicle.position, () => false, 800);
-        if (start) this.placeDefaultOnRoad(start, true);
+        if (start) this.spawn.placeDefaultOnRoad(start, true);
         else {
-          this.spawnResolved = true;
-          this.defaultSpawn = { position: [...this.vehicle.position], heading: this.vehicle.heading };
+          this.spawn.spawnResolved = true;
+          this.spawn.defaultSpawn = { position: [...this.vehicle.position], heading: this.vehicle.heading };
           // the run's purse and garage too: without them the intro offers a car the engine
           // then will not start ("not enough money"), the page left waiting for nothing
-          this.setTargetVehicles(this.defaultSpawn.position, this.defaultSpawn.heading);
-          this.placeSpawnMarker(this.defaultSpawn.position);
+          this.setTargetVehicles(this.spawn.defaultSpawn.position, this.spawn.defaultSpawn.heading);
+          this.spawn.placeSpawnMarker(this.spawn.defaultSpawn.position);
         }
       }
       return;
@@ -2006,8 +1929,8 @@ export class GameEngine {
       this.combatLayer?.setFiring(false);
       this.combatLayer?.setAim(null);
       this.aimHud(0, 0, false, false);
-      if (this.spawnMarker) {
-        const el = this.spawnMarker.getElement();
+      if (this.spawn.spawnMarker) {
+        const el = this.spawn.spawnMarker.getElement();
         if (el) el.style.display = '';
       }
       const moving = this.approachFrom != null;
@@ -2016,16 +1939,16 @@ export class GameEngine {
       if (this.mapShown) this.showIntroMap();
       return true;
     }
-    if (this.spawnMarker) {
-      const el = this.spawnMarker.getElement();
+    if (this.spawn.spawnMarker) {
+      const el = this.spawn.spawnMarker.getElement();
       if (el) el.style.display = 'none';
     }
     // Apply custom / save spawn before driving starts
-    if (starting && this.customSpawn) {
-      this.vehicle.position = [...this.customSpawn.position];
-      this.vehicle.heading = this.customSpawn.heading;
-      this.bearing = this.customSpawn.heading * 180 / Math.PI;
-      this.spawnResolved = true;
+    if (starting && this.spawn.customSpawn) {
+      this.vehicle.position = [...this.spawn.customSpawn.position];
+      this.vehicle.heading = this.spawn.customSpawn.heading;
+      this.bearing = this.spawn.customSpawn.heading * 180 / Math.PI;
+      this.spawn.spawnResolved = true;
       this.renderVehicle.reset(this.vehicle);
       this.accumulator = 0;
     }
@@ -2242,94 +2165,6 @@ export class GameEngine {
     }
   }
 
-  /** True when a car pose sits in a building or in water. */
-  private spawnSpotTaken(position: Position, heading: number) {
-    return this.collisions.blocked(position, position, heading)
-      || this.water.resolve(position, position, heading, 1, false).stopped;
-  }
-
-  private loadSpawnCollisions(at: Position, radius: number) {
-    this.collisions.update(at, this.map.world.buildingsNear(at, radius, this.map.exaggeration));
-    this.water.collect(at, this.cachedWater, this.cachedRoads);
-  }
-
-  /**
-   * Nearest drivable road that is clear of buildings and water.
-   * Re-checks with solids centered on the candidate so a far road isn't
-   * accepted just because the origin radius missed its walls.
-   */
-  private findFreeRoad(origin: Position, maxDistance = 350) {
-    if (!this.mapLoaded) return null;
-    this.loadSpawnCollisions(origin, maxDistance + 40);
-    const denied: Position[] = [];
-    const blocked = (position: Position, heading: number) => {
-      if (denied.some((spot) => metersBetween(spot, position) < 5)) return true;
-      return this.spawnSpotTaken(position, heading);
-    };
-    for (let attempt = 0; attempt < 10; attempt++) {
-      const start = roadStart(this.map, origin, blocked, maxDistance);
-      if (!start) return null;
-      this.loadSpawnCollisions(start.position, 120);
-      if (!this.spawnSpotTaken(start.position, start.heading)) return start;
-      denied.push(start.position);
-      this.loadSpawnCollisions(origin, maxDistance + 40);
-    }
-    return null;
-  }
-
-  private placeDefaultOnRoad(start: { position: Position; heading: number }, retarget: boolean) {
-    this.defaultSpawn = { position: [...start.position], heading: start.heading };
-    this.vehicle.position = [...start.position];
-    this.vehicle.heading = start.heading;
-    this.bearing = start.heading * 180 / Math.PI;
-    this.spawnResolved = true;
-    if (retarget) this.setTargetVehicles(start.position, start.heading);
-    this.renderVehicle.reset(this.vehicle);
-    this.accumulator = 0;
-    this.placeSpawnMarker(start.position);
-    this.collisionDirty = true;
-  }
-
-  private resolveSpawn() {
-    if (this.spawnResolved) return;
-    if (this.customSpawn) {
-      if (!this.defaultSpawn) {
-        this.defaultSpawn = { position: [...this.vehicle.position], heading: this.vehicle.heading };
-      }
-      this.vehicle.position = [...this.customSpawn.position];
-      this.vehicle.heading = this.customSpawn.heading;
-      this.bearing = this.customSpawn.heading * 180 / Math.PI;
-      this.spawnResolved = true;
-      this.setTargetVehicles(this.customSpawn.position, this.customSpawn.heading);
-      this.renderVehicle.reset(this.vehicle);
-      this.accumulator = 0;
-      this.placeSpawnMarker(this.customSpawn.position);
-      return;
-    }
-    const reach = this.spawnWaits > 8 ? 600 : this.spawnWaits > 4 ? 450 : 350;
-    const start = this.findFreeRoad(this.vehicle.position, reach);
-    if (start) {
-      this.placeDefaultOnRoad(start, true);
-      return;
-    }
-    this.spawnWaits++;
-    // Keep waiting for roads/buildings — do not drop the car onto a plaza or rooftop.
-    if (this.spawnWaits > 24) {
-      const anyRoad = roadStart(this.map, this.vehicle.position, () => false, 800);
-      if (anyRoad) this.placeDefaultOnRoad(anyRoad, true);
-    }
-  }
-
-  /** If more buildings landed on the default pin, nudge it onto a clear road. */
-  private ensureDefaultSpawnClear() {
-    if (!this.spawnResolved || this.customSpawn || this.driving || this.mapShown || !this.defaultSpawn) return;
-    this.loadSpawnCollisions(this.defaultSpawn.position, 120);
-    if (!this.spawnSpotTaken(this.defaultSpawn.position, this.defaultSpawn.heading)) return;
-    const start = this.findFreeRoad(this.defaultSpawn.position, 140)
-      ?? this.findFreeRoad(this.vehicle.position, 450);
-    if (start) this.placeDefaultOnRoad(start, false);
-  }
-
   /**
    * Our world: buildings are already drawn from tiles and unique per tile, so no
    * re-reading, dedup or near-set here. Collisions come straight from footprints.
@@ -2345,8 +2180,8 @@ export class GameEngine {
     yield null;
     yield* this.collectGround(refreshTiles, focus);
     // After water + roads are in: place / re-check the default car on a free street.
-    if (!this.spawnResolved && this.map.features('transportation').length) this.resolveSpawn();
-    else if (this.spawnResolved) this.ensureDefaultSpawnClear();
+    if (!this.spawn.spawnResolved && this.map.features('transportation').length) this.spawn.resolveSpawn();
+    else if (this.spawn.spawnResolved) this.spawn.ensureDefaultSpawnClear();
   }
 
   *collectWorldSteps(refreshTiles: boolean): Generator<null, void> {
@@ -2858,7 +2693,7 @@ export class GameEngine {
     this.players.dispose();
     this.worldWork = null;
     cancelAnimationFrame(this.frame);
-    this.spawnMarker?.remove();
+    this.spawn.spawnMarker?.remove();
     for (const marker of this.board.missionMarkers.values()) marker.remove();
     this.board.missionMarkers.clear();
     this.pins.clear();
