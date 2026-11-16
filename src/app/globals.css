@@ -133,7 +133,7 @@
    Light by default; `.game-shell[data-theme=night]` switches to night.
    ====================================================================== */
 :root{
-  --ui-bg:#ffffffd9;--ui-soft:#f2f5f6c8;--ui-line:#e3e9eccc;
+  --ui-bg:#ffffffcc;--ui-soft:#f2f5f6c8;--ui-line:#e3e9eccc;
   --ui-ink:#22313a;--ui-muted:#6c7b84;
   --ui-accent:#3b5f78;--ui-accent-hover:#4a7391;--ui-accent-ink:#ffffff;
   --ui-alert:#d9533f;--ui-good:#2f9e6e;
@@ -144,7 +144,7 @@
   --shell-bg:#e5e8dc;
 }
 .game-shell[data-theme='night']{
-  --ui-bg:#121820e0;--ui-soft:#1c2430cc;--ui-line:#3d4b5caa;
+  --ui-bg:#121820d4;--ui-soft:#1c2430cc;--ui-line:#3d4b5caa;
   --ui-ink:#e6edf4;--ui-muted:#a8b8c6;
   --ui-accent:#7aa8c8;--ui-accent-hover:#8fb9d4;--ui-accent-ink:#0e1620;
   --ui-alert:#ff7a66;--ui-good:#4dcc93;
