@@ -561,22 +561,33 @@ export class WorldParticles {
     const soil = material === 'soil';
     // chips (stone) or clods (earth): bigger and fewer off soil, they arc and drop
     const tint: [number, number, number] = soil
-      ? (options.surface === 'sand' ? [0.4, 0.31, 0.19] : [0.13, 0.08, 0.04])
+      ? (options.surface === 'sand' ? [0.32, 0.24, 0.14] : [0.08, 0.05, 0.025])
       : [0.32, 0.31, 0.29];
-    const bits = Math.round((soil ? rand(9, 14) : rand(5, 8)) * s);
-    for (let i = 0; i < bits; i++) {
-      const kick = soil ? rand(2.5, 6) : rand(4, 9);
-      this.add(here, { e: at.e + rand(-0.1, 0.1), n: at.n + rand(-0.1, 0.1), u: at.u + 0.05 }, {
-        kind: 'grit', tint: soil ? [tint[0] * rand(0.8, 1.3), tint[1] * rand(0.8, 1.3), tint[2] * rand(0.8, 1.3)] : tint,
-        ve: (normal.e + rand(-0.7, 0.7)) * kick, vn: (normal.n + rand(-0.7, 0.7)) * kick, vu: (Math.max(0.4, normal.u) + rand(0, 0.8)) * kick,
-        life: rand(500, 950), size0: soil ? rand(0.07, 0.15) : rand(0.03, 0.06), size1: soil ? rand(0.05, 0.11) : 0.02,
-        drag: soil ? 0.8 : 1.1, gravity: 9.8, stretch: 0,
-      }, now);
+    if (soil) {
+      // a few clods flung out sideways, gone in a blink (no fountain)
+      const clods = Math.round(rand(5, 10) * s);
+      for (let i = 0; i < clods; i++) {
+        const angle = rand(0, Math.PI * 2), kick = rand(5, 10);
+        this.add(here, { e: at.e, n: at.n, u: at.u + 0.05 }, {
+          kind: 'grit', tint: [tint[0] * rand(0.75, 1.1), tint[1] * rand(0.75, 1.1), tint[2] * rand(0.75, 1.1)],
+          ve: Math.cos(angle) * kick, vn: Math.sin(angle) * kick, vu: rand(0.8, 2.2),
+          life: rand(160, 280), size0: rand(0.1, 0.17), size1: rand(0.08, 0.13), drag: 3, gravity: 9.8, stretch: 0,
+        }, now);
+      }
+    } else {
+      const bits = Math.round(rand(5, 8) * s);
+      for (let i = 0; i < bits; i++) {
+        const kick = rand(4, 9);
+        this.add(here, { e: at.e + rand(-0.1, 0.1), n: at.n + rand(-0.1, 0.1), u: at.u + 0.05 }, {
+          kind: 'grit', tint, ve: (normal.e + rand(-0.7, 0.7)) * kick, vn: (normal.n + rand(-0.7, 0.7)) * kick, vu: (Math.max(0.4, normal.u) + rand(0, 0.8)) * kick,
+          life: rand(500, 950), size0: rand(0.03, 0.06), size1: 0.02, drag: 1.1, gravity: 9.8, stretch: 0,
+        }, now);
+      }
     }
     const puff: [number, number, number] = soil
       ? (options.surface === 'sand' ? [0.62, 0.52, 0.36] : [0.3, 0.22, 0.14])
       : [0.6, 0.59, 0.56];
-    for (let i = 0; i < (soil ? 3 : 2); i++) {
+    for (let i = 0; i < (soil ? 1 : 2); i++) {
       this.add(here, at, {
         kind: 'dust', tint: puff, ve: normal.e * rand(0.4, 1) + rand(-0.4, 0.4), vn: normal.n * rand(0.4, 1) + rand(-0.4, 0.4), vu: rand(0.3, 0.9),
         life: rand(450, 750), size0: 0.25, size1: soil ? 1.1 : 0.9, drag: 2.2, gravity: -0.3, stretch: 0,
