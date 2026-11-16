@@ -79,6 +79,7 @@ import { MissionBotDriver, type BotDriverHost } from './traffic/MissionBots.ts';
 import { Shops, type ShopsHost } from './economy/Shops.ts';
 import { Dealership, type DealershipHost } from './economy/Dealership.ts';
 import { Ramp, type RampHost } from './Ramp.ts';
+import { Places } from './world/Places.ts';
 import { Missions } from './events/Missions.ts';
 import { Coins } from './Coins.ts';
 import { Jobs } from './jobs/Jobs.ts';
@@ -184,7 +185,7 @@ export class GameEngine {
   spawnResolved = false;
   private spawnWaits = 0;
   /** the map's first frame is in: layers added, features can be read */
-  private mapLoaded = false;
+  mapLoaded = false;
   map: ThreeMap;
   vehicle: VehicleController;
   renderVehicle = new VehiclePose();
@@ -282,7 +283,6 @@ export class GameEngine {
   /** local pin where you drive to take a pending wanted job */
   // ---- multiplayer: other players in the same world (net/NetPlayers)
   private players!: NetPlayers;
-  landmarks = new Map<string, Landmark>();
   /** our police car's lights (F) */
   /** our police lights (F): off by default */
   private beaconsOn = false;
@@ -296,6 +296,8 @@ export class GameEngine {
   readonly coins: Coins = new Coins(this);
   /** The mission board: the four kinds of start on the map (race, arena, delivery, boxes), their (see Missions) */
   readonly board: Missions = new Missions(this);
+  /** The places on the map from the real data: fuel stations, car services, dealerships, banks (see Places) */
+  readonly places: Places = new Places(this);
   /** the game as its parts see it (see context) */
   private ctx = this.context();
   /** the nitro bar under the speedometer */
@@ -344,29 +346,17 @@ export class GameEngine {
   /** the tank ran dry and the car stopped: show the tow-truck dialog */
   onFuelOut: (out: boolean) => void = () => {};
   fuel!: FuelTank;
-  private stations = new Map<string, Station>();
-  private fuelLayer: ReturnType<typeof fuelStationsLayer> | null = null;
+  fuelLayer: ReturnType<typeof fuelStationsLayer> | null = null;
   /** Category chips + world plaques: only while the M map is open. */
   onMapView: (open: boolean) => void = () => {};
   private mapViewUi = false;
   /** throttle M-map plaque rebuilds (were every frame → ~20 FPS) */
-  private mapLabelsAt = 0;
-  private mapLabelsAtPos: [number, number] | null = null;
+  mapLabelsAt = 0;
+  mapLabelsAtPos: [number, number] | null = null;
   private fuelOut = false;
   private refuelling = false;
   /** after a purchase: React keeps the menu car index in sync */
   onCarBought: (car: Car) => void = () => {};
-  private repairShops = new Map<string, Station>();
-  private dealerships = new Map<string, Station>();
-  /** banks from the POI layer; a robbed one stays shut a while (see Heist) */
-  private banks = new Map<string, Station>();
-  /** parking lots from the POI layer */
-  private parkingLots = new Map<string, [number, number]>();
-  /** Police stations, prisons, courts, hospitals — arrest drop-off points. */
-  civics = new Map<string, Station & { kind: CivicKind }>();
-  private serviceMarkers = new Map<string, MapMarker>();
-  /** which POI/hub plaques are drawn (chip bar on the map) */
-  private mapLabelFilters: MapLabelFilters = defaultMapLabelFilters();
   private offeredService: string | null = null;
   /** cars we own: bought ones pile up here, none is sold back */
   private garage = new Set<string>();
@@ -506,7 +496,7 @@ export class GameEngine {
       provoke: (id) => this.provoke(id),
       canPark: (at, heading) => !this.collisions.blocked(at, at, heading) && !this.water.covers(at, this.onBridgeDeck(at, this.altitude)),
       hitWalls: (from, to, heading) => this.collisions.resolve(from, to, heading),
-      lots: () => [...this.parkingLots.values()].filter((lot) => metersBetween(lot, this.vehicle.position) < 600),
+      lots: () => [...this.places.parkingLots.values()].filter((lot) => metersBetween(lot, this.vehicle.position) < 600),
       take: (id) => this.players.takeTraffic(id),
     });
     this.renderVehicle.reset(this.vehicle);
@@ -852,7 +842,7 @@ export class GameEngine {
       get driving() { return game.driving; },
       get paused() { return game.paused; },
       onMission: () => game.board.onMission(),
-      get banks() { return game.banks; },
+      get banks() { return game.places.banks; },
       get bearing() { return game.bearing; },
       set bearing(bearing) { game.bearing = bearing; },
       get accumulator() { return game.accumulator; },
@@ -888,12 +878,12 @@ export class GameEngine {
       get keys() { return game.keys; },
       get runReady() { return game.runReady; },
       counterOpen: () => Boolean(game.shops.serviceOpen || game.travel.open || game.fuelOut),
-      get dealerships() { return game.dealerships; },
+      get dealerships() { return game.places.dealerships; },
       offered: (id) => { game.offeredService = id; },
       get airborne() { return game.airborne; },
       get fuelOut() { return game.fuelOut; },
       mapViewOpen: () => game.mapViewOpen(),
-      labelOn: (kind) => game.mapLabelOn(kind),
+      labelOn: (kind) => game.places.mapLabelOn(kind),
       carry: () => ({ money: game.playerMoney, fuel: game.fuel.ratio, loan: game.shops.loanDebt, garage: [...game.garage] }),
       inspecting: () => game.mapInspecting(),
       indicatorLayer: () => game.indicatorLayer(),
@@ -964,17 +954,6 @@ export class GameEngine {
     }
     this.board.syncArenaAvailability(prev, next);
     this.board.syncMissionVisuals(true);
-  }
-
-  /** Show / hide map plaques by category (fuel, hotels, airports…). */
-  setMapLabelFilters(filters: MapLabelFilters) {
-    this.mapLabelFilters = { ...filters };
-    this.labelServices();
-    this.travel.refreshMarkers();
-  }
-
-  private mapLabelOn(kind: MapLabelKind) {
-    return this.mapLabelFilters[kind] !== false;
   }
 
   applySettings(settings: Settings) {
@@ -1576,8 +1555,8 @@ export class GameEngine {
   private nearestRescue(): { kind: 'hospital' | 'station'; position: Position } | null {
     const places: { kind: 'hospital' | 'station'; position: Position }[] = [];
     const consider = (kind: 'hospital' | 'station', position: Position) => { places.push({ kind, position }); };
-    for (const civic of this.civics.values()) if (civic.kind === 'hospital') consider('hospital', civic.position);
-    for (const station of this.stations.values()) consider('station', station.place ?? station.position);
+    for (const civic of this.places.civics.values()) if (civic.kind === 'hospital') consider('hospital', civic.position);
+    for (const station of this.places.stations.values()) consider('station', station.place ?? station.position);
     return this.nearestReady(places, (p) => p.position);
   }
 
@@ -1822,7 +1801,7 @@ export class GameEngine {
   /** Closest police station, prison, courthouse or hospital to the wreck. */
   /** The closest police station, court or prison (of those already loaded, if any). */
   private nearestCivic(): { station: Station; kind: CivicKind; distance: number } | null {
-    const station = this.nearestReady(this.civics.values(), (s) => s.position);
+    const station = this.nearestReady(this.places.civics.values(), (s) => s.position);
     return station ? { station, kind: station.kind, distance: metersBetween(this.vehicle.position, station.position) } : null;
   }
 
@@ -1912,9 +1891,9 @@ export class GameEngine {
   /** The language changed: labels made once (services, hubs, missions, pins, goals) are made again. */
   private relabel() {
     if (!this.ready) return;
-    for (const marker of this.serviceMarkers.values()) marker.remove();
-    this.serviceMarkers.clear();
-    this.labelServices();
+    for (const marker of this.places.serviceMarkers.values()) marker.remove();
+    this.places.serviceMarkers.clear();
+    this.places.labelServices();
     this.travel.clearMarkers();
     this.travel.refreshMarkers();
     for (const mission of this.board.missions) mission.label = t(`mission.${mission.kind}`, { n: mission.n });
@@ -2098,225 +2077,29 @@ export class GameEngine {
     return this.customSpawn ? this.customSpawn.heading : this.vehicle.heading;
   }
 
-  /**
-   * OSM fuel/repair POIs often sit inside the shop building. Snap them to the
-   * nearest free road so the canopy and the dialog are reachable from the street.
-   */
-  private placeService(station: Station): Station {
-    if (!this.mapLoaded) return station;
-    const start = roadStart(
-      this.map,
-      station.position,
-      (position, heading) => this.collisions.blocked(position, position, heading),
-      60,
-    );
-    // the label over the house the shop is in; dialog reach = footprint radius + a few metres
-    const house = this.map.houseAt(station.position);
-    const place = house?.middle ?? station.position;
-    return {
-      id: station.id,
-      position: start ? [...start.position] : station.position,
-      place,
-      top: house?.top,
-      radius: house?.radius,
-    };
-  }
-
   /** Category chips + world plaques: only while the M map is open. */
-  private mapViewOpen() {
+  mapViewOpen() {
     return this.overviewTarget > 0 || this.overview > 0.4;
   }
 
   private setMapViewUi(open: boolean) {
     if (this.mapViewUi === open) {
-      this.refreshMapLabels(true);
+      this.places.refreshMapLabels(true);
       return;
     }
     this.mapViewUi = open;
     this.onMapView(open);
     // plaques stay in the 3D world while driving — only the chip strip is map-only
-    this.refreshMapLabels(true);
-  }
-
-  /** Rebuild fuel/hub plaques; on the M map at most a few times a second (or after a pan). */
-  private refreshMapLabels(force = false) {
-    const now = performance.now();
-    if (this.mapViewOpen()) {
-      const c = this.map.getCenter();
-      const here: [number, number] = [c.lng, c.lat];
-      const moved = !this.mapLabelsAtPos || metersBetween(this.mapLabelsAtPos, here) > 150;
-      if (!force && !moved && now - this.mapLabelsAt < 450) return;
-      this.mapLabelsAt = now;
-      this.mapLabelsAtPos = here;
-    } else if (!force && now - this.mapLabelsAt < 450) {
-      return;
-    } else {
-      this.mapLabelsAt = now;
-      this.mapLabelsAtPos = null;
-    }
-    this.labelServices();
-    this.travel.refreshMarkers();
-  }
-
-  private clearMapLabelMarkers() {
-    for (const [id, marker] of this.serviceMarkers) {
-      marker.remove();
-      this.serviceMarkers.delete(id);
-    }
-    this.travel.clearMarkers();
-  }
-
-  /** Real petrol stations from the POI layer; remembered as the player drives on. */
-  private collectStations(pois = this.readSourceLayer('poi')) {
-    this.collectHubs(pois);
-    for (const feature of pois) {
-      const p = feature.properties ?? {};
-      if (p.class !== 'parking' && p.subclass !== 'parking') continue;
-      const g = feature.geometry as { type: string; coordinates: unknown };
-      const at = g.type === 'Point' ? g.coordinates as [number, number] : null;
-      if (!at) continue;
-      const key = `${at[0].toFixed(4)},${at[1].toFixed(4)}`;
-      if (this.parkingLots.has(key) || [...this.parkingLots.values()].some((lot) => metersBetween(lot, at) < 40)) continue;
-      this.parkingLots.set(key, [at[0], at[1]]);
-    }
-    for (const station of stationsFromFeatures(pois)) {
-      if (this.stations.has(station.id)) continue;
-      if ([...this.stations.values()].some(known => metersBetween(known.place ?? known.position, station.position) < 35)) continue;
-      this.stations.set(station.id, this.placeService(station));
-    }
-    // keep the nearest few hundred; far ones come back when we drive there again
-    if (this.stations.size > 300) {
-      const keep = [...this.stations.values()].sort((a, b) => metersBetween(a.position, this.vehicle.position) - metersBetween(b.position, this.vehicle.position)).slice(0, 300);
-      this.stations = new Map(keep.map(station => [station.id, station]));
-    }
-    for (const shop of repairShopsFromFeatures(pois)) {
-      if (this.repairShops.has(shop.id)) continue;
-      if ([...this.repairShops.values()].some(known => metersBetween(known.place ?? known.position, shop.position) < 35)) continue;
-      this.repairShops.set(shop.id, this.placeService(shop));
-    }
-    for (const bank of banksFromFeatures(pois)) {
-      if (this.banks.has(bank.id)) continue;
-      if ([...this.banks.values()].some(known => metersBetween(known.place ?? known.position, bank.position) < 35)) continue;
-      this.banks.set(bank.id, this.placeService(bank));
-    }
-    for (const shop of dealershipsFromFeatures(pois)) {
-      if (this.dealerships.has(shop.id)) continue;
-      if ([...this.dealerships.values()].some(known => metersBetween(known.place ?? known.position, shop.position) < 35)) continue;
-      this.dealerships.set(shop.id, this.placeService(shop));
-    }
-    const addCivic = (kind: CivicKind, list: Station[]) => {
-      for (const station of list) {
-        if (this.civics.has(station.id)) continue;
-        if ([...this.civics.values()].some(known => known.kind === kind && metersBetween(known.place ?? known.position, station.position) < 35)) continue;
-        const placed = this.placeService(station);
-        this.civics.set(station.id, { ...placed, kind });
-      }
-    };
-    addCivic('police', policeFromFeatures(pois));
-    addCivic('prison', prisonsFromFeatures(pois));
-    addCivic('court', courtsFromFeatures(pois));
-    addCivic('hospital', hospitalsFromFeatures(pois));
-    for (const stop of busStopsFromFeatures(pois)) {
-      if (this.jobs.busStops.has(stop.id)) continue;
-      if ([...this.jobs.busStops.values()].some(known => metersBetween(known.place ?? known.position, stop.position) < 25)) continue;
-      this.jobs.busStops.set(stop.id, this.placeService(stop));
-    }
-    if (this.jobs.busStops.size > 400) {
-      const keep = [...this.jobs.busStops.values()].sort((a, b) => metersBetween(a.position, this.vehicle.position) - metersBetween(b.position, this.vehicle.position)).slice(0, 400);
-      this.jobs.busStops = new Map(keep.map(stop => [stop.id, stop]));
-    }
-    for (const spot of landmarksFromFeatures(pois)) {
-      if (this.landmarks.has(spot.id)) continue;
-      if ([...this.landmarks.values()].some(known => known.kind === spot.kind && metersBetween(known.place ?? known.position, spot.position) < 40)) continue;
-      const placed = this.placeService(spot);
-      this.landmarks.set(spot.id, { ...placed, kind: spot.kind, name: spot.name });
-    }
-    if (this.landmarks.size > 250) {
-      const keep = [...this.landmarks.values()].sort((a, b) => metersBetween(a.position, this.vehicle.position) - metersBetween(b.position, this.vehicle.position)).slice(0, 250);
-      this.landmarks = new Map(keep.map(spot => [spot.id, spot]));
-    }
-  }
-
-  private paintFuelStations() {
-    const visible = [...this.stations.values()].filter(station => metersBetween(station.position, this.vehicle.position) < 2500);
-    this.fuelLayer?.setStations(visible, this.settings.terrain);
-  }
-
-  /** Map / world plaques for nearby fuel, service, banks… — on the M map and over houses while driving. */
-  private labelServices() {
-    if (!this.driving && !this.mapViewOpen()) {
-      this.clearMapLabelMarkers();
-      return;
-    }
-    // M map: around the view centre; driving: around the car so you can read the building
-    const c = this.mapViewOpen() ? this.map.getCenter() : null;
-    const here: [number, number] = c ? [c.lng, c.lat] : [...this.vehicle.position];
-    const reach = this.mapViewOpen() ? 3000 : 1200;
-    const cap = this.mapViewOpen() ? 10 : 6;
-    type ServiceKind = 'fuel' | 'repair' | 'dealer' | 'bank' | CivicKind | 'hotel' | 'museum';
-    const nearest = (list: Station[], limit = cap) => list
-      .map(station => ({ station, d: metersBetween(station.position, here) }))
-      .filter(item => item.d < reach)
-      .sort((a, b) => a.d - b.d)
-      .slice(0, limit)
-      .map(item => item.station);
-    const wanted = new Map<string, { station: Station; kind: ServiceKind; title?: string }>();
-    const take = (kind: ServiceKind, list: Station[], limit = 10, title?: (s: Station) => string | undefined) => {
-      if (!this.mapLabelOn(kind)) return;
-      for (const station of nearest(list, limit)) {
-        wanted.set(station.id, { station, kind, title: title?.(station) });
-      }
-    };
-    take('fuel', [...this.stations.values()]);
-    take('repair', [...this.repairShops.values()]);
-    take('dealer', [...this.dealerships.values()]);
-    take('bank', [...this.banks.values()]);
-    for (const kind of ['police', 'prison', 'court', 'hospital'] as CivicKind[]) {
-      take(kind, [...this.civics.values()].filter((station) => station.kind === kind), 8);
-    }
-    // type only — no brand / place names (not ads)
-    for (const kind of ['hotel', 'museum'] as const) {
-      take(kind, [...this.landmarks.values()].filter((spot) => spot.kind === kind), 8);
-    }
-    for (const [id, marker] of this.serviceMarkers) {
-      if (wanted.has(id)) continue;
-      marker.remove();
-      this.serviceMarkers.delete(id);
-    }
-    const label: Record<ServiceKind, string> = {
-      fuel: t('poi.fuel'), repair: t('poi.service'), dealer: t('poi.dealer'), bank: t('poi.bank'),
-      police: t('poi.police'), prison: t('poi.prison'), court: t('poi.court'), hospital: t('poi.hospital'),
-      hotel: t('poi.hotel'), museum: t('poi.museum'),
-    };
-    for (const [id, { station, kind, title }] of wanted) {
-      // the houses come in after the roads: find the shop's house when they do
-      if (station.top == null || station.radius == null) {
-        const house = this.map.houseAt(station.place ?? station.position);
-        if (house) {
-          station.place = house.middle;
-          station.top = house.top;
-          station.radius = house.radius;
-          this.serviceMarkers.get(id)?.setLngLat(house.middle).setAltitude(house.top);
-        }
-      }
-      if (this.serviceMarkers.has(id)) continue;
-      const text = title ?? label[kind];
-      this.serviceMarkers.set(id, newMarker({ element: makeMapLabel(`travel-hub-marker is-${kind}`, text, text, undefined, false), anchor: 'bottom' }).setLngLat(station.place ?? station.position).setAltitude(station.top ?? null).addTo(this.map));
-    }
-  }
-
-  /** Ports, airports and railway stations from real data, with a map label each. */
-  private collectHubs(pois: MapFeature[]) {
-    this.travel.collect(hubsFromFeatures(this.readSourceLayer('aerodrome_label'), pois));
+    this.places.refreshMapLabels(true);
   }
 
   private updateFuel(_dt: number) {
     const herePos = this.vehicle.position;
-    const station = atStation(herePos, [...this.stations.values()], SERVICE_REACH.fuel);
-    const shop = atStation(herePos, [...this.repairShops.values()], SERVICE_REACH.repair);
-    const dealer = atStation(herePos, [...this.dealerships.values()], SERVICE_REACH.dealer);
+    const station = atStation(herePos, [...this.places.stations.values()], SERVICE_REACH.fuel);
+    const shop = atStation(herePos, [...this.places.repairShops.values()], SERVICE_REACH.repair);
+    const dealer = atStation(herePos, [...this.places.dealerships.values()], SERVICE_REACH.dealer);
     const now = performance.now();
-    const bank = atStation(herePos, [...this.banks.values()].filter((b) => (this.crime.bankShut.get(b.id) ?? 0) <= now), SERVICE_REACH.bank);
+    const bank = atStation(herePos, [...this.places.banks.values()].filter((b) => (this.crime.bankShut.get(b.id) ?? 0) <= now), SERVICE_REACH.bank);
     this.refuelling = false;
     // arriving (slowly) at a station, service, showroom or bank opens its dialog once per visit
     const here = station ?? shop ?? dealer ?? bank;
@@ -2339,7 +2122,7 @@ export class GameEngine {
   evacuate() {
     if (!this.driving || this.transfer.pending) return;
     // the nearest station whose ground is already loaded (the tow arrives at once)
-    const nearStation = this.nearestReady(this.stations.values(), (s) => s.position);
+    const nearStation = this.nearestReady(this.places.stations.values(), (s) => s.position);
     const near = nearStation ? { station: nearStation } : null;
     const finish = () => {
       this.playerMoney = Math.max(0, this.playerMoney - EVACUATION_COST);
@@ -2392,7 +2175,7 @@ export class GameEngine {
     });
     this.map.setInteractive({ pan: true, rotate: false });
     this.setMapViewUi(true);
-    queueMicrotask(() => { if (!this.driving && this.overviewFree) this.refreshMapLabels(true); });
+    queueMicrotask(() => { if (!this.driving && this.overviewFree) this.places.refreshMapLabels(true); });
   }
 
   revealMap() {
@@ -2785,7 +2568,7 @@ export class GameEngine {
     this.wasOnRamp = lift != null;
   }
 
-  private readSourceLayer(layer: string) {
+  readSourceLayer(layer: string) {
     try {
       const features = this.map.features(layer) as MapFeature[];
       this.featureReadFailures.delete(layer);
@@ -2926,7 +2709,7 @@ export class GameEngine {
       this.trafficNetwork.addFeatures(roads);
     }
     if (landuse.length) this.cachedLanduse.push(...landuse);
-    if (poi.length) this.collectStations(poi);
+    if (poi.length) this.places.collectStations(poi);
     this.ingestedTiles.add(key);
   }
 
@@ -2970,9 +2753,9 @@ export class GameEngine {
         yield null;
         this.coins.syncRoadPickups();
         this.cachedLanduse = this.readSourceLayer('landuse');
-        this.collectStations();
-        this.paintFuelStations();
-        this.labelServices();
+        this.places.collectStations();
+        this.places.paintFuelStations();
+        this.places.labelServices();
         this.travel.refreshMarkers();
         this.fullScoopAt = now;
         this.rememberIngested(focus);
@@ -2989,8 +2772,8 @@ export class GameEngine {
           this.coins.syncRoadPickups();
           yield null;
         }
-        this.paintFuelStations();
-        this.labelServices();
+        this.places.paintFuelStations();
+        this.places.labelServices();
         this.travel.refreshMarkers();
         yield null;
       }
@@ -3253,14 +3036,14 @@ export class GameEngine {
           this.setOverviewMapNav(true);
           this.stopGun();
           // labels next tick — same frame as leaving calm was hitching the open
-          queueMicrotask(() => { if (this.overviewFree) this.refreshMapLabels(true); });
+          queueMicrotask(() => { if (this.overviewFree) this.places.refreshMapLabels(true); });
         }
         const c = this.map.getCenter();
         center = [c.lng, c.lat];
         zoomNow = this.map.getZoom();
         pitchNow = 0;
         bearingNow = 0;
-        this.refreshMapLabels();
+        this.places.refreshMapLabels();
       } else if (this.overview > 0) {
         const e = this.overview * this.overview * (3 - 2 * this.overview);
         const topZoom = this.overviewZoom(this.renderVehicle.position[1]);
@@ -3295,7 +3078,7 @@ export class GameEngine {
       // intro / menu: already top-down — keep labels fresh while panning
       if (this.mapShown && this.overviewTarget > 0) {
         this.map.setScreenStream(true);
-        this.refreshMapLabels();
+        this.places.refreshMapLabels();
       }
       this.renderVehicle.reset(this.vehicle);
       if (!this.mapShown) {
@@ -3330,7 +3113,7 @@ export class GameEngine {
       if (!this.approachFrom) this.saveCamera(now);
       this.hud(this.vehicle.speed * 3.6, this.vehicle.distance, this.fps, this.hudParticipants());
       if (!this.approachFrom) {
-        const near = nearestStation(this.vehicle.position, [...this.stations.values()]);
+        const near = nearestStation(this.vehicle.position, [...this.places.stations.values()]);
         const hub = nearestHub(this.vehicle.position, [...this.travel.hubs.values()]);
         // only hint the hub when you're close enough that it matters (not from across town)
         const hubHint = hub?.hub.kind === 'airport' ? 800 : hub?.hub.kind === 'station' ? 220 : 120;
@@ -3426,8 +3209,8 @@ export class GameEngine {
     this.trafficBots = this.trafficBots.filter((b) => !isAmbulanceWreckId(b.id));
     this.eventIndicatorLayer?.remove();
     this.travel.clearMarkers();
-    for (const marker of this.serviceMarkers.values()) marker.remove();
-    this.serviceMarkers.clear();
+    for (const marker of this.places.serviceMarkers.values()) marker.remove();
+    this.places.serviceMarkers.clear();
     this.coins.pickups.clear();
     this.combatLayer?.setPickups([]);
     this.trafficMarkerLayer?.remove();

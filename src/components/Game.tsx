@@ -497,7 +497,7 @@ export default function Game() {
       );
       carryRef.current = null;
       const live = game;
-      live.setMapLabelFilters(mapLabels);
+      live.places.setMapLabelFilters(mapLabels);
       live.onApproach = (active) => setApproaching(active);
       live.onBoot = (ready) => {
         window.clearTimeout(riseTimer);
@@ -602,7 +602,7 @@ export default function Game() {
   }, [search]);
 
   useEffect(() => engine.current?.applySettings(settings), [settings]);
-  useEffect(() => engine.current?.setMapLabelFilters(mapLabels), [mapLabels]);
+  useEffect(() => engine.current?.places.setMapLabelFilters(mapLabels), [mapLabels]);
   useEffect(() => {
     const game = engine.current;
     if (!game) return;

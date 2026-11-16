@@ -15,7 +15,7 @@ import { AMBULANCE_HOSPITAL_M, isAmbulanceWreckId, BUS_ID, FIRE_TRUCK_ID, HAULER
 import type { GameEngine } from '../GameEngine.ts';
 
 /** What this part reads and drives in the game. */
-export type JobsGame = Pick<GameEngine, 'board' | 'civics' | 'combatLayer' | 'dialogOpen' | 'driving' | 'hauler' | 'isAmbulance' | 'isBus' | 'isFireTruck' | 'isHauler' | 'isTaxi' | 'landmarks' | 'map' | 'mode' | 'onEventResult' | 'pickBeaconSpot' | 'playerMoney' | 'say' | 'setAmbulanceScene' | 'targetVehicles' | 'trafficBots' | 'trafficNetwork' | 'vehicle' | 'wanted'>;
+export type JobsGame = Pick<GameEngine, 'board' | 'combatLayer' | 'dialogOpen' | 'driving' | 'hauler' | 'isAmbulance' | 'isBus' | 'isFireTruck' | 'isHauler' | 'isTaxi' | 'map' | 'mode' | 'onEventResult' | 'pickBeaconSpot' | 'places' | 'playerMoney' | 'say' | 'setAmbulanceScene' | 'targetVehicles' | 'trafficBots' | 'trafficNetwork' | 'vehicle' | 'wanted'>;
 
 /**
  * The special cars' jobs: fire calls for the fire truck, fares for the taxi, crash and fire
@@ -178,7 +178,7 @@ export class Jobs {
         const PREFER_MIN = 2000;
         const PREFER_MAX = 8000;
         const REACH = 10000;
-        const list = [...this.game.civics.values()].filter((s) => s.kind === 'hospital');
+        const list = [...this.game.places.civics.values()].filter((s) => s.kind === 'hospital');
         if (!list.length) return null;
         let band: Position | null = null;
         let bandD = Infinity;
@@ -253,7 +253,7 @@ export class Jobs {
       errand: Boolean(this.game.board.errand),
       onMission: this.game.board.onMission(),
       avoid,
-      landmarks: [...this.game.landmarks.values()],
+      landmarks: [...this.game.places.landmarks.values()],
       pickBeaconSpot: (here, heading, seed, spots) => this.game.pickBeaconSpot(here, heading, seed, spots),
       syncMissionVisuals: (show) => this.game.board.syncMissionVisuals(show),
       say: (text, toast) => this.game.say(text, toast),
@@ -280,7 +280,7 @@ export class Jobs {
   /** Nearest police station pin while hauling the impound car (any station counts). */
   impoundDropPin(): [number, number] | null {
     if (!this.carryingImpound()) return null;
-    const list = [...this.game.civics.values()].filter((s) => s.kind === 'police');
+    const list = [...this.game.places.civics.values()].filter((s) => s.kind === 'police');
     const near = nearestStation(this.game.vehicle.position, list);
     return near ? [...near.station.position] as [number, number] : null;
   }
@@ -311,7 +311,7 @@ export class Jobs {
       }
       // only when the car is on the bed (or hooked/pulling) — empty visits to police do nothing
       if (this.carryingImpound() && now > this.impoundDeliveredAt) {
-        const police = atStation(here, [...this.game.civics.values()].filter((s) => s.kind === 'police'), SERVICE_REACH.civic);
+        const police = atStation(here, [...this.game.places.civics.values()].filter((s) => s.kind === 'police'), SERVICE_REACH.civic);
         if (police && Math.abs(this.game.vehicle.speed) < 7) this.completeImpound();
       }
       return;
