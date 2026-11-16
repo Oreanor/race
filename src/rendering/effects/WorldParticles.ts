@@ -561,29 +561,9 @@ export class WorldParticles {
     const s = options.scale ?? 1, material = options.material ?? 'metal';
     if (material !== 'soil') {
       this.add(here, at, { kind: 'flash', ve: 0, vn: 0, vu: 0, life: 70, size0: 0.35 * s, size1: 0.6 * s, drag: 0, gravity: 0, stretch: 0 }, now);
-      if (material === 'hard') {
-        // struck off stone: a few fast orange streaks out in every direction along the
-        // surface (not a fountain up the normal)
-        const count = Math.round(rand(4, 7) * s);
-        const ref = Math.abs(normal.u) < 0.9 ? { e: 0, n: 0, u: 1 } : { e: 1, n: 0, u: 0 };
-        // two directions across the surface
-        let t1 = { e: normal.n * ref.u - normal.u * ref.n, n: normal.u * ref.e - normal.e * ref.u, u: normal.e * ref.n - normal.n * ref.e };
-        const l1 = Math.hypot(t1.e, t1.n, t1.u) || 1; t1 = { e: t1.e / l1, n: t1.n / l1, u: t1.u / l1 };
-        const t2 = { e: normal.n * t1.u - normal.u * t1.n, n: normal.u * t1.e - normal.e * t1.u, u: normal.e * t1.n - normal.n * t1.e };
-        for (let i = 0; i < count; i++) {
-          const ang = rand(0, Math.PI * 2), lift = rand(0.05, 0.45), speed = rand(22, 34) * Math.sqrt(s);
-          const d = { e: Math.cos(ang) * t1.e + Math.sin(ang) * t2.e + normal.e * lift, n: Math.cos(ang) * t1.n + Math.sin(ang) * t2.n + normal.n * lift, u: Math.cos(ang) * t1.u + Math.sin(ang) * t2.u + normal.u * lift };
-          const l = Math.hypot(d.e, d.n, d.u) || 1;
-          this.add(here, at, {
-            kind: 'chipspark', ve: d.e / l * speed, vn: d.n / l * speed, vu: d.u / l * speed,
-            life: rand(90, 160), size0: rand(0.05, 0.08), size1: 0.03, drag: 3, gravity: 9.8, stretch: 0.022,
-          }, now);
-        }
-      } else {
-        const count = Math.round(rand(7, 12) * s);
-        // bullet sparks off metal: fast, short, snapping off the hit
-        for (let i = 0; i < count; i++) this.spark(here, at, normal, 0.85, rand(9, 20) * Math.sqrt(s), now, 250, true);
-      }
+      // a few fast streaks out every way along the struck surface: orange off stone,
+      // white-hot off metal
+      this.surfaceSparks(here, at, normal, Math.round(rand(4, 7) * s), material === 'hard' ? 'chipspark' : 'spark', Math.sqrt(s), now);
     }
     if (material === 'metal') return;
     const soil = material === 'soil';
@@ -625,10 +605,31 @@ export class WorldParticles {
     }
   }
 
+  /**
+   * Sparks struck off a surface: `count` fast streaks at random angles across it, only a
+   * slight lift off it (not a fountain up the normal), gone in ~0.1 s.
+   */
+  private surfaceSparks(here: Position, at: Enu, normal: Enu, count: number, kind: 'spark' | 'chipspark', speedScale: number, now: number) {
+    const ref = Math.abs(normal.u) < 0.9 ? { e: 0, n: 0, u: 1 } : { e: 1, n: 0, u: 0 };
+    let t1 = { e: normal.n * ref.u - normal.u * ref.n, n: normal.u * ref.e - normal.e * ref.u, u: normal.e * ref.n - normal.n * ref.e };
+    const l1 = Math.hypot(t1.e, t1.n, t1.u) || 1;
+    t1 = { e: t1.e / l1, n: t1.n / l1, u: t1.u / l1 };
+    const t2 = { e: normal.n * t1.u - normal.u * t1.n, n: normal.u * t1.e - normal.e * t1.u, u: normal.e * t1.n - normal.n * t1.e };
+    for (let i = 0; i < count; i++) {
+      const ang = rand(0, Math.PI * 2), lift = rand(0.05, 0.45), speed = rand(22, 34) * speedScale;
+      const d = { e: Math.cos(ang) * t1.e + Math.sin(ang) * t2.e + normal.e * lift, n: Math.cos(ang) * t1.n + Math.sin(ang) * t2.n + normal.n * lift, u: Math.cos(ang) * t1.u + Math.sin(ang) * t2.u + normal.u * lift };
+      const l = Math.hypot(d.e, d.n, d.u) || 1;
+      this.add(here, at, {
+        kind, ve: d.e / l * speed, vn: d.n / l * speed, vu: d.u / l * speed,
+        life: rand(90, 160), size0: rand(0.05, 0.08), size1: 0.03, drag: 3, gravity: 9.8, stretch: 0.022,
+      }, now);
+    }
+  }
+
   /** Glass: a white spark and fine pale shards, no cloud. */
   glassShatter(here: Position, at: Enu, normal: Enu, now: number) {
     this.add(here, at, { kind: 'flash', ve: 0, vn: 0, vu: 0, life: 70, size0: 0.3, size1: 0.55, drag: 0, gravity: 0, stretch: 0 }, now);
-    for (let i = 0; i < 4; i++) this.spark(here, at, normal, 0.85, rand(8, 16), now, 200, true);
+    this.surfaceSparks(here, at, normal, Math.round(rand(2, 4)), 'spark', 1, now);
     const tint: [number, number, number] = [0.72, 0.88, 0.98];
     for (let i = 0; i < 18; i++) {
       const ve = normal.e * rand(2, 6) + rand(-3, 3);
