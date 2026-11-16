@@ -505,8 +505,15 @@ function transportWays(layer: VectorTile['layers'][string]): Map<number, Way> {
 
 /** Plan topology and heights together; no height edits after the solve. */
 export function planBridges(ownWays: Map<number, Way>, extent: number, span: number, at: Surfaces, extra?: Map<number, Way>): Map<number, Planned> {
-  return planRoadNetwork(nearStructures(waysInContext(ownWays, extra ?? new Map(), extent), extent, span, at.toMerc), extent, span, at);
+  // out to here past the tile edge a neighbour's deck still matters (the car drives on it,
+  // a deck of ours meets it); every reader of the plan culls well inside this
+  const margin = PLAN_OUTPUT_M * at.toMerc;
+  const near = (pts: [number, number][]) => pts.some(([x, z]) => x >= -margin && z >= -margin && x <= span + margin && z <= span + margin);
+  return planRoadNetwork(nearStructures(waysInContext(ownWays, extra ?? new Map(), extent), extent, span, at.toMerc), extent, span, at, near);
 }
+
+/** how far (m) past the tile edge the road plan is written out (see planBridges) */
+const PLAN_OUTPUT_M = 150;
 
 /** how far (m) from a bridge or a raised way a road still goes into the height solve (its ramps) */
 const STRUCTURE_REACH = 400;

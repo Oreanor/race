@@ -120,24 +120,35 @@ function connectEnds(routes: Route[], scale: number) {
 // A max heap for the lower-bound solver. Most constraints are negative grade
 // edges, so each station is normally visited only once.
 class HeightQueue {
-  items: { id: number; h: number }[] = [];
+  // ids and heights in parallel typed arrays (an object per push was most of the solve on a
+  // city window); the comparisons and moves are the same as before, so is the pop order
+  private ids = new Int32Array(1024);
+  private hs = new Float64Array(1024);
+  size = 0;
   push(id: number, h: number) {
-    const item = { id, h }, a = this.items;
-    let i = a.length; a.push(item);
-    while (i > 0) { const p = (i - 1) >> 1; if (a[p].h >= h) break; a[i] = a[p]; i = p; }
-    a[i] = item;
+    if (this.size === this.ids.length) {
+      const ids = new Int32Array(this.size * 2), hs = new Float64Array(this.size * 2);
+      ids.set(this.ids); hs.set(this.hs); this.ids = ids; this.hs = hs;
+    }
+    const I = this.ids, H = this.hs;
+    let i = this.size++;
+    while (i > 0) { const p = (i - 1) >> 1; if (H[p] >= h) break; I[i] = I[p]; H[i] = H[p]; i = p; }
+    I[i] = id; H[i] = h;
   }
-  pop() {
-    const a = this.items, top = a[0], last = a.pop()!;
-    if (a.length) {
+  /** pops into `top` (id, h) */
+  pop(top: { id: number; h: number }) {
+    const I = this.ids, H = this.hs;
+    top.id = I[0]; top.h = H[0];
+    const n = --this.size, lastId = I[n], lastH = H[n];
+    if (n) {
       let i = 0;
-      while (i * 2 + 1 < a.length) {
+      while (i * 2 + 1 < n) {
         let c = i * 2 + 1;
-        if (c + 1 < a.length && a[c + 1].h > a[c].h) c++;
-        if (a[c].h <= last.h) break;
-        a[i] = a[c]; i = c;
+        if (c + 1 < n && H[c + 1] > H[c]) c++;
+        if (H[c] <= lastH) break;
+        I[i] = I[c]; H[i] = H[c]; i = c;
       }
-      a[i] = last;
+      I[i] = lastId; H[i] = lastH;
     }
     return top;
   }
@@ -155,8 +166,9 @@ function solveHeights(nodes: Node[], arcs: Arc[]) {
     const q = new HeightQueue(), parent: (Arc | undefined)[] = nodes.map(() => undefined), updates = new Uint32Array(nodes.length);
     nodes.forEach((n, id) => { n.h = n.floor; q.push(id, n.h); });
     let cycle: Arc[] | undefined;
-    while (q.items.length && !cycle) {
-      const { id, h } = q.pop();
+    const top = { id: 0, h: 0 };
+    while (q.size && !cycle) {
+      const { id, h } = q.pop(top);
       if (h < nodes[id].h - EPS) continue;
       for (const arc of outgoing[id]) {
         const next = nodes[arc.to], target = h + arc.rise;
@@ -178,7 +190,12 @@ function solveHeights(nodes: Node[], arcs: Arc[]) {
 }
 
 /** One network, one height at each junction, independent of feature iteration order. */
-export function planRoadNetwork(ways: Map<number, RoadWay>, extent: number, span: number, at: RoadSurfaces): Map<number, PlannedRoad> {
+/**
+ * `outputs` picks the routes whose plan is returned (by their points, in span units): the
+ * solve takes the whole window, but a tile needs only its own roads and the neighbours'
+ * decks at its edge — writing out every road of the 3 × 3 window was a sixth of a tile.
+ */
+export function planRoadNetwork(ways: Map<number, RoadWay>, extent: number, span: number, at: RoadSurfaces, outputs?: (pts: RoadPoint[]) => boolean): Map<number, PlannedRoad> {
   const k = span / extent;
   const routes: Route[] = [];
   for (const [id, way] of ways) for (const line of way.lines) {
@@ -328,6 +345,7 @@ export function planRoadNetwork(ways: Map<number, RoadWay>, extent: number, span
   solveHeights(nodes, arcs);
   const plan = new Map<number, PlannedRoad>();
   for (const r of routes) {
+    if (outputs && !outputs(r.pts)) continue;
     const ids = r.nodes, pts = ids.map(id => nodes[id].p), s = [0];
     if (ids.length < 2) continue;
     for (let i = 1; i < pts.length; i++) s.push(s[i - 1] + distance(pts[i - 1], pts[i]));
