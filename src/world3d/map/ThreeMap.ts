@@ -431,8 +431,6 @@ export class ThreeMap {
   /** Ground lng/lat rectangle under the screen corners (top-down map streaming). */
   private screenGroundBounds(): { west: number; south: number; east: number; north: number } | null {
     const s = this.camera.state;
-    // steep pitch: rays miss the ground or shoot to the horizon — junk bounds thrash the stream
-    if (s.pitch > 18) return this.lastScreenBounds;
     const elev = s.elevation;
     let west = Infinity, east = -Infinity, south = Infinity, north = -Infinity, hits = 0;
     for (const [x, y] of [[0, 0], [s.width, 0], [s.width, s.height], [0, s.height]] as [number, number][]) {
@@ -449,7 +447,7 @@ export class ThreeMap {
     return this.lastScreenBounds;
   }
 
-  /** GeoJSON features of a tile layer near the view (all loaded layers, incl. poi…). */
+  /** GeoJSON features of a tile layer near the view (all loaded layers, incl. poiâ€¦). */
   features(layer: string, focus: LngLat = this.camera.state.center): GeoFeature[] {
     return this.world.features(layer, focus);
   }

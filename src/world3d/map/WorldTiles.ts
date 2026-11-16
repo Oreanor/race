@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+﻿import * as THREE from 'three';
 import { releaseWorkerJobs } from '../tiles/workerRecovery.ts';
 import { VectorTile } from '@mapbox/vector-tile';
 import { PbfReader } from 'pbf';
@@ -19,7 +19,7 @@ import { roofClearanceAt, type RoofProfile } from '@/game/buildings/RoofGenerato
 import { METERS_PER_DEGREE } from '@/game/meters';
 import type { SkinId } from '../buildings/skins.ts';
 
-/** Window rhythm for fire markers — must track what the façade shader draws per skin. */
+/** Window rhythm for fire markers â€” must track what the faÃ§ade shader draws per skin. */
 function fireWindowRhythm(skin: SkinId): { floor: number; spacing: number; yMid: number } {
   // yMid: fraction up the floor cell where glass sits (futuristic ribbons are the upper band)
   if (skin === 'futuristic') return { floor: 3.4, spacing: 1.4, yMid: 0.68 };
@@ -30,7 +30,7 @@ function fireWindowRhythm(skin: SkinId): { floor: number; spacing: number; yMid:
 }
 
 
-/** top of the pavement above the terrain (road ribbons sit 0.09–0.15 m up) */
+/** top of the pavement above the terrain (road ribbons sit 0.09â€“0.15 m up) */
 const ROAD_TOP = 0.12;
 
 /** A nearby building for vehicle collisions: footprint + roof skin (crest already exaggerated). */
@@ -97,17 +97,17 @@ type Live = {
   data: WorldTileData;
   group: THREE.Group;
   waiting: (() => void)[];
-  /** buildings / flora — deferred while the M-map is open so London doesn't hitch */
+  /** buildings / flora â€” deferred while the M-map is open so London doesn't hitch */
   deferred: (() => void)[];
-  /** wall meshes — hidden on M-map (Manhattan fill-rate) */
+  /** wall meshes â€” hidden on M-map (Manhattan fill-rate) */
   buildings: THREE.Mesh[];
   roads: THREE.Mesh | null;
   disposables: { dispose(): void }[];
-  /** lazily decoded non-gameplay layers (poi, housenumber, place…) */
+  /** lazily decoded non-gameplay layers (poi, housenumber, placeâ€¦) */
   extra: Map<string, GeoFeature[]>;
-  /** vegetation meshes by kind (trunk, leaf0…, lamp), for knocking things over */
+  /** vegetation meshes by kind (trunk, leaf0â€¦, lamp), for knocking things over */
   props: Map<string, THREE.InstancedMesh[]>;
-  /** flora* meshes only — cached so LOD doesn't rebuild the list every frame */
+  /** flora* meshes only â€” cached so LOD doesn't rebuild the list every frame */
   floraMeshes: THREE.InstancedMesh[] | null;
   /** trees and lamps bucketed by PROP_CELL, built on first use (shots and bumps look only nearby) */
   propCells: Map<number, number[]> | null;
@@ -172,13 +172,13 @@ const FOOTPRINT_CELL = 64;
 const cellKey = (i: number, j: number) => i * 73856093 ^ j * 19349663;
 const FALL_ANGLE = Math.PI / 2 - 0.06; // lies almost flat, a bit propped on the crown
 /** how long a knocked prop must stay off-screen before it may stand up again */
-const UNSEEN_RESTORE = 75; // s — stay down until you've driven well away
-/** and it must be at least this far from the focus (m) — looking back shouldn't revive it yet */
+const UNSEEN_RESTORE = 75; // s â€” stay down until you've driven well away
+/** and it must be at least this far from the focus (m) â€” looking back shouldn't revive it yet */
 const RESTORE_AWAY_M = 220;
 
 /**
  * Ray vs the shelter's two glass panes in local meters (open side +Z). Returns
- * the nearest hit t ∈ [0,1], or null. Matches shelterGlassGeometry().
+ * the nearest hit t âˆˆ [0,1], or null. Matches shelterGlassGeometry().
  */
 function glassPaneHit(ax: number, ay: number, az: number, bx: number, by: number, bz: number): number | null {
   let best: number | null = null;
@@ -193,7 +193,7 @@ function glassPaneHit(ax: number, ay: number, az: number, bx: number, by: number
   return best;
 }
 
-/** Segment A→B vs axis-aligned box centred at 0 with half-extents hx/hy/hz. */
+/** Segment Aâ†’B vs axis-aligned box centred at 0 with half-extents hx/hy/hz. */
 function rayAabb(ax: number, ay: number, az: number, bx: number, by: number, bz: number, hx: number, hy: number, hz: number): number | null {
   const dx = bx - ax, dy = by - ay, dz = bz - az;
   let t0 = 0, t1 = 1;
@@ -231,7 +231,7 @@ export class WorldTiles {
   private spireGeometry: THREE.BufferGeometry | null = null;
   private spireMaterial: THREE.Material | null = null;
   private frustum = new THREE.Frustum();
-  /** reused by updateFallen — no per-prop Matrix4 allocs */
+  /** reused by updateFallen â€” no per-prop Matrix4 allocs */
   private fallPivot = new THREE.Matrix4();
   private fallTurn = new THREE.Matrix4();
   private fallBack = new THREE.Matrix4();
@@ -376,7 +376,7 @@ export class WorldTiles {
    * prefers the road ahead. Pass `burst` during boot so the start ring fills
    * isotropically and GPU uploads drain faster before the player moves.
    * Pass `screen` (lng/lat west/south/east/north) for the top-down map so the
-   * whole viewport rectangle is loaded — a circular radius empties the corners.
+   * whole viewport rectangle is loaded â€” a circular radius empties the corners.
    * Pass `calm` during camera blends (intro fly-in / M open) so uploads stay tiny.
    */
   update(
@@ -430,16 +430,15 @@ export class WorldTiles {
       const pad = calm ? 500 : 800;
       const dLng = pad / (METERS_PER_DEGREE * cosLat);
       const dLat = pad / METERS_PER_DEGREE;
-      // the player's own surroundings first (what they see on the road), then the rest of
-      // the rectangle, nearest to them first — not nearest the middle of the map
       const ring = player ? tilesAround(player, o.loadRadius, o.zoom) : [];
       const inRing = new Set(ring.map((t) => t.key));
+      // sort the view rectangle nearest the camera centre so panned-in tiles appear first
       const rect = tilesCovering(
         screen.west - dLng, screen.south - dLat,
         screen.east + dLng, screen.north + dLat,
-        o.zoom, player ?? focus,
+        o.zoom, focus,
       );
-      wanted = [...ring, ...rect.filter((t) => !inRing.has(t.key))];
+      wanted = [...rect, ...ring.filter((t) => !inRing.has(t.key))];
       this.ringKeys = inRing;
       for (const t of wanted) keep.add(t.key);
     } else {
@@ -454,7 +453,7 @@ export class WorldTiles {
             const [cx, cy] = tileCorner(p.tile);
             const span = tileSpan(p.tile.z);
             const te = ((cx + span / 2) - mx) * mScale;
-            const tn = (my - (cy - span / 2)) * mScale; // mercator y south → north
+            const tn = (my - (cy - span / 2)) * mScale; // mercator y south â†’ north
             const ahead = te * he + tn * hn;
             return p.distance - Math.max(0, ahead) * 0.5;
           };
@@ -491,10 +490,10 @@ export class WorldTiles {
         this.softKeepAt = null;
       }
     }
-    // spread unloads across frames — dumping a full M-map rectangle in one tick tanks FPS.
+    // spread unloads across frames â€” dumping a full M-map rectangle in one tick tanks FPS.
     // while soft-keeping the map rectangle, drip slowly (never dump the softKeep set itself)
     const holdingMap = !screen && this.softKeep.size > 0;
-    // fly-in: don't dispose meshes mid-lerp (unload hitch = the other half of хрясть)
+    // fly-in: don't dispose meshes mid-lerp (unload hitch = the other half of Ñ…Ñ€ÑÑÑ‚ÑŒ)
     const dropCap = calm ? 0 : holdingMap ? 1 : screen ? 2 : 6;
     let dropped = 0;
     for (const [key, live] of this.tiles) {
@@ -513,9 +512,9 @@ export class WorldTiles {
       }
     }
     const now = performance.now();
-    // camera blends must stay smooth — never storm the GPU mid-lerp (was 5–7 FPS on M open)
+    // camera blends must stay smooth â€” never storm the GPU mid-lerp (was 5â€“7 FPS on M open)
     const mapBurst = !!screen && !calm;
-    // intro fly-in: zero new fetches / uploads — even one tower chunk was the 17 fps hitch
+    // intro fly-in: zero new fetches / uploads â€” even one tower chunk was the 17 fps hitch
     const flightCap = calm ? 0
       : this.mapLite ? 2
         : (burst || mapBurst) ? Math.max(o.maxInFlight, mapBurst ? 4 : 8)
@@ -540,14 +539,14 @@ export class WorldTiles {
     if (calm) {
       budget = 0;
     } else if (burst) {
-      // boot only (map still hidden / settled) — keep visible play under ~8
+      // boot only (map still hidden / settled) â€” keep visible play under ~8
       budget = backlog > 24 ? 12 : backlog > 12 ? 9 : backlog > 5 ? 7 : 5;
     } else if (mapBurst) {
       // M-map / top-down: a still map can take more per frame than driving can (it used to
-      // trickle in at 2), but not a storm (that was 5–7 FPS)
+      // trickle in at 2), but not a storm (that was 5â€“7 FPS)
       budget = 6;
     } else {
-      // chase: don't ramp with backlog — that was the mid-drive FPS dip while tiles stream in
+      // chase: don't ramp with backlog â€” that was the mid-drive FPS dip while tiles stream in
       budget = 2;
     }
     if (this.mapLite) budget = Math.min(budget, 2);
@@ -564,7 +563,7 @@ export class WorldTiles {
         if (budget <= 0) break;
       }
     }
-    // ease newly installed tiles in (unload still drops immediately — memory, not cosmetics)
+    // ease newly installed tiles in (unload still drops immediately â€” memory, not cosmetics)
     const nowFade = performance.now();
     const dt = this.lastFadeMs ? Math.min(0.05, (nowFade - this.lastFadeMs) / 1000) : 0;
     this.lastFadeMs = nowFade;
@@ -581,7 +580,7 @@ export class WorldTiles {
   /**
    * Bytes by url for the whole page: a tile, its eight neighbours and their reliefs are
    * fetched once here and handed to whichever worker builds (each worker used to fetch
-   * and decode the same neighbours itself — every tile again and again). Vector tiles:
+   * and decode the same neighbours itself â€” every tile again and again). Vector tiles:
    * an empty buffer for none; a failed one throws. DEM images: null for none.
    */
   private bytes = new Map<string, Promise<ArrayBuffer | null>>();
@@ -731,7 +730,7 @@ export class WorldTiles {
     this.root.add(group);
     this.tiles.set(key, live);
 
-    // Ground first, then water/roads/seams — one waiting slot used to hitch a whole frame.
+    // Ground first, then water/roads/seams â€” one waiting slot used to hitch a whole frame.
     live.waiting.push(() => {
       const g = data.ground;
       const terrain = this.lampLit(this.mesh(g.terrain, this.groundMat, false), live);
@@ -782,7 +781,7 @@ export class WorldTiles {
       }
       group.updateMatrixWorld(true);
     });
-    // Manhattan/London: while M-map is open, don't upload towers/trees — ground+roads are enough top-down
+    // Manhattan/London: while M-map is open, don't upload towers/trees â€” ground+roads are enough top-down
     const detail: (() => void)[] = [];
     for (const chunk of data.buildings.chunks) detail.push(() => this.addChunk(live, chunk));
     const uploadedProps: THREE.InstancedMesh[] = [];
@@ -821,7 +820,7 @@ export class WorldTiles {
     if (uvs && data.uvs) geometry.setAttribute('uv', new THREE.BufferAttribute(data.uvs, 2));
     geometry.setIndex(new THREE.BufferAttribute(data.index, 1));
     geometry.computeBoundingSphere();
-    // ground lifts with exaggeration in the vertex shader — pad for DEM, not whole-tile fog
+    // ground lifts with exaggeration in the vertex shader â€” pad for DEM, not whole-tile fog
     if (geometry.boundingSphere) geometry.boundingSphere.radius += 180;
     const mesh = new THREE.Mesh(geometry, material);
     mesh.matrixAutoUpdate = false;
@@ -1059,7 +1058,7 @@ export class WorldTiles {
     const span = tileSpan(live.tile.z);
     const bed = gridGround(live.data.ground.heights, this.options.grid, x / span, z / span);
     if (deck - bed < 0.3) return false;
-    // near the deck surface — under the bridge altitude is far below
+    // near the deck surface â€” under the bridge altitude is far below
     return altitude >= deck - 2.8 && altitude <= deck + 6;
   }
 
@@ -1198,7 +1197,7 @@ export class WorldTiles {
 
   /**
    * Street-facing, accessible window centres on the nearest house to `street`
-   * (road pin). Only façades that open toward the street and are not blocked by
+   * (road pin). Only faÃ§ades that open toward the street and are not blocked by
    * a neighbour. Rhythm follows the active architecture skin (esp. futuristic ribbons).
    */
   fireFacadesNear(
@@ -1206,7 +1205,7 @@ export class WorldTiles {
     exaggeration: number,
     radius = 55,
     skin: SkinId = 'original',
-    /** stop once we have this many panes — dense cities otherwise build thousands and hitch */
+    /** stop once we have this many panes â€” dense cities otherwise build thousands and hitch */
     maxPanes = Infinity,
   ): { middle: LngLat; crest: number; top: number; panes: { at: LngLat; altitude: number; oe: number; on: number }[] } | null {
     const { floor: FLOOR, spacing: SPACING, yMid } = fireWindowRhythm(skin);
@@ -1490,7 +1489,7 @@ export class WorldTiles {
   }
 
   /**
-   * First tree or street lamp on the segment from → to (same frame as
+   * First tree or street lamp on the segment from â†’ to (same frame as
    * raycastBuildings). `t` is the fraction along the segment. `reach` widens the
    * test (m), e.g. half a car's width: then the prop counts as a point.
    */
@@ -1560,7 +1559,7 @@ export class WorldTiles {
   }
 
   /**
-   * First intact bus-shelter glass pane on from → to. `t` is the fraction along
+   * First intact bus-shelter glass pane on from â†’ to. `t` is the fraction along
    * the segment (same frame as raycastProps). The metal frame stays; only glass
    * counts here.
    */
@@ -1690,7 +1689,7 @@ export class WorldTiles {
       dirX = Math.sin(snapped);
       dirZ = Math.cos(snapped);
     } else if (kind === 2) {
-      // mostly along the car, ~25° aside so it clears the lane in view
+      // mostly along the car, ~25Â° aside so it clears the lane in view
       const hitYaw = Math.atan2(dirX, dirZ);
       const side = (Math.sin(hitYaw * 12.9898) >= 0 ? 1 : -1);
       const yaw = hitYaw + side * 0.42;
@@ -1705,7 +1704,7 @@ export class WorldTiles {
           : kind === 6 || kind === 7 ? 1.2
             : 0;
     const fallS = kind === 2 ? Math.max(0.32, FALL_TIME - v * 0.012) : FALL_TIME;
-    // shelter depth ~0.75 m past the foot — lift so the side rests on the ground
+    // shelter depth ~0.75 m past the foot â€” lift so the side rests on the ground
     const restLift = kind === 2 ? 0.95 : kind === 5 || kind === 6 || kind === 7 ? 0.35 : 0;
     this.fallen.set(hit.key, {
       live, index, kind, started: now, dirX, dirZ, slideM, fallS, restLift,
@@ -1718,7 +1717,7 @@ export class WorldTiles {
 
   /**
    * Animate falling props; stand them up again only after they've been off-screen
-   * a long while *and* the focus has driven far away — so a quick glance back
+   * a long while *and* the focus has driven far away â€” so a quick glance back
    * or a U-turn nearby doesn't pop them upright.
    */
   updateFallen(now: number, clip: THREE.Matrix4, focus?: LngLat) {
@@ -1736,7 +1735,7 @@ export class WorldTiles {
       const toMerc = 1 / f.live.data.metersScale;
       const ms = f.live.data.metersScale;
       if (f.settled) {
-        // fat sphere so “just off the edge of the screen” still counts as seen
+        // fat sphere so â€œjust off the edge of the screenâ€ still counts as seen
         p.set(x + f.dirX * top * 0.5 * toMerc, fell[i + 3] * exag, z + f.dirZ * top * 0.5 * toMerc).applyMatrix4(f.live.group.matrixWorld);
         sphere.set(p, Math.max(top * 1.4, 18));
         if (this.frustum.intersectsSphere(sphere)) { f.unseenSince = 0; continue; }
@@ -1766,7 +1765,7 @@ export class WorldTiles {
       // lift while tipping: the resting face sits on the ground instead of burying past the foot
       const lift = f.restLift * Math.sin(angle);
       // rotate in true meters (x, z are mercator meters here), about the foot of the prop
-      axis.set(f.dirZ, 0, -f.dirX); // up × direction: the top swings toward the direction
+      axis.set(f.dirZ, 0, -f.dirX); // up Ã— direction: the top swings toward the direction
       scaleIn.makeScale(toMerc, 1, toMerc);
       scaleOut.makeScale(1 / toMerc, 1, 1 / toMerc);
       pivot.makeTranslation(x + f.dirX * slide, lift, z + f.dirZ * slide).multiply(scaleIn);
@@ -1853,7 +1852,7 @@ export class WorldTiles {
   }
 
   /**
-   * First building hit on the segment from → to (lng/lat + altitude in meters,
+   * First building hit on the segment from â†’ to (lng/lat + altitude in meters,
    * altitudes as drawn, like ThreeMap.groundAt). Used for gunfire.
    */
   raycastBuildings(from: LngLat, fromAlt: number, to: LngLat, toAlt: number, exaggeration: number) {
@@ -1909,7 +1908,7 @@ export class WorldTiles {
     return null;
   }
 
-  /** Every layer name seen in loaded tiles (poi, housenumber, mountain_peak, …). */
+  /** Every layer name seen in loaded tiles (poi, housenumber, mountain_peak, â€¦). */
   layerNames() {
     const names = new Set<string>();
     for (const live of this.tiles.values()) for (const name of live.data.layers) names.add(name);
@@ -1977,7 +1976,7 @@ function insideLngLat(point: LngLat, ring: [number, number][]) {
   return hit;
 }
 
-/** Ridge lng/lat (in RoofPoint.x/z) → true meters relative to an origin. */
+/** Ridge lng/lat (in RoofPoint.x/z) â†’ true meters relative to an origin. */
 function roofInMeters(roof: RoofProfile, originLng: number, originLat: number): RoofProfile {
   if (roof.half <= 0 || !roof.ridgeA || !roof.ridgeB) {
     return { eaves: roof.eaves, peak: roof.peak, half: 0, ridgeA: null, ridgeB: null };
