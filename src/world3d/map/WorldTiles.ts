@@ -306,8 +306,11 @@ export class WorldTiles {
     this.waterMat = waterMaterial(uniforms);
     this.vegetation = new VegetationRenderer(uniforms);
     tileTemplate().then((t) => { this.template = t; });
-    // one core for the page, the rest build tiles (a 4-core laptop had 2, a 2-core one 1)
-    const size = Math.min(4, Math.max(2, (navigator.hardwareConcurrency || 4) - 1));
+    // Building is what the streaming waits on, so the spare cores build tiles: one core for
+    // the page (two from 6 cores up: the GPU driver needs one too), at most 6 workers
+    // (4 left half of an 8-core machine idle while the road ahead was still black).
+    const cores = navigator.hardwareConcurrency || 4;
+    const size = Math.min(6, Math.max(2, cores - (cores >= 6 ? 2 : 1)));
     for (let i = 0; i < size; i++) {
       this.load.push(0);
       this.workerRestarts.push(0);
@@ -523,8 +526,7 @@ export class WorldTiles {
     const mapBurst = !!screen && !calm;
     // intro fly-in: zero new fetches / uploads — even one tower chunk was the 17 fps hitch
     const flightCap = calm ? 0
-        : (burst || mapBurst) ? Math.max(o.maxInFlight, mapBurst ? 4 : 8)
-          : o.maxInFlight;
+        : Math.max(o.maxInFlight, this.workers.length * (WORKER_QUEUE + 1));
     // Lite tiles (no furniture, no bridge solve: about twice as quick to build) wherever the
     // car is not about to be: the map's rectangle outside the ring round the car, and, driving,
     // the far side of the load circle — at full speed the black edge came on faster than full
