@@ -39,6 +39,8 @@ type Particle = {
   seed: number;
   /** colour of dust, grit and tyre smoke (linear) */
   tint?: [number, number, number];
+  /** where it started (a tracer is placed by its age, not stepped, so it never overshoots) */
+  e0: number; n0: number; u0: number;
 };
 
 const SHAPE: Record<Kind, number> = { flash: 0, flame: 0, spark: 0, chipspark: 0, clod: 4, ember: 0, fire: 0, smoke: 2, dust: 2, ring: 1, tracer: 0, tiresmoke: 2, grit: 0, water: 3, mist: 2 };
@@ -288,28 +290,35 @@ export class WorldParticles {
     scene.add(this.soft.mesh, this.glow.mesh);
   }
 
-  private add(here: Position, at: Enu, p: Omit<Particle, 'e' | 'n' | 'u' | 'born' | 'seed'> & { seed?: number }, now: number) {
+  private add(here: Position, at: Enu, p: Omit<Particle, 'e' | 'n' | 'u' | 'e0' | 'n0' | 'u0' | 'born' | 'seed'> & { seed?: number }, now: number) {
     if (!this.anchor || this.particles.length === 0) this.anchor = [...here];
     const o = eastNorth(this.anchor, here);
-    this.particles.push({ ...p, e: o.east + at.e, n: o.north + at.n, u: this.altitude + at.u, born: now, seed: p.seed ?? Math.random() });
+    const e = o.east + at.e, n = o.north + at.n, u = this.altitude + at.u;
+    this.particles.push({ ...p, e, n, u, e0: e, n0: n, u0: u, born: now, seed: p.seed ?? Math.random() });
     if (this.particles.length > 2400) this.particles.splice(0, this.particles.length - 2400);
   }
 
   /** Muzzle flash: a hot core, flame tongues along the shot, a couple of sparks. */
   muzzle(here: Position, at: Enu, dir: Enu, now: number) {
-    // the core is yellow fire too (the white flash is for hits)
-    this.add(here, at, { kind: 'flame', ve: 0, vn: 0, vu: 0, life: 40, size0: 0.22, size1: 0.3, drag: 0, gravity: 0, stretch: 0 }, now);
-    for (let i = 0; i < 3; i++) {
-      const speed = rand(7, 13);
-      const spread = 0.18;
-      this.add(here, at, {
-        kind: 'flame', ve: (dir.e + rand(-spread, spread)) * speed, vn: (dir.n + rand(-spread, spread)) * speed, vu: (dir.u + rand(-spread, spread)) * speed,
-        life: rand(40, 65), size0: 0.15, size1: 0.07, drag: 10, gravity: 0, stretch: 0.07,
-      }, now);
+    // a flickering flower of flame right at the muzzle: a yellow core, petals evenly round
+    // the barrel (turned a little each shot) and one along it. Nothing flies off.
+    this.add(here, at, { kind: 'flame', ve: 0, vn: 0, vu: 0, life: 40, size0: 0.2, size1: 0.26, drag: 0, gravity: 0, stretch: 0 }, now);
+    const ref = Math.abs(dir.u) < 0.9 ? { e: 0, n: 0, u: 1 } : { e: 1, n: 0, u: 0 };
+    let a1 = { e: dir.n * ref.u - dir.u * ref.n, n: dir.u * ref.e - dir.e * ref.u, u: dir.e * ref.n - dir.n * ref.e };
+    const l1 = Math.hypot(a1.e, a1.n, a1.u) || 1;
+    a1 = { e: a1.e / l1, n: a1.n / l1, u: a1.u / l1 };
+    const a2 = { e: dir.n * a1.u - dir.u * a1.n, n: dir.u * a1.e - dir.e * a1.u, u: dir.e * a1.n - dir.n * a1.e };
+    const petals = 5, turn = rand(0, Math.PI * 2 / petals), crawl = 0.5;
+    const petal = (d: Enu, length: number) => this.add(here, { e: at.e + d.e * length * 0.5, n: at.n + d.n * length * 0.5, u: at.u + d.u * length * 0.5 }, {
+      // a barely moving particle stretched along its direction: a petal of the given length
+      kind: 'flame', ve: d.e * crawl, vn: d.n * crawl, vu: d.u * crawl,
+      life: rand(32, 44), size0: 0.09, size1: 0.06, drag: 0, gravity: 0, stretch: length / crawl,
+    }, now);
+    for (let k = 0; k < petals; k++) {
+      const ang = turn + (k / petals) * Math.PI * 2;
+      petal({ e: a1.e * Math.cos(ang) + a2.e * Math.sin(ang), n: a1.n * Math.cos(ang) + a2.n * Math.sin(ang), u: a1.u * Math.cos(ang) + a2.u * Math.sin(ang) }, rand(0.22, 0.28));
     }
-    // a stray spark or two at random angles (a tidy cone of them looked fake)
-    const strays = Math.random() < 0.35 ? 2 : 1;
-    for (let i = 0; i < strays; i++) this.spark(here, at, dir, 1.4, rand(5, 16), now, rand(90, 200));
+    petal(dir, rand(0.32, 0.4));
   }
 
   /** A glowing bullet streak flying from the muzzle to the hit point. */
@@ -583,8 +592,8 @@ export class WorldParticles {
       // 3-6 small crisp clods dart a metre out and up, every way, and vanish: nothing else
       const clods = Math.round(rand(3, 6) * s);
       for (let i = 0; i < clods; i++) {
-        // out every way and upward (25-75 degrees off the ground), not skimming along it
-        const angle = rand(0, Math.PI * 2), kick = rand(9, 13), rise = rand(0.45, 1.3), flat = Math.cos(rise);
+        // anywhere over the hemisphere: from nearly flat to nearly straight up
+        const angle = rand(0, Math.PI * 2), kick = rand(9, 13), rise = Math.asin(rand(0.1, 0.98)), flat = Math.cos(rise);
         this.add(here, { e: at.e, n: at.n, u: at.u + 0.05 }, {
           kind: 'clod', tint: [tint[0] * rand(0.75, 1.1), tint[1] * rand(0.75, 1.1), tint[2] * rand(0.75, 1.1)],
           ve: Math.cos(angle) * flat * kick, vn: Math.sin(angle) * flat * kick, vu: Math.sin(rise) * kick,
@@ -754,10 +763,16 @@ export class WorldParticles {
       const t = age / p.life;
       if (t >= 1) continue;
       alive.push(p);
-      // integrate (world meters)
-      const k = Math.exp(-p.drag * dt);
-      p.ve *= k; p.vn *= k; p.vu = p.vu * k - p.gravity * dt;
-      p.e += p.ve * dt; p.n += p.vn * dt; p.u += p.vu * dt;
+      if (p.kind === 'tracer') {
+        // straight and steady: where it is at this age (frame steps ran it past the hit)
+        const s2 = Math.min(age, p.life) / 1000;
+        p.e = p.e0 + p.ve * s2; p.n = p.n0 + p.vn * s2; p.u = p.u0 + p.vu * s2;
+      } else {
+        // integrate (world meters)
+        const k = Math.exp(-p.drag * dt);
+        p.ve *= k; p.vn *= k; p.vu = p.vu * k - p.gravity * dt;
+        p.e += p.ve * dt; p.n += p.vn * dt; p.u += p.vu * dt;
+      }
       const floor = this.altitude + 0.03;
       if (p.u < floor && (p.kind === 'spark' || p.kind === 'chipspark' || p.kind === 'ember')) { p.u = floor; p.vu = Math.abs(p.vu) * 0.35; p.ve *= 0.6; p.vn *= 0.6; }
       // grit lands and skids to a stop
