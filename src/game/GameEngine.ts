@@ -111,7 +111,6 @@ import {
   BUS_ID,
   BATMOBILE_ID,
   FIRE_TRUCK_ID,
-  FAMILY_SEDAN_ID,
   TAXI_ID,
   carShootsGuns,
   GRAVITY,
@@ -2513,11 +2512,10 @@ export class GameEngine {
   }
 
   /**
-   * A shot takes the coins and cash it passes (within a metre); the Family Sedan's machine
-   * gun vacuums anything within 2.8 m of the bullet path. Road coins stay gone after a reload.
+   * A shot takes the coins and cash it passes (within a metre). Road coins stay gone after a reload.
    */
   private shotCollectCoins(from: Position, fromAlt: number, to: Position, toAlt: number) {
-    const reach = this.car.id === FAMILY_SEDAN_ID ? 2.8 : 1;
+    const reach = 1;
     const kx = METERS_PER_DEGREE * Math.cos(from[1] * Math.PI / 180), ky = METERS_PER_DEGREE;
     const ex = (to[0] - from[0]) * kx, ey = (to[1] - from[1]) * ky, eu = toAlt - fromAlt;
     const len = Math.hypot(ex, ey, eu);

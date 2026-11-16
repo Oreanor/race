@@ -55,8 +55,6 @@ export const BUS_ID = '19';
 export const POLICE_IDS = new Set(['09', '16']);
 /** Batmobile — night crusader, same wanted hunts as police */
 export const BATMOBILE_ID = '06';
-/** Family Sedan (Simpsons pink) — machine-gun vacuum for road coins */
-export const FAMILY_SEDAN_ID = '17';
 /** Cars that get bounty / wanted missions */
 export const BOUNTY_CAR_IDS = new Set([...POLICE_IDS, BATMOBILE_ID]);
 

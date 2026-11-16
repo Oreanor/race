@@ -7,7 +7,7 @@ import type { ThreeMap } from '@/world3d/map/ThreeMap';
 import { mercatorPerMeter, mercatorX01, mercatorY01 } from '@/world3d/map/camera';
 import type { Car } from '@/config/vehicle.config';
 import { METERS_PER_DEGREE, offsetPosition, type Position } from '@/game/VehicleController';
-import { BATMOBILE_ID, FAMILY_SEDAN_ID } from '@/game/tuning';
+import { BATMOBILE_ID } from '@/game/tuning';
 
 import type { Pose } from '@/game/VehiclePose';
 import { fallingVehicle } from '../game/groundSupport.ts';
@@ -722,9 +722,8 @@ export function vehicleLayer(
 
   function fire(now: number, heading: number, here: Position) {
     const water = currentCar.id === WATER_TRUCK_ID;
-    const family = currentCar.id === FAMILY_SEDAN_ID;
-    // hose drip / Simpsons pink MG / regular guns
-    if (!aim || !map || now - lastShot < (water ? 14 : family ? 28 : 50)) return;
+    // hose drip / guns
+    if (!aim || !map || now - lastShot < (water ? 14 : 50)) return;
     lastShot = now;
     shotHandler(water ? 'water' : 'gun');
     const carAlt = height();
@@ -1012,7 +1011,7 @@ export function vehicleLayer(
       fx.muzzle(here, muzzleAt, shotDir, now);
       fx.tracer(here, muzzleAt, hitAt, now);
       tracer.visible = false;
-      // a shot takes the coins it passes (the Family Sedan's vacuums a wide swath)
+      // a shot takes the coins it passes
       shotCoinHandler(
         offsetPosition(here, gunEast, gunNorth) as Position,
         carAlt + gunUp,

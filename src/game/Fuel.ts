@@ -11,7 +11,7 @@ const IDLE_BURN = 1 / 3600; // litres per second with the engine running (~1 L/h
 export const FUEL_BURN_SCALE = 3;
 
 /** coins per point of health at a car service */
-export const REPAIR_PRICE = 0.5;
+export const REPAIR_PRICE = 1;
 
 export type FuelSpec = {
   /** tank capacity, litres */

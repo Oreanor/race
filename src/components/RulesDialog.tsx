@@ -4,7 +4,7 @@ import { cars, carPrice, STARTING_CASH, type Car } from '@/config/vehicle.config
 import {
   RACE_FEE, RACE_PRIZE, ARENA_FEE, ARENA_PRIZE, LOAN_LIMIT, LOAN_RATE, CASH_BUNDLE, IMPOUND_REWARD,
   FIRE_WINDOW_COIN, AMBULANCE_VICTIM_COIN, TAXI_PER_KM, BUS_FARE_MIN, BUS_FARE_MAX, BUS_PER_PERSON_KM,
-  HAULER_ID, FIRE_TRUCK_ID, AMBULANCE_ID, TAXI_ID, BUS_ID, BATMOBILE_ID, FAMILY_SEDAN_ID, POLICE_IDS, UNARMED_IDS,
+  HAULER_ID, FIRE_TRUCK_ID, AMBULANCE_ID, TAXI_ID, BUS_ID, BATMOBILE_ID, POLICE_IDS, UNARMED_IDS,
 } from '@/game/tuning';
 import { COLLECT_REWARD, COLLECT_BOXES } from '@/game/Errands';
 import { FUEL_PRICE, REPAIR_PRICE, EVACUATION_COST } from '@/game/Fuel';
@@ -47,7 +47,7 @@ function copy(lang: Lang): Copy {
       ] },
       { title: 'Места на карте', items: [
         <><b>Заправка</b>: топливо по {FUEL_PRICE} монете за литр, бак тратится по реальному расходу машины, буст (Space) жжёт больше. Кончилось — эвакуатор (<b>E</b>) довезёт до ближайшей заправки и зальёт бак за {P(EVACUATION_COST)}.</>,
-        <><b>Автосервис</b>: ремонт — {REPAIR_PRICE} монеты за очко прочности, можно чинить частично.</>,
+        <><b>Автосервис</b>: ремонт — {REPAIR_PRICE} монета за единицу прочности, можно чинить частично.</>,
         <><b>Автосалон</b>: купить новую машину или пересесть на любую из гаража. <b>C</b> — следующая машина из гаража прямо на ходу.</>,
         <><b>Банк</b>: кредит до {P(LOAN_LIMIT)} под {pct}% без срока, один за раз. А можно и ограбить: стрелять по банку 3 секунды — пачки по {P(CASH_BUNDLE)}, и за вами полиция. Оторваться от каждой машины на 2 км — деньги ваши; поймают — штраф 18–25 тыс. плюс украденное.</>,
         <><b>Аэропорт, порт, вокзал</b>: перелёт, рейс или поезд в другой город мира, цена зависит от расстояния (поезд дешевле самолёта).</>,
@@ -68,7 +68,6 @@ function copy(lang: Lang): Copy {
       [TAXI_ID]: 'Пассажиры — +' + TAXI_PER_KM + ' за км',
       [BUS_ID]: `Остановки (+${BUS_FARE_MIN}…${BUS_FARE_MAX}) и экскурсии (+${BUS_PER_PERSON_KM} за человеко-км)`,
       [BATMOBILE_ID]: 'Оружие, охота за разыскиваемыми, трос (ПКМ)',
-      [FAMILY_SEDAN_ID]: 'Пылесос-пулемёт: собирает монеты с дороги',
       police: 'Мигалки (F), охота за разыскиваемыми',
     },
     guns: 'Оружие',
@@ -110,7 +109,6 @@ function copy(lang: Lang): Copy {
       [TAXI_ID]: 'Passageiros — +' + TAXI_PER_KM + ' por km',
       [BUS_ID]: `Paragens (+${BUS_FARE_MIN}…${BUS_FARE_MAX}) e excursões (+${BUS_PER_PERSON_KM} por pessoa·km)`,
       [BATMOBILE_ID]: 'Armas, caça aos procurados, cabo (RMB)',
-      [FAMILY_SEDAN_ID]: 'Aspirador-metralhadora: apanha moedas da estrada',
       police: 'Luzes (F), caça aos procurados',
     },
     guns: 'Armas',
@@ -152,7 +150,6 @@ function copy(lang: Lang): Copy {
       [TAXI_ID]: 'Passenger fares — +' + TAXI_PER_KM + ' per km',
       [BUS_ID]: `Bus stops (+${BUS_FARE_MIN}…${BUS_FARE_MAX}) and tours (+${BUS_PER_PERSON_KM} per person·km)`,
       [BATMOBILE_ID]: 'Guns, wanted hunts, cable (RMB)',
-      [FAMILY_SEDAN_ID]: 'Vacuum machine gun: sucks up road coins',
       police: 'Police lights (F), wanted hunts',
     },
     guns: 'Guns',
