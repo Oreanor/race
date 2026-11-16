@@ -578,13 +578,14 @@ export class WorldParticles {
       ? (options.surface === 'sand' ? [0.32, 0.24, 0.14] : [0.08, 0.05, 0.025])
       : [0.32, 0.31, 0.29];
     if (soil) {
-      // 3-6 small crisp clods dart a metre to the sides and vanish: nothing else
+      // 3-6 small crisp clods dart a metre out and up, every way, and vanish: nothing else
       const clods = Math.round(rand(3, 6) * s);
       for (let i = 0; i < clods; i++) {
-        const angle = rand(0, Math.PI * 2), kick = rand(9, 13);
+        // out every way and upward (25-75 degrees off the ground), not skimming along it
+        const angle = rand(0, Math.PI * 2), kick = rand(9, 13), rise = rand(0.45, 1.3), flat = Math.cos(rise);
         this.add(here, { e: at.e, n: at.n, u: at.u + 0.05 }, {
           kind: 'clod', tint: [tint[0] * rand(0.75, 1.1), tint[1] * rand(0.75, 1.1), tint[2] * rand(0.75, 1.1)],
-          ve: Math.cos(angle) * kick, vn: Math.sin(angle) * kick, vu: rand(0.5, 1.5),
+          ve: Math.cos(angle) * flat * kick, vn: Math.sin(angle) * flat * kick, vu: Math.sin(rise) * kick,
           life: rand(90, 130), size0: rand(0.09, 0.14), size1: rand(0.08, 0.12), drag: 0, gravity: 0, stretch: 0,
         }, now);
       }
