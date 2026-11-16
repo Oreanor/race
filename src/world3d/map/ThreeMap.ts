@@ -549,10 +549,26 @@ export class ThreeMap {
       from[1] + (dn * s) / METERS_PER_DEGREE,
     ];
     const toAlt = fromAlt + du * s;
-    const wall = this.raycastBuildings(from, fromAlt, to, toAlt, false);
+    // The ground first, then the buildings only up to it: the ray went on under the ground
+    // and took a house behind the aim point for a wall, so every shot at the ground near
+    // houses flew into the house (fields have none behind, and worked)
+    const ground = this.pickGround(from, fromAlt, to, toAlt);
+    const stop = ground ? Math.min(1, ground.t + 0.5 / reach) : 1;
+    const wall = this.raycastBuildings(from, fromAlt,
+      [from[0] + (to[0] - from[0]) * stop, from[1] + (to[1] - from[1]) * stop], fromAlt + (toAlt - fromAlt) * stop, false);
     if (wall) return { point: wall.point, altitude: wall.altitude, wall: true };
-    // Walk the camera ray onto the DEM — plane unproject misses / returns null on
-    // steep near-car aims (gun needs to pitch below horizontal to hit the kerb).
+    if (ground) return { point: ground.point, altitude: ground.altitude, wall: false };
+    const g = this.unproject([x, y]);
+    const altitude = this.groundAt([g.lng, g.lat]) ?? cam.state.elevation;
+    return { point: [g.lng, g.lat], altitude, wall: false };
+  }
+
+  /**
+   * Where a ray from → to first meets the ground (t along it, 0..1), walking it in 24 steps.
+   * Plane unproject misses / returns null on steep near-car aims (the gun needs to pitch
+   * below horizontal to hit the kerb).
+   */
+  private pickGround(from: [number, number], fromAlt: number, to: [number, number], toAlt: number): { point: [number, number]; altitude: number; t: number } | null {
     let prevAlt = fromAlt;
     let prevG = this.groundAt(from);
     for (let i = 1; i <= 24; i++) {
@@ -572,14 +588,12 @@ export class ThreeMap {
           (from[1] + (to[1] - from[1]) * ((i - 1) / 24)) * (1 - u) + p[1] * u,
         ];
         const alt = this.groundAt(hit) ?? g;
-        return { point: hit, altitude: alt, wall: false };
+        return { point: hit, altitude: alt, t: (i - 1 + u) / 24 };
       }
       prevAlt = rayAlt;
       prevG = g;
     }
-    const g = this.unproject([x, y]);
-    const altitude = this.groundAt([g.lng, g.lat]) ?? cam.state.elevation;
-    return { point: [g.lng, g.lat], altitude, wall: false };
+    return null;
   }
 
   /** Next time of day: real → morning → day → evening → night → real. */

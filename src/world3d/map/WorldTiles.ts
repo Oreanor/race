@@ -1985,7 +1985,8 @@ export class WorldTiles {
       const p: LngLat = [from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t];
       const altitude = fromAlt + (toAlt - fromAlt) * t;
       for (const c of candidates) {
-        if (altitude > c.peak || altitude < c.under) continue;
+        // nor below its foot: a ray gone under the ground is not hitting a wall
+        if (altitude > c.peak || altitude < c.under || altitude < c.crest - 0.5) continue;
         if (!insideLngLat(p, c.rings[0]) || c.rings.slice(1).some((hole) => insideLngLat(p, hole))) continue;
         const roofHere = c.crest + roofClearanceAt(0, 0, roofInMeters(c.roof, p[0], p[1]));
         if (altitude > roofHere) continue;
