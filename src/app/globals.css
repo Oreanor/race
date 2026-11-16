@@ -288,7 +288,7 @@
 .game-shell[data-theme='night'] .ui-dialog.keymap{--km-dim:#4f6072;--km-target:#ffc463;--km-idle:#1a222d;--km-used:#243040;--km-home:#31455a;--km-lit:#4a3d22}
 .keymap svg{font-family:var(--ui-font)}
 .keymap .ui-actions{align-items:center}
-.keymap .ui-actions .ui-btn{min-width:200px}
+.keymap .ui-actions .ui-btn{min-width:160px}
 .ui-row{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:13px;color:var(--ui-muted)}
 .ui-row strong{color:var(--ui-ink);font-variant-numeric:tabular-nums}
 .ui-actions{display:flex;flex-direction:column;gap:8px;margin-top:4px}
@@ -327,6 +327,9 @@
 .ui-theme select{width:120px;height:40px}
 .ui-form-buttons{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .ui-form-buttons .ui-btn{width:100%;margin:0}
+/* in a dialog buttons fit their label (never the card's full width) and the row is centred */
+.ui-dialog .ui-actions,.ui-dialog .ui-form-buttons{display:flex;flex-direction:row;flex-wrap:wrap;justify-content:center;gap:8px}
+.ui-dialog .ui-actions .ui-btn,.ui-dialog .ui-form-buttons .ui-btn{width:auto!important;min-width:120px;flex:0 0 auto}
 .ui-theme-btn{display:flex;align-items:center;justify-content:center;width:40px;height:40px;margin:0;padding:0;border:1px solid var(--ui-line);border-radius:var(--ui-radius-sm);background:var(--ui-soft);color:var(--ui-muted);cursor:pointer}
 .ui-theme-btn:hover{color:var(--ui-ink);border-color:var(--ui-accent)}
 .ui-theme-btn.is-on{background:var(--ui-accent);border-color:var(--ui-accent);color:var(--ui-accent-ink)}
