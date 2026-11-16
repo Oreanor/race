@@ -79,6 +79,7 @@ import { Heist, type HeistHost } from './crime/Heist.ts';
 import { MissionBotDriver, type BotDriverHost } from './traffic/MissionBots.ts';
 import { Shops, type ShopsHost } from './economy/Shops.ts';
 import { Dealership, type DealershipHost } from './economy/Dealership.ts';
+import { Ramp, type RampHost } from './Ramp.ts';
 import { JobPin, makeMapLabel, makeOffscreenIndicator, newMarker, paintMissionIndicator, setPinRange, type MapMarker } from './hud/mapPins.ts';
 import { hubAt, hubsFromFeatures, kilometres, nearestHub, ticketPrice, type Hub, type HubKind } from './Travel.ts';
 import { bearingTo, BOUNTY_RANGE_KM, loadBounty, makeBounty, saveBounty, type Bounty } from './Bounty.ts';
@@ -269,10 +270,6 @@ export class GameEngine {
   private wasOnRamp = false;
   /** fell in the river: splash → sink → respawn on the nearest shore road */
   private plunge: { at: number; waterAlt: number } | null = null;
-  /** the ramp put down with J (one at a time; gone shortly after the jump) */
-  private ramp: { start: [number, number]; heading: number; usedAt: number; length: number; height: number; width: number } | null = null;
-  /** holding J: ramp preview grows until release */
-  private rampCharge: { start: [number, number]; heading: number; ground: number; length: number } | null = null;
   private aimScreen: [number, number] | null = null;
   private trafficBots: TrafficBot[] = [];
   /** reused by targetVehicles() so the chase tick doesn't allocate every frame */
@@ -365,6 +362,8 @@ export class GameEngine {
   /** the nitro bar under the speedometer: 0…1 left, whether it is burning now, and
    *  `spent`: run dry with Space still down — it waits for Space to be let go */
   private nitro = { level: 1, active: false, spent: false };
+  /** J: the ramp we put down (see Ramp) */
+  private rampTool = new Ramp(this.rampHost());
   /** the car dealership and the garage swap (see Dealership) */
   readonly dealer = new Dealership(this.dealerHost());
   /** the fuel station, the car service and the bank: their dialogs and the loan (see Shops) */
@@ -708,7 +707,7 @@ export class GameEngine {
         if (this.dealer.tryOpen()) { /* showroom takes Tab on the lot */ }
         else this.cycleMissionFocus();
       }
-      if (e.code === 'KeyJ' && !e.repeat) this.beginRampCharge();
+      if (e.code === 'KeyJ' && !e.repeat) this.rampTool.begin();
       if (e.code === 'KeyC' && !e.repeat) this.dealer.swapCar();
       if (e.code === 'KeyH' && !e.repeat) this.crime.tryHijack();
       if (e.code === 'KeyF' && !e.repeat) { this.beaconsOn = !this.beaconsOn; this.combatLayer?.setBeacons(this.beaconsOn); }
@@ -718,11 +717,11 @@ export class GameEngine {
     listen(window, 'keyup', ((e: KeyboardEvent) => {
       this.keys.delete(e.code);
       if (e.code === 'KeyG') this.audio.hornOn(false);
-      if (e.code === 'KeyJ') this.commitRamp();
+      if (e.code === 'KeyJ') this.rampTool.commit();
     }) as EventListener);
     const clear = () => {
       this.keys.clear();
-      if (this.rampCharge) this.commitRamp();
+      if (this.rampTool.charging) this.rampTool.commit();
       this.vehicle.speed = 0;
       this.vehicle.throttle = 0;
       this.last = 0;
@@ -908,6 +907,21 @@ export class GameEngine {
       n.level = Math.max(0, n.level - dt / NITRO_BURN_S);
       if (n.level <= 0) { n.spent = true; n.active = false; }
     } else n.level = Math.min(1, n.level + dt / NITRO_REFILL_S);
+  }
+
+  /** The ramp's window on the game. */
+  private rampHost(): RampHost {
+    const game = this;
+    return {
+      get map() { return game.map; },
+      get altitude() { return game.altitude; },
+      get combatLayer() { return game.combatLayer; },
+      get driving() { return game.driving; },
+      get paused() { return game.paused; },
+      get airborne() { return game.airborne; },
+      get vehicle() { return game.vehicle; },
+      get car() { return game.car; },
+    };
   }
 
   /** Some dialog is up (an event offer, a ticket, a counter, the showroom, an empty tank). */
@@ -4713,79 +4727,6 @@ export class GameEngine {
     this.fpsStamp = now;
   }
 
-  private rampGroundAt(point: [number, number]) {
-    return this.map.groundAt(point) ?? this.altitude;
-  }
-
-  private rampPose(length: number, start: [number, number], heading: number) {
-    const end = offsetPosition(start, Math.sin(heading) * length, Math.cos(heading) * length) as [number, number];
-    const ground = this.rampGroundAt(start);
-    const tilt = Math.atan2(this.rampGroundAt(end) - ground, length);
-    const height = length * RAMP.grade;
-    return { ground, tilt, height, width: RAMP.width };
-  }
-
-  private showRampAt(start: [number, number], heading: number, length: number, usedAt = 0) {
-    const { ground, tilt, height, width } = this.rampPose(length, start, heading);
-    this.ramp = { start, heading, usedAt, length, height, width };
-    this.combatLayer?.setRamp({ position: start, heading, ground, tilt, length, height, width });
-  }
-
-  /** Hold J: start a growing preview ahead of the nose. */
-  beginRampCharge() {
-    if (!this.driving || this.paused || this.airborne) return;
-    const heading = this.vehicle.heading;
-    const start = offsetPosition(
-      this.vehicle.position,
-      Math.sin(heading) * this.car.length * 1.5,
-      Math.cos(heading) * this.car.length * 1.5,
-    ) as [number, number];
-    const length = RAMP.minLength;
-    this.rampCharge = { start, heading, ground: this.rampGroundAt(start), length };
-    this.showRampAt(start, heading, length);
-  }
-
-  /** Release J: lock the charged size in place (through anything). */
-  commitRamp() {
-    const charge = this.rampCharge;
-    this.rampCharge = null;
-    if (!charge || !this.driving) return;
-    this.showRampAt(charge.start, charge.heading, charge.length);
-  }
-
-  /** Height of the ramp surface under this point (driving onto it head-on), or null. */
-  /**
-   * `margin`: also count this many meters short of its foot and past its lip (the water
-   * looks ahead of the car; the flight starts a step after the lip)
-   */
-  private rampLift(position: [number, number], margin = 0) {
-    const ramp = this.ramp;
-    if (!ramp || ramp.usedAt) return null;
-    if (Math.cos(this.vehicle.heading - ramp.heading) < 0.5) return null;
-    const east = (position[0] - ramp.start[0]) * METERS_PER_DEGREE * Math.cos(ramp.start[1] * Math.PI / 180);
-    const north = (position[1] - ramp.start[1]) * METERS_PER_DEGREE;
-    const along = east * Math.sin(ramp.heading) + north * Math.cos(ramp.heading);
-    const side = east * Math.cos(ramp.heading) - north * Math.sin(ramp.heading);
-    if (along < -margin || along > ramp.length + margin || Math.abs(side) > ramp.width / 2 + 0.3) return null;
-    return Math.max(0, Math.min(ramp.length, along)) / ramp.length * ramp.height;
-  }
-
-  /** Grow the preview while J is held; clear the ramp after a jump or when left behind. */
-  private updateRamp(now: number, dt: number) {
-    if (this.rampCharge && this.driving && !this.paused) {
-      this.rampCharge.length = Math.min(RAMP.maxLength, this.rampCharge.length + RAMP.growPerSec * dt);
-      this.showRampAt(this.rampCharge.start, this.rampCharge.heading, this.rampCharge.length);
-      return;
-    }
-    const ramp = this.ramp;
-    if (!ramp) return;
-    const far = metersBetween(ramp.start, this.vehicle.position) > 300;
-    if (far || (ramp.usedAt && now - ramp.usedAt > 900)) {
-      this.ramp = null;
-      this.combatLayer?.setRamp(null);
-    }
-  }
-
   plantWheels(dt: number, now = performance.now()) {
     const settle = (current: number, target: number) => {
       const gap = target - current;
@@ -4856,7 +4797,7 @@ export class GameEngine {
     }
     if (!this.wheelTargets.ready) return;
     const clamp = (value: number) => Math.max(-0.5, Math.min(0.5, value));
-    const lift = this.driving ? this.rampLift(this.renderVehicle.position) : null;
+    const lift = this.driving ? this.rampTool.lift(this.renderVehicle.position) : null;
     let ground = this.wheelTargets.altitude + (lift ?? 0);
     const speed = Math.abs(this.vehicle.speed);
     if (this.hauler.hangAltitude != null) {
@@ -4898,7 +4839,7 @@ export class GameEngine {
       this.airborne = true;
       this.altitude = predicted;
       this.climb -= GRAVITY * dt;
-      if (this.wasOnRamp && this.ramp) this.ramp.usedAt = now;
+      if (this.wasOnRamp && this.rampTool.ramp) this.rampTool.ramp.usedAt = now;
       this.wasOnRamp = false;
       return;
     }
@@ -4907,7 +4848,7 @@ export class GameEngine {
       // on the ramp: straight up its slope
       this.altitude = ground;
       // up its slope — bigger ramps throw higher
-      const ramp = this.ramp!;
+      const ramp = this.rampTool.ramp!;
       const kick = Math.sqrt(2 * GRAVITY * Math.max(0.8, ramp.height * 1.4));
       this.climb = Math.min(kick, this.vehicle.speed * Math.cos(this.vehicle.heading - ramp.heading) * RAMP.grade);
       this.modelPitch = settle(this.modelPitch, Math.atan2(ramp.height, ramp.length));
@@ -5312,7 +5253,7 @@ export class GameEngine {
             this.vehicle.position = building.position;
             // light skim only — heavy damping made corners feel sticky
             this.vehicle.speed *= 0.97;
-          } else if (this.rampLift(previous, 3) != null || this.rampLift(this.vehicle.position as [number, number], 3) != null) {
+          } else if (this.rampTool.lift(previous, 3) != null || this.rampTool.lift(this.vehicle.position as [number, number], 3) != null) {
             // on a ramp out over a river: no shore, no water under the wheels — up it and off
             // its lip into the air (from there the jump decides: the far bank, or a splash)
           } else {
@@ -5356,7 +5297,7 @@ export class GameEngine {
       this.renderVehicle.update(this.vehicle, this.accumulator * 60);
       this.plantWheels(dt, now);
       this.hauler.update(now);
-      this.updateRamp(now, dt);
+      this.rampTool.update(now, dt);
       this.nudgeCamera(dt);
       const chaseDistance = this.distance;
       // north up (compass double-click) until the player turns the view themselves
