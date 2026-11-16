@@ -29,13 +29,25 @@ export const groundDetail = {
   uDetail: { value: new THREE.DataTexture(new Uint8Array([128, 128, 128, 128]), 1, 1) as THREE.Texture },
   uDetailOn: { value: 0 },
   uDetailShift: { value: new THREE.Vector2() },
+  /** fixed pattern metres per scene metre (the scene's metre changes with the origin's latitude) */
+  uDetailScale: { value: 1 },
 };
+/** metres per mercator unit the pattern is laid out in: the first origin's, kept for the session */
+let detailMetersPer01 = 0;
 groundDetail.uDetail.value.needsUpdate = true;
 
-/** Where the scene origin sits in metres, folded into the repeat (call on every rebase). */
-export function setGroundDetailOrigin(eastM: number, southM: number) {
+/**
+ * Where the scene origin sits (mercator 0..1) and the scene's metres per mercator unit (call
+ * on every rebase). The pattern is laid out in one fixed scale for the session: the scene's
+ * metre follows the origin's latitude, and the origin's position in those metres (tens of
+ * thousands of km) moved by tens of metres with every rebase — the grass pattern jumped.
+ */
+export function setGroundDetailOrigin(x01: number, y01: number, metersPer01: number) {
+  if (!detailMetersPer01) detailMetersPer01 = metersPer01;
   const period = DETAIL_REPEAT * 64;
-  groundDetail.uDetailShift.value.set(((eastM % period) + period) % period, ((southM % period) + period) % period);
+  const fold = (v: number) => ((v % period) + period) % period;
+  groundDetail.uDetailShift.value.set(fold(x01 * detailMetersPer01), fold(y01 * detailMetersPer01));
+  groundDetail.uDetailScale.value = detailMetersPer01 / metersPer01;
 }
 
 let groundTexture: THREE.Texture | null = null;
@@ -57,11 +69,12 @@ const DETAIL = /* glsl */ `
   uniform sampler2D uDetail;
   uniform float uDetailOn;
   uniform vec2 uDetailShift;
+  uniform float uDetailScale;
   vec4 groundGrain(vec3 world) {
     if (uDetailOn < 0.5) return vec4(0.0);
     float near = 1.0 - smoothstep(140.0, 420.0, distance(world, uCameraPos));
     if (near <= 0.0) return vec4(0.0);
-    return (texture2D(uDetail, (world.xz + uDetailShift) / ${DETAIL_REPEAT.toFixed(1)}) - 0.5) * near;
+    return (texture2D(uDetail, (world.xz * uDetailScale + uDetailShift) / ${DETAIL_REPEAT.toFixed(1)}) - 0.5) * near;
   }
 `;
 

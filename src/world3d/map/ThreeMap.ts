@@ -914,7 +914,7 @@ export class ThreeMap {
     const perMeter = mercatorPerMeter(lat);
     this.world.setOrigin(x01, y01, 1 / perMeter);
     // the ground texture stays on the world, not on the moving origin
-    setGroundDetailOrigin(x01 / perMeter, y01 / perMeter);
+    setGroundDetailOrigin(x01, y01, 1 / perMeter);
     // scene (x east, y up, z south; meters) → mercator 0..1 (z = altitude in mercator units)
     this.sceneToMercator.set(
       perMeter, 0, 0, x01,
