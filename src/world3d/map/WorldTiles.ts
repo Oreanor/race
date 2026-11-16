@@ -91,6 +91,8 @@ type WaterSeams = {
 /** how far into a tile the water eases toward the level shared with its neighbour (m) */
 const SEAM_EASE = 150;
 
+/** driving, tiles this near the car (m, plus 12 s of travel) are built full; further out lite first (see update) */
+const FULL_NEAR_M = 1000;
 /** jobs a worker holds at once (one building, one ready to go) */
 const WORKER_QUEUE = 2;
 /** how much tile memory (bytes, estimated) is kept before the least recently needed go */
@@ -545,11 +547,19 @@ export class WorldTiles {
       : this.mapLite ? 2
         : (burst || mapBurst) ? Math.max(o.maxInFlight, mapBurst ? 4 : 8)
           : o.maxInFlight;
+    // Lite tiles (no furniture, no bridge solve: about twice as quick to build) wherever the
+    // car is not about to be: the map's rectangle outside the ring round the car, and, driving,
+    // the far side of the load circle — at full speed the black edge came on faster than full
+    // tiles were built. Within FULL_NEAR_M of the car (and where it is being taken, and the
+    // start ring) a tile is full, replacing a lite one already there.
+    const fmx = mercatorX(focus[0]), fmy = mercatorY(focus[1]);
+    // ~12 s of travel for a full build to come in (500 km/h: ~2.7 km), the rest of the circle lite
+    const fullNear = FULL_NEAR_M + Math.min(1700, this.speed * 12);
+    const arrival = destination ? new Set(tilesAround(destination.at, destination.radius, o.zoom).map((t) => t.key)) : null;
     for (const plan of wanted) {
-      // the map's rectangle gets map-only (lite) tiles: no furniture, no bridge solve, several
-      // times quicker; round the car (and wherever it is being taken) a full one, which
-      // replaces a lite tile already there
-      const full = !screen || this.ringKeys.has(plan.key);
+      const full = screen
+        ? this.ringKeys.has(plan.key)
+        : burst || !!arrival?.has(plan.key) || distanceToTile(fmx, fmy, plan.tile, cosLat) <= fullNear;
       const have = this.tiles.get(plan.key);
       if ((have && !(have.data?.lite && full)) || this.pending.has(plan.key)) continue;
       const failed = this.failures.get(plan.key);
