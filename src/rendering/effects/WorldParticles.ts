@@ -564,16 +564,18 @@ export class WorldParticles {
       ? (options.surface === 'sand' ? [0.32, 0.24, 0.14] : [0.08, 0.05, 0.025])
       : [0.32, 0.31, 0.29];
     if (soil) {
-      // a few clods flung out sideways, gone in a blink (no fountain)
+      // 5-10 big clods flung out sharply to the sides, landing metres away: nothing else
       const clods = Math.round(rand(5, 10) * s);
       for (let i = 0; i < clods; i++) {
-        const angle = rand(0, Math.PI * 2), kick = rand(5, 10);
+        const angle = rand(0, Math.PI * 2), kick = rand(9, 15);
         this.add(here, { e: at.e, n: at.n, u: at.u + 0.05 }, {
           kind: 'grit', tint: [tint[0] * rand(0.75, 1.1), tint[1] * rand(0.75, 1.1), tint[2] * rand(0.75, 1.1)],
-          ve: Math.cos(angle) * kick, vn: Math.sin(angle) * kick, vu: rand(0.8, 2.2),
-          life: rand(160, 280), size0: rand(0.1, 0.17), size1: rand(0.08, 0.13), drag: 3, gravity: 9.8, stretch: 0,
+          ve: Math.cos(angle) * kick, vn: Math.sin(angle) * kick, vu: rand(1.5, 3),
+          life: rand(600, 850), size0: rand(0.22, 0.34), size1: rand(0.18, 0.28), drag: 0.6, gravity: 9.8, stretch: 0,
         }, now);
       }
+      // and that is all: no puff
+      return;
     } else {
       const bits = Math.round(rand(5, 8) * s);
       for (let i = 0; i < bits; i++) {
@@ -587,7 +589,7 @@ export class WorldParticles {
     const puff: [number, number, number] = soil
       ? (options.surface === 'sand' ? [0.62, 0.52, 0.36] : [0.3, 0.22, 0.14])
       : [0.6, 0.59, 0.56];
-    for (let i = 0; i < (soil ? 1 : 2); i++) {
+    for (let i = 0; i < 2; i++) {
       this.add(here, at, {
         kind: 'dust', tint: puff, ve: normal.e * rand(0.4, 1) + rand(-0.4, 0.4), vn: normal.n * rand(0.4, 1) + rand(-0.4, 0.4), vu: rand(0.3, 0.9),
         life: rand(450, 750), size0: 0.25, size1: soil ? 1.1 : 0.9, drag: 2.2, gravity: -0.3, stretch: 0,
