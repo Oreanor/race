@@ -74,6 +74,7 @@ import { defaultMapLabelFilters, type MapLabelFilters, type MapLabelKind } from 
 import { fuelStationsLayer } from '@/rendering/FuelStationsLayer';
 import { isVintageTrain, trainsLayer } from '@/rendering/TrainsLayer';
 import { RailNetwork, TrainTraffic } from './Trains.ts';
+import { canCable, Hauler, type HaulHost } from './Hauler.ts';
 import { hubAt, hubsFromFeatures, kilometres, nearestHub, ticketPrice, type Hub, type HubKind } from './Travel.ts';
 import { bearingTo, BOUNTY_RANGE_KM, loadBounty, makeBounty, saveBounty, type Bounty } from './Bounty.ts';
 import type { GameSave } from './save.ts';
@@ -113,27 +114,9 @@ import {
   TAXI_ID,
   carShootsGuns,
   GRAVITY,
-  HAUL_AIM_M,
-  HAUL_COIN_PX,
   COIN_RESPAWN_M,
   COIN_SPACING_M,
   BLACK_MARKET_SHARE,
-  HAUL_COINS_MS,
-  HAUL_DECK_BACK,
-  HAUL_DECK_UP,
-  HAUL_DROP_MS,
-  HAUL_FLY_MS,
-  HAUL_LOAD_M,
-  HAUL_MISS_BACK_MS,
-  HAUL_MISS_HOLD_MS,
-  HAUL_MISS_OUT_MS,
-  HAUL_PULL_MS,
-  HAUL_REACH_M,
-  HAUL_REEL_MS,
-  HAUL_SNAP_M,
-  HAUL_TAUT_MS,
-  HAUL_TILT,
-  HAUL_WINCH_MS,
   HAULER_ID,
   IMPOUND_ARRIVE_M,
   IMPOUND_REWARD,
@@ -391,27 +374,6 @@ export class GameEngine {
   private impoundDeliveredAt = 0;
   private impoundIndicator: { element: HTMLElement; arrow: HTMLElement; title: HTMLElement; distance: HTMLElement } | null = null;
   private impoundMarker: MapMarker | null = null;
-  /**
-   * The hauler's cable. First click: it flies out (fly) and sticks to a car (hooked) or a
-   * wall (anchored), or comes back empty (miss). Second click: the car is yanked up onto
-   * our back (pull → carry), or we reel ourselves up to the wall and hang there (reel →
-   * hang). Third click: the car slides off behind (drop), or we let go and fall.
-   */
-  private haul: {
-    id: string; kind: 'bot' | 'shared' | 'wall' | 'train' | 'coins'; car: Car;
-    phase: 'fly' | 'hooked' | 'anchored' | 'pull' | 'carry' | 'drop' | 'miss' | 'reel' | 'hang' | 'towed';
-    at: number; from: Position; fromHeading: number; fromUp: number;
-    /** wall: the hook (absolute height), and where we start reeling from */
-    hookAlt?: number; self?: Position; selfAlt?: number;
-    /** train: which one, the rope's length (m) and whether we reeled in already */
-    trainId?: string; rope?: number; ropeFrom?: number; reeled?: boolean;
-    /** coins: the ones on the hook and where each lay */
-    coins?: { id: string; start: Position }[];
-    /** hooked car fighting the winch: first moment the rope hit full stretch */
-    tautAt?: number;
-    /** last updateHaul time for hooked-car drag (ms) */
-    dragAt?: number;
-  } | null = null;
   /** our police car's lights (F) */
   /** our police lights (F): off by default */
   private beaconsOn = false;
@@ -424,12 +386,8 @@ export class GameEngine {
   private fieldAt = 0;
   private urbanLevel = 0;
   private urbanAt = 0;
-  /** towed by a train on the cable: the car's own driving is off, the rope pulls it */
-  private towed = false;
-  private towSpeed = 0;
-  private towClock = 0;
-  /** hanging on (or reeling up) the cable: our height, held; null on the ground or flying */
-  private hangAltitude: number | null = null;
+  /** the Howler's and the Batmobile's cable (see Hauler) */
+  private hauler = new Hauler(this.haulHost());
   /** us on the map (M): a dot with an arrow along our heading */
   private selfMarker: MapMarker | null = null;
   /** a new language: every map label and marker title says it again */
@@ -836,7 +794,7 @@ export class GameEngine {
           const y = e.clientY - bounds.top;
           this.aimScreen = [x, y];
           this.updateAim();
-          this.haulClick();
+          this.hauler.click();
           this.aimHud(x, y, true, false);
           return;
         }
@@ -857,7 +815,7 @@ export class GameEngine {
       this.aimScreen = [x, y];
       this.updateAim();
       this.aimingFire = true;
-      if (this.car.id === HAULER_ID) this.haulClick();
+      if (this.car.id === HAULER_ID) this.hauler.click();
       else this.combatLayer?.setFiring(true);
       this.aimHud(x, y, true, true);
       el.setPointerCapture(e.pointerId);
@@ -957,7 +915,7 @@ export class GameEngine {
 
   setCar(car: Car) {
     if (this.car.id === car.id && this.car.path === car.path) return;
-    if (this.haul && !this.canCable(car.id)) this.loseHaul();
+    if (this.hauler.haul && !this.canCable(car.id)) this.hauler.lose();
     const prev = this.car.id;
     this.car = car;
     this.fuel.changeSpec(car.fuel);
@@ -970,7 +928,30 @@ export class GameEngine {
   private isFireTruck(id = this.car.id) { return id === FIRE_TRUCK_ID; }
   private isHauler(id = this.car.id) { return id === HAULER_ID; }
   /** Howler + Batmobile: throw / yank / release the cable. */
-  private canCable(id = this.car.id) { return id === HAULER_ID || id === BATMOBILE_ID; }
+  private canCable(id = this.car.id) { return canCable(id); }
+
+  /** The cable's window on the game: our car, the world, the cars it can take. */
+  private haulHost(): HaulHost {
+    const game = this;
+    return {
+      get vehicle() { return game.vehicle; },
+      get renderVehicle() { return game.renderVehicle; },
+      get car() { return game.car; },
+      get altitude() { return game.altitude; },
+      get modelPitch() { return game.modelPitch; },
+      get map() { return game.map; },
+      get combatLayer() { return game.combatLayer; },
+      get aimScreen() { return game.aimScreen; },
+      get pickups() { return game.pickups; },
+      get trainTraffic() { return game.trainTraffic; },
+      get sharedTraffic() { return game.sharedTraffic; },
+      get trafficBots() { return game.trafficBots; },
+      set trafficBots(bots) { game.trafficBots = bots; },
+      say: (text, toast) => game.say(text, toast),
+      fall: () => { game.airborne = true; game.climb = 0; },
+      refreshTargets: () => game.combatLayer?.setTargets(game.targetVehicles()),
+    };
+  }
   private isTaxi(id = this.car.id) { return id === TAXI_ID; }
   private isAmbulance(id = this.car.id) { return id === AMBULANCE_ID; }
   /** Parked mission props (crash wreck / tow wait) — not racers, no roster / HP / chase arrow. */
@@ -1287,7 +1268,7 @@ export class GameEngine {
 
   /** Leave the road for the intro: drop missions, keep purse / garage / place. */
   leaveToMenu() {
-    this.releaseHaul(null);
+    this.hauler.release(null);
     if (this.errand) { this.clearErrand(); this.completeActiveMission(); }
     if (this.taxi.pending || this.taxi.active) this.suspendTaxi();
     if (this.busTour.pending || this.busTour.active) this.suspendBusTour();
@@ -1702,7 +1683,7 @@ export class GameEngine {
   private resolveVehicleContacts(now: number) {
     // movers vs movers + movers vs parked — never parked×parked (O(n²) waste on kerb props)
     type Body = { id: string; controller: VehicleController; car: Car };
-    const haulId = this.haul?.id;
+    const haulId = this.hauler.haul?.id;
     const movers: Body[] = [
       { id: 'player', controller: this.vehicle, car: this.car },
       ...this.sharedTraffic.drivenBodies(),
@@ -1956,7 +1937,7 @@ export class GameEngine {
   private wreck() {
     this.combatLayer?.explodePlayer();
     this.audio.explosion(null);
-    this.releaseHaul(null);
+    this.hauler.release(null);
     const failed = this.failMission();
     this.playerHp = this.playerMaxHp;
     const drop = this.nearestRescue();
@@ -3354,451 +3335,6 @@ export class GameEngine {
     this.selfMarker.setLngLat(this.renderVehicle.position as [number, number]);
   }
 
-  // ---- the hauler: a cable, a car on our back --------------------------------
-
-  /** Cars the cable can take: our mission bots and the traffic and parked cars we keep. `speed` is signed (m/s). */
-  private haulCandidates() {
-    const layer = this.combatLayer;
-    return [
-      ...this.trafficBots
-        .filter(bot => !layer || layer.isTargetAlive(bot.id))
-        .map(bot => ({ id: bot.id, kind: 'bot' as const, car: bot.car, position: bot.position as Position, heading: bot.heading, speed: bot.controller.speed })),
-      ...this.sharedTraffic.holdable().map(c => ({ ...c, kind: 'shared' as const })),
-    ];
-  }
-
-  private haulTarget(id: string) {
-    return this.haulCandidates().find((c) => c.id === id) ?? null;
-  }
-
-  /** Howler (LMB) / Batmobile (RMB): throw the cable; yank what it holds; let go. Works mid-jump too. */
-  private haulClick() {
-    if (!this.canCable()) return;
-    const now = performance.now();
-    const haul = this.haul;
-    if (haul) {
-      if (haul.phase === 'hooked') { haul.phase = 'pull'; haul.at = now; }
-      else if (haul.phase === 'anchored') { haul.phase = 'reel'; haul.at = now; haul.self = [...this.vehicle.position] as Position; haul.selfAlt = this.altitude; haul.fromHeading = this.vehicle.heading; }
-      else if (haul.phase === 'carry') { haul.phase = 'drop'; haul.at = now; }
-      else if (haul.kind === 'train' && haul.phase === 'towed' && !haul.reeled) { haul.phase = 'reel'; haul.at = now; haul.ropeFrom = haul.rope; haul.reeled = true; }
-      else if (haul.kind === 'train' && (haul.phase === 'towed' || haul.phase === 'reel')) this.releaseTrain();
-      else if (haul.phase === 'hang' || haul.phase === 'reel') this.letGoWall();
-      return; // flying out, or busy pulling
-    }
-    const here = this.vehicle.position;
-    const heading = this.vehicle.heading;
-    // the cable leaves from the middle of the car (its centre of mass)
-    const nose = [...here] as Position;
-    const noseAlt = this.altitude + 0.9;
-    const target = this.combatLayer?.aimTarget() ?? null;
-    const point: Position = target ? [...target.position] as Position : offsetPosition(here, Math.sin(heading) * HAUL_REACH_M, Math.cos(heading) * HAUL_REACH_M) as Position;
-    const groundUp = (at: Position) => (this.map.groundAt(at) ?? this.altitude) - this.altitude;
-    // a coin (or bundle of cash) right under the crosshair: the hook takes that one and
-    // reels it in by itself
-    if (this.aimScreen) {
-      const [sx, sy] = this.aimScreen;
-      let best: { id: string; at: Position; d: number } | null = null;
-      for (const [id, p] of this.pickups) {
-        if ((p.kind !== 'coin' && p.kind !== 'cash') || (p.drop && now < p.drop.at + DROP_MS)) continue;
-        if (metersBetween(nose, p.position) > HAUL_REACH_M) continue;
-        const q = this.map.project(p.position);
-        // how many pixels a metre is there: the coin hovers ~0.6 m up (higher on screen), and
-        // near ones get a catch zone as big as ~2.5 m round them
-        const r = this.map.project(offsetPosition(p.position, 1, 0) as Position);
-        const perMeter = Math.hypot(r.x - q.x, r.y - q.y);
-        const d = Math.hypot(q.x - sx, q.y - perMeter * 0.5 - sy);
-        if (d <= Math.max(HAUL_COIN_PX, perMeter * 2.5) && (!best || d < best.d)) best = { id, at: [...p.position] as Position, d };
-      }
-      if (best) {
-        this.haul = { id: '', kind: 'coins', car: this.car, phase: 'fly', at: now, from: best.at, fromHeading: heading, fromUp: groundUp(best.at) + 0.6, coins: [{ id: best.id, start: best.at }] };
-        return;
-      }
-    }
-    // a car under the crosshair (on screen, as big as the car looks there), within the
-    // cable's reach of us (to its near side)
-    let best: ReturnType<GameEngine['haulCandidates']>[number] | null = null;
-    let bestD = Infinity;
-    for (const c of this.haulCandidates()) {
-      if (metersBetween(nose, c.position) - c.car.length / 2 > HAUL_REACH_M) continue;
-      if (this.aimScreen) {
-        const q = this.map.project(c.position);
-        const tip = this.map.project(offsetPosition(c.position, Math.sin(c.heading) * c.car.length / 2, Math.cos(c.heading) * c.car.length / 2) as Position);
-        const reach = Math.max(14, Math.hypot(tip.x - q.x, tip.y - q.y) * 0.9 + 6);
-        const d = Math.hypot(q.x - this.aimScreen[0], q.y - 10 - this.aimScreen[1]); // aim at the body, a little above its ground point
-        if (d <= reach && d < bestD) { bestD = d; best = c; }
-      } else {
-        const d = metersBetween(point, c.position);
-        if (d <= HAUL_AIM_M && d < bestD) { bestD = d; best = c; }
-      }
-    }
-    if (best) {
-      if (best.kind === 'shared') this.sharedTraffic.hold(best.id);
-      this.haul = { id: best.id, kind: best.kind, car: best.car, phase: 'fly', at: now, from: [...best.position] as Position, fromHeading: best.heading, fromUp: groundUp(best.position) };
-      return;
-    }
-    // a train car by the aim: the hook takes it, and the train takes us
-    if (!best) {
-      let hit: { trainId: string; at: Position; d: number } | null = null;
-      const kx = METERS_PER_DEGREE * Math.cos(point[1] * Math.PI / 180), ky = METERS_PER_DEGREE;
-      for (const car of this.trainTraffic.poses()) {
-        const ax = (car.back[0] - point[0]) * kx, ay = (car.back[1] - point[1]) * ky;
-        const bx = (car.front[0] - point[0]) * kx, by = (car.front[1] - point[1]) * ky;
-        const dx = bx - ax, dy = by - ay;
-        const tt = Math.max(0, Math.min(1, -(ax * dx + ay * dy) / (dx * dx + dy * dy || 1)));
-        const cx = ax + dx * tt, cy = ay + dy * tt, d = Math.hypot(cx, cy);
-        const at: Position = [point[0] + cx / kx, point[1] + cy / ky];
-        if (d < 3 && (!hit || d < hit.d) && metersBetween(nose, at) <= HAUL_REACH_M) hit = { trainId: car.trainId, at, d };
-      }
-      if (hit) {
-        this.haul = { id: '', kind: 'train', car: this.car, phase: 'fly', at: now, from: hit.at, fromHeading: heading, fromUp: groundUp(hit.at) + 1.4, trainId: hit.trainId };
-        return;
-      }
-    }
-    // a wall within reach: the hook bites into it
-    if (!best && target?.wall) {
-      const reach = Math.hypot(metersBetween(nose, target.position), target.altitude - noseAlt);
-      if (reach <= HAUL_REACH_M) {
-        this.haul = { id: '', kind: 'wall', car: this.car, phase: 'fly', at: now, from: [...target.position] as Position, fromHeading: heading, fromUp: target.altitude - this.altitude, hookAlt: target.altitude };
-        return;
-      }
-    }
-    // nothing it can hold: out to its full length toward the aim (straight ahead if the aim
-    // is on the car itself), a moment there, and back
-    const far = metersBetween(nose, point);
-    const end: Position = far > 1
-      ? [nose[0] + (point[0] - nose[0]) * HAUL_REACH_M / far, nose[1] + (point[1] - nose[1]) * HAUL_REACH_M / far]
-      : offsetPosition(nose, Math.sin(heading) * HAUL_REACH_M, Math.cos(heading) * HAUL_REACH_M) as Position;
-    this.haul = { id: '', kind: 'wall', car: this.car, phase: 'miss', at: now, from: end, fromHeading: 0, fromUp: target?.wall ? Math.min(target.altitude - this.altitude, 4) : groundUp(end) + 0.4 };
-  }
-
-  /**
-   * On a train's cable. The hook flies to the car we aimed at; then the rope runs from the
-   * back of the last car, so the train drags us along behind it, straightened out on its
-   * line; reeling in brings us up to a couple of metres behind it, never into it.
-   */
-  private updateTow(haul: NonNullable<GameEngine['haul']>, now: number, nose: Position) {
-    const layer = this.combatLayer;
-    const cars = this.trainTraffic.poses().filter(car => car.trainId === haul.trainId);
-    if (!cars.length) { this.releaseTrain(); return; }
-    const last = cars.reduce((a, b) => (b.index > a.index ? b : a));
-    const kx = METERS_PER_DEGREE * Math.cos(last.back[1] * Math.PI / 180), ky = METERS_PER_DEGREE;
-    const ex = (last.front[0] - last.back[0]) * kx, ny = (last.front[1] - last.back[1]) * ky;
-    const len = Math.hypot(ex, ny) || 1;
-    const ue = ex / len, un = ny / len; // the train's way, at its tail
-    const tail: Position = [...last.back] as Position;
-    const tailUp = (this.map.groundAt(tail) ?? this.altitude) - this.altitude + 1.1;
-    const dt = this.towClock ? Math.min(0.1, (now - this.towClock) / 1000) : 0;
-    this.towClock = now;
-    if (haul.phase === 'fly') {
-      const t = Math.min(1, (now - haul.at) / HAUL_FLY_MS);
-      layer?.setCable({ position: [nose[0] + (haul.from[0] - nose[0]) * t, nose[1] + (haul.from[1] - nose[1]) * t], up: 0.9 + (haul.fromUp - 0.9) * t, wave: 1 });
-      if (t < 1) return;
-      haul.phase = 'towed';
-      haul.at = now;
-      haul.rope = Math.max(3, Math.min(HAUL_SNAP_M, metersBetween(this.vehicle.position, tail) - this.car.length / 2));
-      haul.from = tail;
-      this.towed = true;
-      return;
-    }
-    if (haul.phase === 'reel') {
-      const t = Math.min(1, (now - haul.at) / 1000);
-      haul.rope = (haul.ropeFrom ?? 3) + (2.5 - (haul.ropeFrom ?? 3)) * t * t * (3 - 2 * t);
-      if (t >= 1) haul.phase = 'towed';
-    }
-    // where the rope holds us: behind the tail, on the train's line, nose to it
-    const back = (haul.rope ?? 3) + this.car.length / 2;
-    const spot: Position = [tail[0] - ue * back / kx, tail[1] - un * back / ky];
-    const k = dt ? 1 - Math.exp(-dt * 6) : 0;
-    const before = this.vehicle.position;
-    const next: Position = [before[0] + (spot[0] - before[0]) * k, before[1] + (spot[1] - before[1]) * k];
-    const moved = metersBetween(before, next);
-    this.vehicle.position = next;
-    const want = Math.atan2(ue, un);
-    let turn = (want - this.vehicle.heading) % (Math.PI * 2);
-    if (turn > Math.PI) turn -= Math.PI * 2;
-    if (turn < -Math.PI) turn += Math.PI * 2;
-    this.vehicle.heading += turn * k;
-    // as fast as we are dragged (the speedometer shows it; let go and we roll on with it)
-    if (dt) this.towSpeed += (moved / dt - this.towSpeed) * Math.min(1, dt * 4);
-    this.vehicle.speed = this.towSpeed;
-    this.renderVehicle.reset(this.vehicle);
-    layer?.setCable({ position: tail, up: tailUp, wave: 0 });
-  }
-
-  /** Off the train's cable: we roll on at the speed it dragged us. */
-  private releaseTrain() {
-    this.haul = null;
-    this.towed = false;
-    this.towClock = 0;
-    this.combatLayer?.setCable(null);
-    this.vehicle.speed = this.towSpeed;
-    this.towSpeed = 0;
-  }
-
-  /** Off the wall: the cable goes, we fall. */
-  private letGoWall() {
-    this.haul = null;
-    this.hangAltitude = null;
-    this.combatLayer?.setCable(null);
-    this.airborne = true;
-    this.climb = 0;
-  }
-
-  /** Once a frame: fly the cable, hold or yank the car, carry it, reel us up a wall, let go. */
-  private updateHaul(now: number) {
-    const haul = this.haul;
-    const layer = this.combatLayer;
-    if (!haul) return;
-    const here = this.renderVehicle.position as Position, heading = this.renderVehicle.heading;
-    const ease = (k: number) => k * k * (3 - 2 * k);
-    const along = (meters: number) => offsetPosition(here, Math.sin(heading) * meters, Math.cos(heading) * meters) as Position;
-    const mix = (a: Position, b: Position, k: number): Position => [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k];
-    const turn = (a: number, b: number, k: number) => {
-      let d = (b - a) % (Math.PI * 2);
-      if (d > Math.PI) d -= Math.PI * 2;
-      if (d < -Math.PI) d += Math.PI * 2;
-      return a + d * k;
-    };
-    const nose = along(0);
-    const k = (ms: number) => Math.min(1, (now - haul.at) / ms);
-    /** a fresh bite still quivers a moment, then the line is taut */
-    const quiver = (since: number) => 0.35 * Math.exp(-(now - since) / 180);
-
-    if (haul.phase === 'miss') {
-      // shoots out, hangs there a moment (still quivering), then winds back in
-      const ms = now - haul.at;
-      const out = ms < HAUL_MISS_OUT_MS ? ms / HAUL_MISS_OUT_MS
-        : ms < HAUL_MISS_OUT_MS + HAUL_MISS_HOLD_MS ? 1
-        : Math.max(0, 1 - (ms - HAUL_MISS_OUT_MS - HAUL_MISS_HOLD_MS) / HAUL_MISS_BACK_MS);
-      const wave = ms < HAUL_MISS_OUT_MS ? 1 : 0.5;
-      layer?.setCable({ position: mix(nose, haul.from, out), up: 0.9 + (haul.fromUp - 0.9) * out, wave });
-      if (ms >= HAUL_MISS_OUT_MS + HAUL_MISS_HOLD_MS + HAUL_MISS_BACK_MS) { layer?.setCable(null); this.haul = null; }
-      return;
-    }
-
-    if (haul.kind === 'train') { this.updateTow(haul, now, nose); return; }
-    if (haul.kind === 'coins') {
-      // out to them, then straight back in with them hanging on (no click needed)
-      if (haul.phase === 'fly') {
-        const t = k(HAUL_FLY_MS);
-        layer?.setCable({ position: mix(nose, haul.from, t), up: 0.9 + (haul.fromUp - 0.9) * t, wave: 1 });
-        if (t >= 1) { haul.phase = 'pull'; haul.at = now; }
-        return;
-      }
-      const t = ease(k(HAUL_COINS_MS));
-      const here = this.vehicle.position as Position;
-      for (const coin of haul.coins ?? []) {
-        const pickup = this.pickups.get(coin.id);
-        if (!pickup) continue;
-        const at = mix(coin.start, here, t);
-        pickup.position = at;
-        layer?.movePickup(coin.id, at);
-      }
-      layer?.setCable(t < 0.95 ? { position: mix(haul.from, here, t), up: haul.fromUp + (0.9 - haul.fromUp) * t, wave: 0 } : null);
-      // in reach of the car now: the next step picks them up as if we drove over them
-      if (t >= 1) this.haul = null;
-      return;
-    }
-
-    if (haul.kind === 'wall') {
-      const hookUp = (haul.hookAlt ?? this.altitude) - this.altitude;
-      if (haul.phase === 'fly') {
-        const t = k(HAUL_FLY_MS);
-        layer?.setCable({ position: mix(nose, haul.from, t), up: 0.9 + (hookUp - 0.9) * t, wave: 1 });
-        if (t >= 1) { haul.phase = 'anchored'; haul.at = now; }
-        return;
-      }
-      layer?.setCable({ position: haul.from, up: hookUp, wave: haul.phase === 'anchored' ? quiver(haul.at) : 0 });
-      if (haul.phase === 'anchored') {
-        if (metersBetween(this.vehicle.position, haul.from) > HAUL_SNAP_M) { this.haul = null; layer?.setCable(null); }
-        return;
-      }
-      // reel: up to just under the hook, a step out from the wall, and hang there
-      const self = haul.self ?? this.vehicle.position;
-      const away = metersBetween(self, haul.from) || 1;
-      const toWall = Math.atan2((haul.from[0] - self[0]) * Math.cos(self[1] * Math.PI / 180), haul.from[1] - self[1]);
-      // whichever face of the car needs the least turn goes to the wall: nose, tail or a side;
-      // it stands that face's half size (plus a little) off the hook
-      const off = (a: number) => Math.abs(Math.atan2(Math.sin(a - haul.fromHeading), Math.cos(a - haul.fromHeading)));
-      const faces = [
-        { heading: toWall, gap: this.car.length / 2 + 0.5 },
-        { heading: toWall + Math.PI, gap: this.car.length / 2 + 0.5 },
-        { heading: toWall + Math.PI / 2, gap: 1.4 },
-        { heading: toWall - Math.PI / 2, gap: 1.4 },
-      ];
-      const face = faces.reduce((a, b) => (off(b.heading) < off(a.heading) ? b : a));
-      const out = Math.min(1, face.gap / away);
-      const spot: Position = [haul.from[0] + (self[0] - haul.from[0]) * out, haul.from[1] + (self[1] - haul.from[1]) * out];
-      const hangAlt = Math.max(this.map.groundAt(spot) ?? -Infinity, (haul.hookAlt ?? this.altitude) - 1.9);
-      const t = haul.phase === 'reel' ? ease(k(HAUL_REEL_MS)) : 1;
-      this.vehicle.position = mix(self, spot, t);
-      this.vehicle.heading = turn(haul.fromHeading, face.heading, t);
-      this.vehicle.speed = 0;
-      this.hangAltitude = (haul.selfAlt ?? this.altitude) + (hangAlt - (haul.selfAlt ?? this.altitude)) * t;
-      this.renderVehicle.reset(this.vehicle);
-      if (haul.phase === 'reel' && t >= 1) haul.phase = 'hang';
-      return;
-    }
-
-    // a car on the cable: shot to pieces or gone, it lets go
-    if ((layer && !layer.isTargetAlive(haul.id)) || !this.haulCandidates().some(c => c.id === haul.id)) {
-      this.releaseHaul(null);
-      return;
-    }
-    const deck = along(-this.car.length * HAUL_DECK_BACK);
-    const deckUp = this.car.length * HAUL_DECK_UP;
-    const groundUp = (at: Position) => (this.map.groundAt(at) ?? this.altitude) - this.altitude;
-    let position: Position, up: number, facing: number;
-    let heldSpeed = 0;
-    if (haul.phase === 'fly' || haul.phase === 'hooked') {
-      // follow the live car while the hook flies / holds (moving targets included)
-      const live = this.haulTarget(haul.id);
-      if (live) {
-        haul.from = [...live.position] as Position;
-        haul.fromHeading = live.heading;
-        haul.fromUp = groundUp(live.position);
-        heldSpeed = live.speed;
-      }
-      position = haul.from; up = haul.fromUp; facing = haul.fromHeading;
-      if (haul.phase === 'fly') {
-        const t = k(HAUL_FLY_MS);
-        layer?.setCable({ position: mix(nose, haul.from, t), up: 0.9 + (haul.fromUp + 0.8 - 0.9) * t, wave: 1 });
-        if (t >= 1) { haul.phase = 'hooked'; haul.at = now; haul.tautAt = undefined; haul.dragAt = now; }
-      } else {
-        // hooked: winch vs car speed along the rope
-        const dt = Math.min(0.05, (now - (haul.dragAt ?? now)) / 1000);
-        haul.dragAt = now;
-        const lat = nose[1] * Math.PI / 180;
-        const kx = METERS_PER_DEGREE * Math.cos(lat), ky = METERS_PER_DEGREE;
-        let de = (position[0] - nose[0]) * kx, dn = (position[1] - nose[1]) * ky;
-        let dist = Math.hypot(de, dn) || 0.01;
-        const ue = de / dist, un = dn / dist; // nose → car
-        const carSpeed = live?.speed ?? 0;
-        const carVe = Math.sin(facing) * carSpeed, carVn = Math.cos(facing) * carSpeed;
-        const haulVe = Math.sin(heading) * this.vehicle.speed, haulVn = Math.cos(heading) * this.vehicle.speed;
-        // +sep = car fleeing along the rope (against the winch)
-        const sep = (carVe - haulVe) * ue + (carVn - haulVn) * un;
-        heldSpeed = carSpeed;
-        if (sep > HAUL_WINCH_MS) {
-          // car wins: keep its motion, rope stretches toward max reach
-          if (dt > 0) {
-            position = offsetPosition(position, carVe * dt, carVn * dt) as Position;
-            de = (position[0] - nose[0]) * kx; dn = (position[1] - nose[1]) * ky;
-            dist = Math.hypot(de, dn) || 0.01;
-          }
-          if (dist >= HAUL_REACH_M) {
-            const scale = HAUL_REACH_M / dist;
-            position = [nose[0] + (position[0] - nose[0]) * scale, nose[1] + (position[1] - nose[1]) * scale] as Position;
-            dist = HAUL_REACH_M;
-            if (haul.tautAt == null) haul.tautAt = now;
-            else if (now - haul.tautAt >= HAUL_TAUT_MS) {
-              this.say(t('haul.snap'), true);
-              this.releaseHaul({ position, heading: facing });
-              return;
-            }
-          } else {
-            haul.tautAt = undefined;
-          }
-        } else {
-          // winch wins: reel the car in; clear stretch timer
-          haul.tautAt = undefined;
-          const close = (HAUL_WINCH_MS - Math.max(0, sep)) * dt;
-          const newDist = Math.max(0.5, dist - close);
-          position = [nose[0] + ue * newDist / kx, nose[1] + un * newDist / ky] as Position;
-          dist = newDist;
-          heldSpeed = carSpeed * Math.exp(-dt * 2.2);
-          if (dist <= HAUL_LOAD_M) {
-            haul.from = position;
-            haul.fromHeading = facing;
-            haul.fromUp = groundUp(position);
-            haul.phase = 'pull';
-            haul.at = now;
-            heldSpeed = 0;
-          }
-        }
-        up = groundUp(position);
-        haul.from = position;
-        haul.fromHeading = facing;
-        haul.fromUp = up;
-        const taut = haul.tautAt != null;
-        layer?.setCable({
-          position,
-          up: up + 0.8,
-          wave: taut ? 0.2 : quiver(haul.at),
-        });
-        // absolute fail-safe if somehow beyond snap range
-        if (dist > HAUL_SNAP_M) {
-          this.say(t('haul.snap'), true);
-          this.releaseHaul({ position, heading: facing });
-          return;
-        }
-      }
-    } else if (haul.phase === 'pull') {
-      // yanked: a quick high arc, landing square on the deck
-      const t = ease(k(HAUL_PULL_MS));
-      position = mix(haul.from, deck, t);
-      up = haul.fromUp + (deckUp - haul.fromUp) * t + Math.sin(Math.PI * t) * 2.4;
-      facing = turn(haul.fromHeading, heading, t);
-      layer?.setCable(t < 0.9 ? { position, up: up + 0.8 } : null);
-      if (t >= 1) haul.phase = 'carry';
-    } else if (haul.phase === 'carry') {
-      position = deck; up = deckUp; facing = heading;
-    } else {
-      // slides off backwards and drops onto the road behind us
-      const t = k(HAUL_DROP_MS);
-      const end = along(-(this.car.length / 2 + haul.car.length / 2 + 0.6));
-      const endUp = (this.map.groundAt(end) ?? this.altitude) - this.altitude;
-      position = mix(deck, end, ease(t));
-      up = deckUp + (endUp - deckUp) * t * t;
-      facing = heading;
-      if (t >= 1) { this.releaseHaul({ position: end, heading }); return; }
-    }
-    this.placeHauled(haul, position, facing, heldSpeed);
-    // on the bed: tilted a little nose down (its tail would sink into the bed's raised back) and with the truck
-    const onBed = haul.phase === 'carry' ? 1 : haul.phase === 'pull' ? Math.min(1, (now - haul.at) / HAUL_PULL_MS) : haul.phase === 'drop' ? 1 - Math.min(1, (now - haul.at) / HAUL_DROP_MS) : 0;
-    layer?.setCarried({ id: haul.id, position, heading: facing, up: up + 0.08 * onBed, pitch: (this.modelPitch - HAUL_TILT) * onBed });
-  }
-
-  /** The catch's place in the world (so it bumps, is shot at and is seen by others where it is). */
-  private placeHauled(haul: NonNullable<GameEngine['haul']>, position: Position, heading: number, speed = 0) {
-    if (haul.kind === 'wall') return;
-    if (haul.kind === 'shared') { this.sharedTraffic.place(haul.id, position, heading, speed); return; }
-    const bot = this.trafficBots.find(entry => entry.id === haul.id);
-    if (!bot) return;
-    bot.controller.position = [...position] as Position;
-    bot.controller.heading = heading;
-    bot.controller.speed = speed;
-    bot.position = [...position] as Position;
-    bot.heading = heading;
-  }
-
-  /** Let the catch go, standing at `at` (or where it is), finding its way again from there. */
-  private releaseHaul(at: { position: Position; heading: number } | null) {
-    const haul = this.haul;
-    this.haul = null;
-    this.combatLayer?.setCable(null);
-    this.combatLayer?.setCarried(null);
-    // off a wall: fall from where we hang; off a train: roll on
-    if (this.hangAltitude != null) { this.hangAltitude = null; this.airborne = true; this.climb = 0; }
-    if (this.towed) { this.towed = false; this.towClock = 0; this.towSpeed = 0; }
-    if (!haul || !haul.id) return;
-    if (at) this.placeHauled(haul, at.position, at.heading);
-    if (haul.kind === 'shared') { this.sharedTraffic.hold(null); return; }
-    const bot = this.trafficBots.find(entry => entry.id === haul.id);
-    if (bot) { bot.route = []; bot.routeIndex = 1; bot.repathAt = 0; bot.lastRouteRevision = -1; }
-  }
-
-  /** Out of the Howler with a car on it: that car is gone with the truck. */
-  private loseHaul() {
-    const haul = this.haul;
-    this.releaseHaul(null);
-    if (!haul?.id) return;
-    if (haul.kind === 'shared') this.sharedTraffic.drop(haul.id);
-    else if (haul.kind === 'bot') {
-      this.trafficBots = this.trafficBots.filter(bot => bot.id !== haul.id);
-      this.combatLayer?.setTargets(this.targetVehicles());
-    }
-  }
 
   /** The language changed: labels made once (services, hubs, missions, pins, goals) are made again. */
   private relabel() {
@@ -4577,7 +4113,7 @@ export class GameEngine {
   }
 
   private carryingImpound() {
-    const haul = this.haul;
+    const haul = this.hauler.haul;
     // only the car on the bed counts — empty visits to police do nothing
     return Boolean(this.impoundActive && haul && haul.id === TOW_CAR_ID && haul.phase === 'carry');
   }
@@ -4589,13 +4125,13 @@ export class GameEngine {
     const here = this.vehicle.position;
     if (this.impoundActive) {
       // car wrecked / gone: cancel and try again later
-      if (!this.trafficBots.some((b) => b.id === TOW_CAR_ID) && this.haul?.id !== TOW_CAR_ID) {
+      if (!this.trafficBots.some((b) => b.id === TOW_CAR_ID) && this.hauler.haul?.id !== TOW_CAR_ID) {
         this.failImpound();
         return;
       }
       // keep the waiting car planted until the hook takes it
       const bot = this.trafficBots.find((b) => b.id === TOW_CAR_ID);
-      if (bot && this.haul?.id !== TOW_CAR_ID && this.impoundSpot) {
+      if (bot && this.hauler.haul?.id !== TOW_CAR_ID && this.impoundSpot) {
         bot.controller.speed = 0;
         bot.controller.position = [...this.impoundSpot] as Position;
         bot.position = [...this.impoundSpot] as Position;
@@ -4655,7 +4191,7 @@ export class GameEngine {
     this.impoundSpot = null;
     this.impoundDeliveredAt = performance.now() + 2000;
     // take the car off the bed and scrap it at the station
-    if (this.haul?.id === TOW_CAR_ID) this.loseHaul();
+    if (this.hauler.haul?.id === TOW_CAR_ID) this.hauler.lose();
     else {
       this.trafficBots = this.trafficBots.filter((b) => b.id !== TOW_CAR_ID);
       this.combatLayer?.setTargets(this.targetVehicles());
@@ -4678,7 +4214,7 @@ export class GameEngine {
 
   private suspendImpound() {
     if (this.impoundActive) {
-      if (this.haul?.id === TOW_CAR_ID) this.loseHaul();
+      if (this.hauler.haul?.id === TOW_CAR_ID) this.hauler.lose();
       this.impoundActive = false;
       this.impoundSpot = null;
       this.trafficBots = this.trafficBots.filter((b) => b.id !== TOW_CAR_ID);
@@ -5616,7 +5152,7 @@ export class GameEngine {
       this.eventOffer = null;
       this.onEventOffer(null);
       this.onEventResult(null);
-      this.releaseHaul(null);
+      this.hauler.release(null);
       // leaving the car drops an errand (its markers go with it)
       if (this.errand) { this.clearErrand(); this.completeActiveMission(); }
       if (this.mode !== 'roam') {
@@ -5871,9 +5407,9 @@ export class GameEngine {
     const lift = this.driving ? this.rampLift(this.renderVehicle.position) : null;
     let ground = this.wheelTargets.altitude + (lift ?? 0);
     const speed = Math.abs(this.vehicle.speed);
-    if (this.hangAltitude != null) {
+    if (this.hauler.hangAltitude != null) {
       // on the cable: held up there, no gravity
-      this.altitude = this.hangAltitude;
+      this.altitude = this.hauler.hangAltitude;
       this.airborne = false;
       this.climb = 0;
       this.modelPitch = settle(this.modelPitch, 0);
@@ -6263,7 +5799,7 @@ export class GameEngine {
         const driveKeys = this.fuel.empty ? new Set([...held].filter(key => !NO_FUEL_KEYS.has(key))) : held;
         const travelled = this.vehicle.distance;
         this.vehicle.step(1 / 60, driveKeys, { ...vehicleConfig, acceleration: this.car.acceleration, maxSpeed: this.car.maxSpeed });
-        if (gridded || this.hangAltitude != null || this.towed || this.plunge) {
+        if (gridded || this.hauler.hangAltitude != null || this.hauler.towed || this.plunge) {
           // on the grid: revs may build (clutch launch), the car stays put; on the cable it hangs
           this.vehicle.position = previous;
           this.vehicle.heading = oldHeading;
@@ -6350,9 +5886,9 @@ export class GameEngine {
           })),
         ];
         for (const bot of this.trafficBots) {
-          if (gridded || bot.id === this.haul?.id) continue;
+          if (gridded || bot.id === this.hauler.haul?.id) continue;
           // impound car waits still on the pin until hooked
-          if (bot.id === TOW_CAR_ID && this.impoundActive && this.haul?.id !== TOW_CAR_ID) continue;
+          if (bot.id === TOW_CAR_ID && this.impoundActive && this.hauler.haul?.id !== TOW_CAR_ID) continue;
           // ambulance crash wreck stays planted — exploring would Dijkstra across London and hitch
           if (isAmbulanceWreckId(bot.id)) continue;
           if (this.combatLayer && !this.combatLayer.isTargetAlive(bot.id)) continue;
@@ -6430,7 +5966,7 @@ export class GameEngine {
       this.updateEvents();
       this.renderVehicle.update(this.vehicle, this.accumulator * 60);
       this.plantWheels(dt, now);
-      this.updateHaul(now);
+      this.hauler.update(now);
       this.updateRamp(now, dt);
       this.nudgeCamera(dt);
       const chaseDistance = this.distance;
