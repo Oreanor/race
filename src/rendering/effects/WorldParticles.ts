@@ -317,9 +317,12 @@ export class WorldParticles {
     if (len < 2) return;
     const life = Math.min(140, Math.max(40, len * 0.9)); // ~1 km/s
     const speed = len / (life / 1000);
+    // a long glowing streak (~40% of the shot, 6-40 m): a 1.6 m one flew by in a few frames
+    // and was hardly ever seen
+    const streak = Math.min(40, Math.max(6, len * 0.4));
     this.add(here, from, {
       kind: 'tracer', ve: d.e / len * speed, vn: d.n / len * speed, vu: d.u / len * speed,
-      life, size0: 0.07, size1: 0.07, drag: 0, gravity: 0, stretch: 1.6 / speed,
+      life, size0: 0.1, size1: 0.1, drag: 0, gravity: 0, stretch: streak / speed,
     }, now);
   }
 
@@ -736,7 +739,10 @@ export class WorldParticles {
     const o = eastNorth(this.anchor, here);
     const sin = Math.sin(heading), cos = Math.cos(heading);
     const alive: Particle[] = [];
-    for (const p of this.particles) {
+    // newest first: a full batch drops the oldest particles, never a fresh tracer or flash
+    // (near a burning wreck the embers filled it and new shots went undrawn)
+    for (let i = this.particles.length - 1; i >= 0; i--) {
+      const p = this.particles[i];
       const age = now - p.born;
       if (age < 0) { alive.push(p); continue; } // delayed (smoke after the fireball)
       const t = age / p.life;
@@ -767,7 +773,7 @@ export class WorldParticles {
       const batch = ADDITIVE[p.kind] ? this.glow : this.soft;
       batch.push(x, p.u - this.altitude, z, ax, ay, az, c, size, SHAPE[p.kind], p.seed);
     }
-    this.particles = alive;
+    this.particles = alive.reverse();
     this.glow.end();
     this.soft.end();
   }
