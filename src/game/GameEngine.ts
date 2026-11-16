@@ -178,6 +178,9 @@ export type { OnlinePlayer };
 /** `drop`: thrown out of a wreck — bounces from `from` and can be picked up once it lies still */
 type ActivePickup = { position: [number, number]; color: string; kind: 'coin' | 'cash'; drop?: { from: [number, number]; at: number; up?: number } };
 
+/** Everything the game's parts ask of it, in one. */
+type GameContext = HaulHost & HeistHost & BotDriverHost & ShopsHost & DealershipHost & RampHost & TravelHost & CustomPinsHost & RaceHost & WantedHost;
+
 export class GameEngine {
   collisions = new BuildingCollisions();
   water = new WaterCollisionController();
@@ -339,28 +342,30 @@ export class GameEngine {
     ambulance: new JobPin('ambulance-map-marker', 'ambulance'),
     bus: new JobPin('bus-map-marker', 'bus'),
   };
+  /** the game as its parts see it (see context) */
+  private ctx = this.context();
   /** the nitro bar under the speedometer */
   private nitro = new Nitro();
   /** the wanted car: the offer, the hunt and the fight (see Wanted) */
-  readonly wanted = new Wanted(this.wantedHost());
+  readonly wanted = new Wanted(this.ctx);
   /** the race on now, or being planned (see Race) */
-  private race = new Race(this.raceHost());
+  private race = new Race(this.ctx);
   /** the player's own pins on the M map (see CustomPins) */
-  private pins = new CustomPins(this.pinsHost());
+  private pins = new CustomPins(this.ctx);
   /** ports, airports and railway stations: a ticket to any city (see TravelDesk) */
-  readonly travel = new TravelDesk(this.travelHost());
+  readonly travel = new TravelDesk(this.ctx);
   /** J: the ramp we put down (see Ramp) */
-  private rampTool = new Ramp(this.rampHost());
+  private rampTool = new Ramp(this.ctx);
   /** the car dealership and the garage swap (see Dealership) */
-  readonly dealer = new Dealership(this.dealerHost());
+  readonly dealer = new Dealership(this.ctx);
   /** the fuel station, the car service and the bank: their dialogs and the loan (see Shops) */
-  readonly shops = new Shops(this.shopsHost());
+  readonly shops = new Shops(this.ctx);
   /** the mission bots at the wheel (see MissionBotDriver) */
-  private botDriver = new MissionBotDriver(this.botDriverHost());
+  private botDriver = new MissionBotDriver(this.ctx);
   /** bank jobs, hijacks and the police after us (see Heist) */
-  private crime = new Heist(this.heistHost());
+  private crime = new Heist(this.ctx);
   /** the Howler's and the Batmobile's cable (see Hauler) */
-  private hauler = new Hauler(this.haulHost());
+  private hauler = new Hauler(this.ctx);
   /** us on the map (M): a dot with an arrow along our heading */
   private selfMarker: MapMarker | null = null;
   /** a new language: every map label and marker title says it again */
@@ -866,131 +871,8 @@ export class GameEngine {
     this.nitro.tick(dt, this.keys.has('Space'), !this.fuel.empty);
   }
 
-  /** The hunt's window on the game. */
-  private wantedHost(): WantedHost {
-    const game = this;
-    return {
-      canHuntBounty: () => game.canHuntBounty(),
-      get mode() { return game.mode; },
-      set mode(mode) { game.mode = mode; },
-      dialogOpen: () => game.dialogOpen(),
-      errandOn: () => Boolean(game.errand),
-      errandOrFire: () => Boolean(game.errand || game.fire.active),
-      jobOn: () => Boolean(game.errand || game.fire.active || game.impoundActive || game.taxi.active || game.busTour.active),
-      get driving() { return game.driving; },
-      get vehicle() { return game.vehicle; },
-      get map() { return game.map; },
-      get city() { return game.city; },
-      get missions() { return game.missions; },
-      pickBeaconSpot: (here, heading, seed, avoid, band) => game.pickBeaconSpot(here, heading, seed, avoid, band),
-      get trafficNetwork() { return game.trafficNetwork; },
-      get trafficBots() { return game.trafficBots; },
-      set trafficBots(bots) { game.trafficBots = bots; },
-      botsChanged: () => { game.ensureTrafficMarkers(); game.combatLayer?.setTargets(game.targetVehicles()); },
-      forgetContacts: () => game.vehicleContactTimes.clear(),
-      get playerHp() { return game.playerHp; },
-      set playerHp(hp) { game.playerHp = hp; },
-      get playerMaxHp() { return game.playerMaxHp; },
-      get playerMoney() { return game.playerMoney; },
-      set playerMoney(money) { game.playerMoney = money; },
-      addWin: (id) => game.addWin(id),
-      focusGoals: () => game.focusGoals(),
-      set missionFocus(index: number) { game.missionFocus = index; },
-      hideEventBeacons: () => game.hideEventBeacons(),
-      showEventBeacons: () => game.showEventBeacons(),
-      clearEventBots: () => game.clearEventBots(),
-      syncMissionVisuals: (showWorld) => game.syncMissionVisuals(showWorld),
-      indicatorLayer: () => game.indicatorLayer(),
-      placeTargetIndicator: (marker, target, pinMeters) => game.placeTargetIndicator(marker, target, pinMeters),
-      onEventResult: (result) => game.onEventResult(result),
-      say: (text, toast) => game.say(text, toast),
-    };
-  }
 
-  /** A race's window on the game. */
-  private raceHost(): RaceHost {
-    const game = this;
-    return {
-      get mode() { return game.mode; },
-      set mode(mode) { game.mode = mode; },
-      get eventOffer() { return game.eventOffer; },
-      set eventOffer(kind) { game.eventOffer = kind; },
-      get eventCooldown() { return game.eventCooldown; },
-      set eventCooldown(at) { game.eventCooldown = at; },
-      get playerMoney() { return game.playerMoney; },
-      set playerMoney(money) { game.playerMoney = money; },
-      get disposed() { return game.disposed; },
-      get driving() { return game.driving; },
-      get vehicle() { return game.vehicle; },
-      get renderVehicle() { return game.renderVehicle; },
-      get map() { return game.map; },
-      get collisions() { return game.collisions; },
-      get water() { return game.water; },
-      get trafficNetwork() { return game.trafficNetwork; },
-      get combatLayer() { return game.combatLayer; },
-      get trafficBots() { return game.trafficBots; },
-      set trafficBots(bots) { game.trafficBots = bots; },
-      rivalCars: (n) => game.rivalCars(n),
-      botsChanged: () => { game.ensureTrafficMarkers(); game.combatLayer?.setTargets(game.targetVehicles()); },
-      forgetContacts: () => game.vehicleContactTimes.clear(),
-      forgetBot: (id) => game.botDriver.forget(id),
-      addWin: (id) => game.addWin(id),
-      clearEventBots: () => game.clearEventBots(),
-      completeActiveMission: () => game.completeActiveMission(),
-      hideEventBeacons: () => game.hideEventBeacons(),
-      showEventBeacons: () => game.showEventBeacons(),
-      syncMissionVisuals: (showWorld) => game.syncMissionVisuals(showWorld),
-      indicatorLayer: () => game.indicatorLayer(),
-      onEventOffer: (offer) => game.onEventOffer(offer),
-      onEventResult: (result) => game.onEventResult(result),
-      say: (text, toast) => game.say(text, toast),
-    };
-  }
 
-  /** The player pins' window on the game. */
-  private pinsHost(): CustomPinsHost {
-    const game = this;
-    return {
-      get map() { return game.map; },
-      inspecting: () => game.mapInspecting(),
-      indicatorLayer: () => game.indicatorLayer(),
-      changed: () => game.syncMissionVisuals(),
-    };
-  }
-
-  /** The ticket desk's window on the game. */
-  private travelHost(): TravelHost {
-    const game = this;
-    return {
-      get runReady() { return game.runReady; },
-      get driving() { return game.driving; },
-      get mode() { return game.mode; },
-      get fuelOut() { return game.fuelOut; },
-      get vehicle() { return game.vehicle; },
-      get keys() { return game.keys; },
-      get map() { return game.map; },
-      mapViewOpen: () => game.mapViewOpen(),
-      labelOn: (kind) => game.mapLabelOn(kind),
-      get playerMoney() { return game.playerMoney; },
-      set playerMoney(money) { game.playerMoney = money; },
-      carry: () => ({ money: game.playerMoney, fuel: game.fuel.ratio, loan: game.shops.loanDebt, garage: [...game.garage] }),
-    };
-  }
-
-  /** The ramp's window on the game. */
-  private rampHost(): RampHost {
-    const game = this;
-    return {
-      get map() { return game.map; },
-      get altitude() { return game.altitude; },
-      get combatLayer() { return game.combatLayer; },
-      get driving() { return game.driving; },
-      get paused() { return game.paused; },
-      get airborne() { return game.airborne; },
-      get vehicle() { return game.vehicle; },
-      get car() { return game.car; },
-    };
-  }
 
   /** The layer the edge arrows (off-frame goals) live in, made on first need. */
   private indicatorLayer() {
@@ -1002,70 +884,29 @@ export class GameEngine {
     return this.eventIndicatorLayer;
   }
 
-  /** Some dialog is up (an event offer, a ticket, a counter, the showroom, an empty tank). */
-  private dialogOpen() {
-    return Boolean(this.eventOffer || this.travel.open || this.shops.serviceOpen || this.dealer.open || this.fuelOut);
-  }
-
-  /** The showroom's window on the game. */
-  private dealerHost(): DealershipHost {
+  /**
+   * The game as its parts see it: one object behind every part's narrow host interface
+   * (the cable, the chase, the race, the counters…), reading and writing the engine live.
+   */
+  private context(): GameContext {
     const game = this;
     return {
-      get runReady() { return game.runReady; },
-      get driving() { return game.driving; },
-      get paused() { return game.paused; },
-      get mode() { return game.mode; },
-      counterOpen: () => Boolean(game.shops.serviceOpen || game.travel.open || game.fuelOut),
-      get dealerships() { return game.dealerships; },
       get vehicle() { return game.vehicle; },
-      get keys() { return game.keys; },
-      offered: (id) => { game.offeredService = id; },
+      get renderVehicle() { return game.renderVehicle; },
       get car() { return game.car; },
-      get garage() { return game.garage; },
-      get playerMoney() { return game.playerMoney; },
-      set playerMoney(money) { game.playerMoney = money; },
-      setCar: (car) => game.setCar(car),
-      onCarBought: (car) => game.onCarBought(car),
-      say: (text, toast) => game.say(text, toast),
-    };
-  }
-
-  /** The counters' window on the game: the car, its tank and health, the purse. */
-  private shopsHost(): ShopsHost {
-    const game = this;
-    return {
-      get vehicle() { return game.vehicle; },
-      get keys() { return game.keys; },
-      get fuel() { return game.fuel; },
-      get playerHp() { return game.playerHp; },
-      set playerHp(hp) { game.playerHp = hp; },
-      get playerMaxHp() { return game.playerMaxHp; },
-      get playerMoney() { return game.playerMoney; },
-      set playerMoney(money) { game.playerMoney = money; },
-    };
-  }
-
-  /** The mission bots' window on the game. */
-  private botDriverHost(): BotDriverHost {
-    const game = this;
-    return {
-      get trafficBots() { return game.trafficBots; },
-      get vehicle() { return game.vehicle; },
       get altitude() { return game.altitude; },
-      get mode() { return game.mode; },
-      get combatLayer() { return game.combatLayer; },
-      get trafficNetwork() { return game.trafficNetwork; },
-      get collisions() { return game.collisions; },
-      get water() { return game.water; },
+      get modelPitch() { return game.modelPitch; },
       get map() { return game.map; },
-      onBridgeDeck: (at, altitude) => game.onBridgeDeck(at, altitude),
-    };
-  }
-
-  /** A chase's window on the game. */
-  private heistHost(): HeistHost {
-    const game = this;
-    return {
+      get combatLayer() { return game.combatLayer; },
+      get aimScreen() { return game.aimScreen; },
+      get pickups() { return game.pickups; },
+      get trainTraffic() { return game.trainTraffic; },
+      get sharedTraffic() { return game.sharedTraffic; },
+      get trafficBots() { return game.trafficBots; },
+      set trafficBots(bots) { game.trafficBots = bots; },
+      say: (text, toast) => game.say(text, toast),
+      fall: () => { game.airborne = true; game.climb = 0; },
+      refreshTargets: () => game.combatLayer?.setTargets(game.targetVehicles()),
       get mode() { return game.mode; },
       set mode(mode) { game.mode = mode; },
       get bountyFight() { return game.wanted.fight; },
@@ -1073,27 +914,18 @@ export class GameEngine {
       get paused() { return game.paused; },
       onMission: () => game.onMission(),
       get banks() { return game.banks; },
-      get vehicle() { return game.vehicle; },
-      get renderVehicle() { return game.renderVehicle; },
       get bearing() { return game.bearing; },
       set bearing(bearing) { game.bearing = bearing; },
       get accumulator() { return game.accumulator; },
       set accumulator(value) { game.accumulator = value; },
-      get car() { return game.car; },
       get fuel() { return game.fuel; },
       get garage() { return game.garage; },
       setCar: (car) => game.setCar(car),
       onCarBought: (car) => game.onCarBought(car),
       get collisions() { return game.collisions; },
       get water() { return game.water; },
-      get map() { return game.map; },
       get mapLoaded() { return game.mapLoaded; },
-      get combatLayer() { return game.combatLayer; },
-      get sharedTraffic() { return game.sharedTraffic; },
       get trafficNetwork() { return game.trafficNetwork; },
-      get trafficBots() { return game.trafficBots; },
-      set trafficBots(bots) { game.trafficBots = bots; },
-      get pickups() { return game.pickups; },
       nextDropId: () => game.dropSerial++,
       refreshPickups: () => game.combatLayer?.setPickups(game.pickupVisuals()),
       botsChanged: () => { game.ensureTrafficMarkers(); game.combatLayer?.setTargets(game.targetVehicles()); },
@@ -1113,32 +945,50 @@ export class GameEngine {
       nearestCivic: () => game.nearestCivic(),
       nearbyRoadSpot: () => game.nearbyRoadSpot(),
       placeCarAt: (position) => game.placeCarAt(position),
-      say: (text, toast) => game.say(text, toast),
+      onBridgeDeck: (at, altitude) => game.onBridgeDeck(at, altitude),
+      get keys() { return game.keys; },
+      get runReady() { return game.runReady; },
+      counterOpen: () => Boolean(game.shops.serviceOpen || game.travel.open || game.fuelOut),
+      get dealerships() { return game.dealerships; },
+      offered: (id) => { game.offeredService = id; },
+      get airborne() { return game.airborne; },
+      get fuelOut() { return game.fuelOut; },
+      mapViewOpen: () => game.mapViewOpen(),
+      labelOn: (kind) => game.mapLabelOn(kind),
+      carry: () => ({ money: game.playerMoney, fuel: game.fuel.ratio, loan: game.shops.loanDebt, garage: [...game.garage] }),
+      inspecting: () => game.mapInspecting(),
+      indicatorLayer: () => game.indicatorLayer(),
+      changed: () => game.syncMissionVisuals(),
+      get eventOffer() { return game.eventOffer; },
+      set eventOffer(kind) { game.eventOffer = kind; },
+      get disposed() { return game.disposed; },
+      rivalCars: (n) => game.rivalCars(n),
+      forgetBot: (id) => game.botDriver.forget(id),
+      addWin: (id) => game.addWin(id),
+      completeActiveMission: () => game.completeActiveMission(),
+      syncMissionVisuals: (showWorld) => game.syncMissionVisuals(showWorld),
+      onEventOffer: (offer) => game.onEventOffer(offer),
+      canHuntBounty: () => game.canHuntBounty(),
+      dialogOpen: () => game.dialogOpen(),
+      errandOn: () => Boolean(game.errand),
+      errandOrFire: () => Boolean(game.errand || game.fire.active),
+      jobOn: () => Boolean(game.errand || game.fire.active || game.impoundActive || game.taxi.active || game.busTour.active),
+      get city() { return game.city; },
+      get missions() { return game.missions; },
+      pickBeaconSpot: (here, heading, seed, avoid, band) => game.pickBeaconSpot(here, heading, seed, avoid, band),
+      focusGoals: () => game.focusGoals(),
+      set missionFocus(index: number) { game.missionFocus = index; },
+      placeTargetIndicator: (marker, target, pinMeters) => game.placeTargetIndicator(marker, target, pinMeters),
     };
   }
 
-  /** The cable's window on the game: our car, the world, the cars it can take. */
-  private haulHost(): HaulHost {
-    const game = this;
-    return {
-      get vehicle() { return game.vehicle; },
-      get renderVehicle() { return game.renderVehicle; },
-      get car() { return game.car; },
-      get altitude() { return game.altitude; },
-      get modelPitch() { return game.modelPitch; },
-      get map() { return game.map; },
-      get combatLayer() { return game.combatLayer; },
-      get aimScreen() { return game.aimScreen; },
-      get pickups() { return game.pickups; },
-      get trainTraffic() { return game.trainTraffic; },
-      get sharedTraffic() { return game.sharedTraffic; },
-      get trafficBots() { return game.trafficBots; },
-      set trafficBots(bots) { game.trafficBots = bots; },
-      say: (text, toast) => game.say(text, toast),
-      fall: () => { game.airborne = true; game.climb = 0; },
-      refreshTargets: () => game.combatLayer?.setTargets(game.targetVehicles()),
-    };
+  /** Some dialog is up (an event offer, a ticket, a counter, the showroom, an empty tank). */
+  private dialogOpen() {
+    return Boolean(this.eventOffer || this.travel.open || this.shops.serviceOpen || this.dealer.open || this.fuelOut);
   }
+
+
+
   private isTaxi(id = this.car.id) { return id === TAXI_ID; }
   private isAmbulance(id = this.car.id) { return id === AMBULANCE_ID; }
   /** Parked mission props (crash wreck / tow wait) — not racers, no roster / HP / chase arrow. */
