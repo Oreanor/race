@@ -171,7 +171,7 @@ test('map streaming expands the driving ring, cancels distant work on close, and
   const world = Object.assign(Object.create(WorldTiles.prototype), {
     disposed: false, template: 'tiles', options,
     tiles: new Map(ring.map(t => [t.key, { waiting: [], fade: 1 }])),
-    pending: new Map(), failures: new Map(), ringKeys: new Set(),
+    pending: new Map(), jobs: new Map(), failures: new Map(), ringKeys: new Set(),
     softKeep: new Set(), softKeepUntil: 0, softKeepAt: null,
     streamPlan: null, mapLite: false, speed: 0, moveAt: 0, moveFrom: null,
     lastFadeMs: 0, serial: 0, requested: [], cancelled: [],

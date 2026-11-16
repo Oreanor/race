@@ -533,8 +533,12 @@ export class WorldTiles {
     if (!calm) {
       // the map rectangle keeps its loaded tiles, not its unfinished loads: those took every
       // slot (each with its eight neighbours) and the tiles round the car waited behind them
+      // A job not wanted any more (a tile the car has driven past) that no worker has
+      // started yet goes too, even if its tile would still be kept once loaded: at full speed
+      // those held the slots while the tiles ahead waited behind them
+      const wantedKeys = new Set(wanted.map((t) => t.key));
       for (const [key, job] of this.pending) {
-        if ((need ?? keep).has(key)) continue;
+        if ((need ?? keep).has(key) && (wantedKeys.has(key) || (this.jobs.get(job.id)?.worker ?? 0) >= 0)) continue;
         this.cancel(job.id);
         this.pending.delete(key);
       }
