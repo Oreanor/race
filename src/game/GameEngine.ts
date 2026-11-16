@@ -4105,7 +4105,8 @@ export class GameEngine {
         const colors = index === passed ? MISSION_COLORS.finish : MISSION_COLORS.arena;
         element.style.setProperty('--mission-color', colors.main);
         element.style.setProperty('--mission-soft', colors.soft);
-        element.style.display = this.mode === 'race' && index >= passed ? '' : 'none';
+        // only the gate being raced to — later gates (the last one read "5/5" from the start) stay hidden
+        element.style.display = this.mode === 'race' && index === passed ? '' : 'none';
       }
     });
     if (!this.raceGoalIndicator) {

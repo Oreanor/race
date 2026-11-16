@@ -450,7 +450,7 @@ export default function Game() {
             if (placeRef.current && placeRef.current.textContent && placeRef.current.textContent !== shown && drivingRef.current) {
               setPlaceFlash(true);
               window.clearTimeout(placeFlashTimer.current);
-              placeFlashTimer.current = window.setTimeout(() => setPlaceFlash(false), 4000);
+              placeFlashTimer.current = window.setTimeout(() => setPlaceFlash(false), 2000);
             }
             if (placeRef.current) placeRef.current.textContent = shown;
             if (districtRef.current) {

@@ -497,7 +497,7 @@
 .clock-hud{position:absolute;z-index:12;top:8px;left:50%;transform:translateX(-50%);padding:4px 14px 5px;border-radius:var(--ui-radius-sm);background:var(--ui-bg);color:var(--ui-ink);box-shadow:var(--ui-shadow);pointer-events:none;font-family:var(--ui-font);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);text-align:center;line-height:1.08}
 .clock-hud{opacity:1;visibility:visible;transition:opacity .45s ease,visibility 0s}
 .clock-hud.is-hidden{opacity:0;visibility:hidden;transition:opacity .45s ease,visibility 0s .45s}
-.clock-hud .local-place{display:block;margin:0;min-width:0;max-width:60vw;color:inherit;text-shadow:none;font-size:26px;font-weight:750;letter-spacing:.2px;line-height:1.15;white-space:normal}
+.clock-hud .local-place{display:block;margin:0;min-width:0;max-width:60vw;color:inherit;text-shadow:none;font-size:22px;font-weight:750;letter-spacing:.2px;line-height:1.15;white-space:normal}
 .clock-hud .local-district{display:block;margin:0;min-width:0;max-width:60vw;color:inherit;text-shadow:none;font-size:13px;font-weight:650;letter-spacing:.2px;line-height:1.35;white-space:normal;opacity:.75}
 .clock-hud .local-district[hidden]{display:none}
 .clock-hud .local-clock{display:block;margin:2px 0 0;min-width:0;color:inherit;text-shadow:none;font-size:13px;font-weight:650;font-variant-numeric:tabular-nums;letter-spacing:.2px;white-space:nowrap;opacity:.85}
@@ -524,7 +524,7 @@
 .meta-settings svg{display:block}
 @media(max-width:800px){
   .clock-hud{top:6px;padding:3px 12px 4px}
-  .clock-hud .local-place{font-size:24px}
+  .clock-hud .local-place{font-size:20px}
   .clock-hud .local-clock{font-size:12px}
   .meta-hud{top:12px;right:12px;padding:2px 3px 2px 10px;gap:6px}
   .meta-hud .fps{font-size:11px}
