@@ -972,19 +972,22 @@ export class ThreeMap {
     // tiles nearest the car (or where it is being taken) before far ones. First come first
     // served put the ground of the tile ahead behind thousands of plant batches of the tiles
     // already passed — it showed up 5-20 s late, the car drove into black.
+    // Re-ordered at most four times a second (on every change of length it re-sorted
+    // thousands of meshes each frame while a map's worth of tiles came in: a second's
+    // freeze opening the map). New meshes wait at the end until then.
     const nowWarm = performance.now();
-    if (this.gpuWarmQueue.length !== this.gpuWarmSortedLength || nowWarm - this.gpuWarmSortedAt > 400) {
+    if (nowWarm - this.gpuWarmSortedAt > 250 && this.gpuWarmQueue.length !== this.gpuWarmSortedLength) {
       const focus = this.streamDestination?.at ?? this.focusCar?.at ?? this.camera.state.center;
-      const rank = new Map<THREE.Mesh, number>();
       const groupRank = new Map<THREE.Object3D, number>();
-      for (const mesh of this.gpuWarmQueue) {
+      const keyed = this.gpuWarmQueue.map((mesh) => {
         let group: THREE.Object3D | null = mesh;
         while (group?.parent && group.parent !== this.world.root) group = group.parent;
         let d = group ? groupRank.get(group) : undefined;
         if (d === undefined) { d = group ? Math.min(1e5, this.world.groupDistance(group, focus)) : 1e5; if (group) groupRank.set(group, d); }
-        rank.set(mesh, d + (mesh.renderOrder < 0 ? 0 : 400));
-      }
-      this.gpuWarmQueue.sort((a, b) => rank.get(a)! - rank.get(b)!);
+        return { mesh, rank: d + (mesh.renderOrder < 0 ? 0 : 400) };
+      });
+      keyed.sort((a, b) => a.rank - b.rank);
+      this.gpuWarmQueue = keyed.map((k) => k.mesh);
       this.gpuWarmSortedLength = this.gpuWarmQueue.length;
       this.gpuWarmSortedAt = nowWarm;
     }
