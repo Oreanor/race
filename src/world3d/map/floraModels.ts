@@ -41,6 +41,15 @@ class Shape {
     g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(UP, b.clone().sub(a).normalize()));
     g.translate(a.x, a.y, a.z);
     this.add(g, false);
+    // a piece standing on the ground gets a bottom: a felled tree shows its trunk's foot
+    if (a.y < 0.05) {
+      const dir = b.clone().sub(a).normalize();
+      const cap = new THREE.CircleGeometry(r0, sides);
+      cap.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir.clone().negate()));
+      const foot = a.clone().addScaledVector(dir, -back);
+      cap.translate(foot.x, foot.y, foot.z);
+      this.add(cap, false);
+    }
   }
 
   /** A trunk through several points, radius per point. */
