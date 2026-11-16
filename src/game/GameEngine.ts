@@ -79,6 +79,7 @@ import { MissionBotDriver, type BotDriverHost } from './traffic/MissionBots.ts';
 import { Shops, type ShopsHost } from './economy/Shops.ts';
 import { Dealership, type DealershipHost } from './economy/Dealership.ts';
 import { Ramp, type RampHost } from './Ramp.ts';
+import { Coins } from './Coins.ts';
 import { Jobs } from './jobs/Jobs.ts';
 import { TravelDesk, type TravelHost } from './economy/TravelDesk.ts';
 import { CustomPins, type CustomPinsHost } from './hud/CustomPins.ts';
@@ -144,13 +145,6 @@ const ARRIVAL_M = 400;
 const WALL_COIN_KMH = 100;
 /** …when the wall takes at least this much of the speed (m/s, ~40 km/h): a hit, not a graze */
 const WALL_COIN_HIT = 11;
-/** coin grids on open fields: one candidate per this big square of the world (m) */
-const FIELD_CELL_M = 1000;
-/** …coins this far apart (m) */
-const FIELD_STEP_M = 4;
-/** …in these shapes (columns × rows): mostly a single trail of up to 10, now and then
- * a strip, 5 × 10 at most */
-const FIELD_GRIDS: [number, number][] = [[1, 5], [1, 7], [1, 8], [1, 10], [1, 10], [1, 6], [2, 8], [3, 6], [4, 8], [5, 10]];
 /** never a race / arena rival: the police, the emergency and work vehicles, the robot, the monster truck */
 const RIVAL_EXCLUDED = new Set(['09', '16', '21', '18', '19', '20', '14', '03']);
 /** The camera as last left, within its limits; null if none was kept (or it is unreadable). */
@@ -177,7 +171,6 @@ const NO_FUEL_KEYS = new Set(['KeyW', 'Space']);
 export type { OnlinePlayer };
 
 /** `drop`: thrown out of a wreck — bounces from `from` and can be picked up once it lies still */
-type ActivePickup = { position: [number, number]; color: string; kind: 'coin' | 'cash'; drop?: { from: [number, number]; at: number; up?: number } };
 
 /** Everything the game's parts ask of it, in one. */
 type GameContext = HaulHost & HeistHost & BotDriverHost & ShopsHost & DealershipHost & RampHost & TravelHost & CustomPinsHost & RaceHost & WantedHost;
@@ -249,14 +242,14 @@ export class GameEngine {
   private fpsStamp = 0;
   private worldWork: Generator<null, void> | null = null;
   private featureReadFailures = new Set<string>();
-  private cachedWater: MapFeature[] = [];
+  cachedWater: MapFeature[] = [];
   private cachedRoads: MapFeature[] = [];
   private cachedLanduse: MapFeature[] = [];
   private tilesIngested = false;
   /** tiles whose roads/water/poi are already in the gameplay caches / traffic graph */
   private ingestedTiles = new Set<string>();
   /** near-car tiles that arrived since the last ingest pass */
-  private pendingIngest = new Set<string>();
+  pendingIngest = new Set<string>();
   /** last full features() scoop — rare prune, not every tile upload */
   private fullScoopAt = 0;
   private focusTime = 0;
@@ -310,16 +303,13 @@ export class GameEngine {
   /** our police lights (F): off by default */
   private beaconsOn = false;
   /** all game sound (synthesised) */
-  private audio = new GameAudio();
+  audio = new GameAudio();
   /** trains' lead cars last frame: for their speed (Doppler, clack rate) */
   private trainHeard = new Map<string, { at: number; front: [number, number] }>();
-  /** coin grids on open fields, one candidate per km² cell: its coins, or null (no room there) */
-  private fieldCells = new Map<string, [number, number][] | null>();
-  private fieldAt = 0;
-  private urbanLevel = 0;
-  private urbanAt = 0;
   /** The special cars' jobs: fire calls for the fire truck, fares for the taxi, crash and fire (see Jobs) */
   readonly jobs = new Jobs(this);
+  /** Coins and cash lying about: along the roads and on open fields, out of wrecks, walls and (see Coins) */
+  readonly coins = new Coins(this);
   /** the game as its parts see it (see context) */
   private ctx = this.context();
   /** the nitro bar under the speedometer */
@@ -341,7 +331,7 @@ export class GameEngine {
   /** the mission bots at the wheel (see MissionBotDriver) */
   private botDriver = new MissionBotDriver(this.ctx);
   /** bank jobs, hijacks and the police after us (see Heist) */
-  private crime = new Heist(this.ctx);
+  crime = new Heist(this.ctx);
   /** the Howler's and the Batmobile's cable (see Hauler) */
   hauler = new Hauler(this.ctx);
   /** us on the map (M): a dot with an arrow along our heading */
@@ -453,20 +443,12 @@ export class GameEngine {
   }
   private carry: PlayerCarry | null = null;
   get money() { return this.playerMoney; }
-  private pickups = new Map<string, ActivePickup>();
-  /**
-   * Road coins taken: where (null: from the save, place unknown). They come back once we are
-   * COIN_RESPAWN_M away — so driving the roads keeps paying, without farming a spot.
-   */
-  private collectedPickups = new Map<string, Position | null>();
   /** where the run (re)started: saved coins without a place come back once we leave it */
-  private collectedFrom: Position | null = null;
+  collectedFrom: Position | null = null;
   /** true once the run's purse/coins/hp are in place — before that a snapshot would wipe the save */
   private runReady = false;
   /** the run's purse/coins/hp have been applied (see runReady) */
   get runStarted() { return this.runReady; }
-  private pickupFocus: [number, number] | null = null;
-  private pickupNetworkRevision = -1;
   playerMoney = 0;
   get booted() { return this.mapShown; }
   private aimingFire = false;
@@ -570,7 +552,7 @@ export class GameEngine {
     // a felled tree now and then drops a coin
     this.map.on('topple', (event) => {
       const point = event.point as [number, number] | undefined;
-      if (point && this.driving && Math.random() < 0.3) this.dropCoins(point, 1);
+      if (point && this.driving && Math.random() < 0.3) this.coins.dropCoins(point, 1);
     });
     // key T cycles the time of day in our world; tell the player which one
     // Shift+T: the season (trees), also only for this player
@@ -612,13 +594,13 @@ export class GameEngine {
         this.provoke(id);
         this.sharedTraffic.ourHit(id);
       };
-      this.combatLayer.onTrainCoin = (point, altitude) => this.trainCoin(point, altitude);
-      this.combatLayer.onShotCoins = (from, fromAlt, to, toAlt) => this.shotCollectCoins(from, fromAlt, to, toAlt);
+      this.combatLayer.onTrainCoin = (point, altitude) => this.coins.trainCoin(point, altitude);
+      this.combatLayer.onShotCoins = (from, fromAlt, to, toAlt) => this.coins.shotCollectCoins(from, fromAlt, to, toAlt);
       this.combatLayer.onFireWindowOut = (left) => this.jobs.onFireWindowOut(left);
       this.combatLayer.onShot = (kind) => this.audio.shot(kind);
       this.combatLayer.onTargetDestroyed = (id, position, reward = true) => {
         this.audio.explosion(position);
-        if (reward) this.dropCoins(position);
+        if (reward) this.coins.dropCoins(position);
         // a wrecked police car is simply out of the chase (no reinforcements out of nowhere)
       };
       this.map.addLayer(this.combatLayer);
@@ -873,7 +855,7 @@ export class GameEngine {
       get map() { return game.map; },
       get combatLayer() { return game.combatLayer; },
       get aimScreen() { return game.aimScreen; },
-      get pickups() { return game.pickups; },
+      get pickups() { return game.coins.pickups; },
       get trainTraffic() { return game.trainTraffic; },
       get sharedTraffic() { return game.sharedTraffic; },
       get trafficBots() { return game.trafficBots; },
@@ -900,8 +882,8 @@ export class GameEngine {
       get water() { return game.water; },
       get mapLoaded() { return game.mapLoaded; },
       get trafficNetwork() { return game.trafficNetwork; },
-      nextDropId: () => game.dropSerial++,
-      refreshPickups: () => game.combatLayer?.setPickups(game.pickupVisuals()),
+      nextDropId: () => game.coins.dropSerial++,
+      refreshPickups: () => game.combatLayer?.setPickups(game.coins.pickupVisuals()),
       botsChanged: () => { game.ensureTrafficMarkers(); game.combatLayer?.setTargets(game.targetVehicles()); },
       forgetContacts: () => game.vehicleContactTimes.clear(),
       hideEventBeacons: () => game.hideEventBeacons(),
@@ -1142,17 +1124,17 @@ export class GameEngine {
     this.race.goal = null;
     this.wins.clear();
     this.clearEventBots();
-    this.pickups.clear();
+    this.coins.pickups.clear();
     this.combatLayer?.setPickups([]);
-    this.pickupFocus = null;
-    this.pickupNetworkRevision = -1;
+    this.coins.pickupFocus = null;
+    this.coins.pickupNetworkRevision = -1;
     // Purse / garage / collected only once per run. Spawn click / road retarget used to
     // call this again with carry already spent → STARTING_CASH and wiped progress on save.
     if (!this.runReady) {
       const carry = this.carry;
       const resumeHp = carry?.at?.hp;
       this.playerHp = resumeHp != null ? Math.max(1, Math.min(this.playerMaxHp, resumeHp)) : this.playerMaxHp;
-      this.collectedPickups = new Map((carry?.collected?.filter((id) => typeof id === 'string') ?? []).map((id) => [id, null] as [string, Position | null]));
+      this.coins.collectedPickups = new Map((carry?.collected?.filter((id) => typeof id === 'string') ?? []).map((id) => [id, null] as [string, Position | null]));
       this.collectedFrom = carry?.at?.position ? [...carry.at.position] as Position : null;
       // Intro: empty garage + STARTING_CASH (prod). GIFT_CARS only in next.devs.
       // The menu car is bought when setDriving(true) — not on boot spawn.
@@ -1179,14 +1161,14 @@ export class GameEngine {
     this.ensureTrafficMarkers();
     this.combatLayer?.setTargets([]);
     this.combatLayer?.setRaceFinish(null);
-    this.syncRoadPickups();
+    this.coins.syncRoadPickups();
     this.onEventOffer(null);
   }
 
   /** Snapshot for localStorage so a refresh lands back mid-drive. */
   snapshot(place: { name: string; country: string; coords: [number, number] }): GameSave | null {
     if (!this.runReady) return null;
-    const collected = [...this.collectedPickups.keys()];
+    const collected = [...this.coins.collectedPickups.keys()];
     // keep the newest ids if the list grows huge (localStorage quota)
     if (collected.length > 4000) collected.splice(0, collected.length - 4000);
     return {
@@ -1250,10 +1232,10 @@ export class GameEngine {
     this.runReady = false;
     this.playerMoney = 0;
     this.carry = null;
-    this.collectedPickups.clear();
+    this.coins.collectedPickups.clear();
     this.shops.loanDebt = 0;
     this.garage.clear();
-    this.pickups.clear();
+    this.coins.pickups.clear();
     this.combatLayer?.setPickups([]);
     this.fuel.level = this.fuel.spec.tank;
     this.onSpawnSet(null);
@@ -2221,51 +2203,6 @@ export class GameEngine {
     this.healthMeters.update(this.meterTargets(), (p) => this.map.project(p), canvas.clientWidth, canvas.clientHeight, refill);
   }
 
-  private syncRoadPickups() {
-    const position = this.vehicle.position;
-    if (this.pickupNetworkRevision === this.trafficNetwork.revision
-      && this.pickupFocus
-      && metersBetween(this.pickupFocus, position) < 120) return;
-
-    for (const [id, pickup] of this.pickups) {
-      if (metersBetween(position, pickup.position) <= 800) continue;
-      this.pickups.delete(id);
-    }
-    // taken coins come back once we are well away (saved ones: once we leave the start)
-    const leftStart = !this.collectedFrom || metersBetween(position, this.collectedFrom) > COIN_RESPAWN_M;
-    for (const [id, at] of this.collectedPickups) {
-      if (at ? metersBetween(position, at) > COIN_RESPAWN_M : leftStart) this.collectedPickups.delete(id);
-    }
-
-    // spinning coins on the road — money only, no coloured score orbs
-    for (const spot of this.trafficNetwork.pickupLocations(position, 650, 110, COIN_SPACING_M)) {
-      const id = `coin:${spot.id}`;
-      if (this.pickups.has(id) || this.collectedPickups.has(id)) continue;
-      this.pickups.set(id, { position: spot.position, color: '#f2c230', kind: 'coin' });
-    }
-    this.pickupFocus = [...position];
-    this.pickupNetworkRevision = this.trafficNetwork.revision;
-    this.combatLayer?.setPickups(this.pickupVisuals());
-  }
-
-  private pickupVisuals(): PickupVisual[] {
-    const boxes = this.errand?.kind === 'collect' ? this.errand.boxes : [];
-    return [
-      ...[...this.pickups].map(([id, pickup]) => ({
-        id,
-        position: pickup.position,
-        color: pickup.color,
-        kind: pickup.kind,
-        drop: pickup.drop,
-      })),
-      ...boxes.map((box) => ({ id: `errand-${box.id}`, position: box.position, color: ERRAND_BEACONS.collect.pole, kind: 'box' as const })),
-    ];
-  }
-
-  private dropSerial = 0;
-  private wallCoinsAt = 0;
-  private trainCoinAt = 0;
-
   /** Train cars near `around` as flat capsules in metres east/north of it, with their ground height. */
   private trainBoxes(around: [number, number], reach: number) {
     const kx = METERS_PER_DEGREE * Math.cos(around[1] * Math.PI / 180), ky = METERS_PER_DEGREE;
@@ -2300,60 +2237,6 @@ export class GameEngine {
       }
     }
     return null;
-  }
-
-  /**
-   * A shot takes the coins and cash it passes (within a metre). Road coins stay gone after a reload.
-   */
-  private shotCollectCoins(from: Position, fromAlt: number, to: Position, toAlt: number) {
-    const reach = 1;
-    const kx = METERS_PER_DEGREE * Math.cos(from[1] * Math.PI / 180), ky = METERS_PER_DEGREE;
-    const ex = (to[0] - from[0]) * kx, ey = (to[1] - from[1]) * ky, eu = toAlt - fromAlt;
-    const len = Math.hypot(ex, ey, eu);
-    if (len < 0.5) return;
-    const ux = ex / len, uy = ey / len, uu = eu / len;
-    const now = performance.now();
-    let money = 0;
-    for (const [id, pickup] of this.pickups) {
-      if (pickup.kind !== 'coin' && pickup.kind !== 'cash') continue;
-      if (pickup.drop && now < pickup.drop.at + DROP_MS) continue;
-      const dx = (pickup.position[0] - from[0]) * kx;
-      const dy = (pickup.position[1] - from[1]) * ky;
-      const ground = this.map.groundAt(pickup.position) ?? fromAlt;
-      const du = ground + 1 - fromAlt;
-      const t = Math.max(0, Math.min(len, dx * ux + dy * uy + du * uu));
-      if (Math.hypot(ux * t - dx, uy * t - dy, uu * t - du) > reach) continue;
-      this.pickups.delete(id);
-      if (!pickup.drop) this.collectedPickups.set(id, [...pickup.position] as Position);
-      this.audio.coin();
-      this.combatLayer?.popPickup(id);
-      if (pickup.kind === 'cash') {
-        money += CASH_BUNDLE;
-        if (this.crime.heist) this.crime.heist.cash += CASH_BUNDLE;
-      } else money += 10;
-    }
-    if (!money) return;
-    this.playerMoney += money;
-    this.combatLayer?.setPickups(this.pickupVisuals());
-  }
-
-  /** Shooting a vintage train: a coin pops out where the bullet hit (four a second), endlessly. */
-  private trainCoin(point: [number, number], altitude: number) {
-    const now = performance.now();
-    if (now - this.trainCoinAt < 250) return; // four coins a second at most
-    this.trainCoinAt = now;
-    // it bounces out toward the shooter, away from the rails
-    const me = this.vehicle.position;
-    const kx = METERS_PER_DEGREE * Math.cos(point[1] * Math.PI / 180), ky = METERS_PER_DEGREE;
-    const dx = (me[0] - point[0]) * kx, dy = (me[1] - point[1]) * ky, d = Math.hypot(dx, dy) || 1;
-    const spread = (Math.random() - 0.5) * 1.2;
-    const r = Math.min(d * 0.8, 2.2 + Math.random() * 1.8);
-    const ux = dx / d, uy = dy / d;
-    const rest = offsetPosition(point, (ux - uy * spread) * r, (uy + ux * spread) * r) as [number, number];
-    // it leaves from where the bullet struck, up on the car's side
-    const up = Math.max(0, altitude - (this.map.groundAt(point) ?? altitude));
-    this.pickups.set(`drop:${this.dropSerial++}`, { position: rest, color: '#f2c230', kind: 'coin', drop: { from: [...point] as [number, number], at: now, up } });
-    this.combatLayer?.setPickups(this.pickupVisuals());
   }
 
   /** Trains don't give way: a car touching one is pushed back out beside it and loses its speed. */
@@ -2391,75 +2274,6 @@ export class GameEngine {
   }
 
   /** Coins fly out (ten from a wreck, one from a tree) and roll a couple of metres before they lie still. */
-  /**
-   * Coins jumping out of a wall we hit hard, the way bundles fly out of a bank's door:
-   * from the wall at the bumper they bounce out 1.5–4.5 m, anywhere on our side of it.
-   */
-  private wallCoins(at: [number, number], heading: number, count = 3) {
-    const now = performance.now();
-    const nose = this.car.length * 0.55;
-    const wall = offsetPosition(at, Math.sin(heading) * nose, Math.cos(heading) * nose) as [number, number];
-    for (let i = 0; i < count; i++) {
-      // away from the wall: the half-circle behind the bumper
-      const angle = heading + Math.PI + (Math.random() - 0.5) * Math.PI;
-      let r = 1.5 + Math.random() * 3;
-      let rest = offsetPosition(wall, Math.sin(angle) * r, Math.cos(angle) * r) as [number, number];
-      while (r > 0.6 && this.collisions.sightBlocked(wall, rest)) {
-        r *= 0.5;
-        rest = offsetPosition(wall, Math.sin(angle) * r, Math.cos(angle) * r) as [number, number];
-      }
-      this.pickups.set(`drop:${this.dropSerial++}`, { position: rest, color: '#f2c230', kind: 'coin', drop: { from: wall, at: now } });
-    }
-    this.combatLayer?.setPickups(this.pickupVisuals());
-  }
-
-  private dropCoins(at: [number, number], count = 10) {
-    const now = performance.now();
-    for (let i = 0; i < count; i++) {
-      const angle = (i / count) * Math.PI * 2 + Math.random() * 0.5;
-      let r = (count > 1 ? 0.9 : 0.6) + Math.random() * 2.1;
-      let rest = offsetPosition(at, Math.sin(angle) * r, Math.cos(angle) * r) as [number, number];
-      // not into a house: pull it back toward the wreck
-      while (r > 0.4 && this.collisions.sightBlocked(at, rest)) {
-        r *= 0.5;
-        rest = offsetPosition(at, Math.sin(angle) * r, Math.cos(angle) * r) as [number, number];
-      }
-      this.pickups.set(`drop:${this.dropSerial++}`, { position: rest, color: '#f2c230', kind: 'coin', drop: { from: [...at] as [number, number], at: now } });
-    }
-    this.combatLayer?.setPickups(this.pickupVisuals());
-  }
-
-  private collectRoadPickups() {
-    const collect = (position: [number, number], player = false) => {
-      let money = 0;
-      const now = performance.now();
-      for (const [id, pickup] of this.pickups) {
-        if (pickup.drop && now < pickup.drop.at + DROP_MS) continue; // still in the air
-        if (pickup.kind === 'cash' && !player) continue;             // bank money is ours to grab
-        if (metersBetween(position, pickup.position) > (pickup.kind === 'cash' ? 4.5 : 3.5)) continue;
-        this.pickups.delete(id);
-        if (!pickup.drop) this.collectedPickups.set(id, [...pickup.position] as Position); // gone until we drive away
-        // the coin hops up and falls as it is taken; we hear our own pickups
-        this.combatLayer?.popPickup(id);
-        if (player) this.audio.coin();
-        if (pickup.kind === 'cash') {
-          money += CASH_BUNDLE;
-          if (this.crime.heist) this.crime.heist.cash += CASH_BUNDLE;
-          this.say(t('heist.cash', { n: formatNumber(CASH_BUNDLE) }), true);
-        } else money += 10;
-      }
-      return money;
-    };
-    const playerMoney = collect(this.vehicle.position, true);
-    this.playerMoney += playerMoney;
-    let totalMoney = playerMoney;
-    for (const bot of this.trafficBots) {
-      const money = collect(bot.position);
-      bot.money += money;
-      totalMoney += money;
-    }
-    if (totalMoney) this.combatLayer?.setPickups(this.pickupVisuals());
-  }
 
   /** Send a chat line to everybody. */
   chat(text: string) { this.players.say(text); }
@@ -2617,7 +2431,7 @@ export class GameEngine {
     }
     this.syncMissionVisuals(true);
     this.syncErrandMarkers();
-    this.combatLayer?.setPickups(this.pickupVisuals());
+    this.combatLayer?.setPickups(this.coins.pickupVisuals());
   }
 
   /** Every frame on an errand: arrived at the address, or drove over a box. */
@@ -2641,7 +2455,7 @@ export class GameEngine {
     this.say(t('collect.got', { n, total: errand.total }), true);
     this.syncMissionVisuals(true);
     this.syncErrandMarkers();
-    this.combatLayer?.setPickups(this.pickupVisuals());
+    this.combatLayer?.setPickups(this.coins.pickupVisuals());
   }
 
   private finishErrand(reward: number, text: string, result: EventResult) {
@@ -2659,7 +2473,7 @@ export class GameEngine {
     this.errand = null;
     this.offeredDelivery = null;
     this.syncErrandMarkers();
-    this.combatLayer?.setPickups(this.pickupVisuals());
+    this.combatLayer?.setPickups(this.coins.pickupVisuals());
   }
 
   /** Map labels + matching offscreen tips: the address, or one identical tip per box. */
@@ -3927,7 +3741,7 @@ export class GameEngine {
         yield null;
         this.trafficNetwork.flushRebuild();
         yield null;
-        this.syncRoadPickups();
+        this.coins.syncRoadPickups();
         this.cachedLanduse = this.readSourceLayer('landuse');
         this.collectStations();
         this.paintFuelStations();
@@ -3945,7 +3759,7 @@ export class GameEngine {
         this.rails.prune(focus, 6000);
         yield null;
         if (this.trafficNetwork.flushRebuild()) {
-          this.syncRoadPickups();
+          this.coins.syncRoadPickups();
           yield null;
         }
         this.paintFuelStations();
@@ -3955,7 +3769,7 @@ export class GameEngine {
       }
       // else: collisionDirty only (buildings) — collectWorldThree already refreshed solids
     } else if (this.trafficNetwork.flushRebuild()) {
-      this.syncRoadPickups();
+      this.coins.syncRoadPickups();
       yield null;
     }
 
@@ -4118,11 +3932,11 @@ export class GameEngine {
           const fast = Math.abs(this.vehicle.speed) > WALL_COIN_KMH / 3.6;
           if (wallHit > 3) this.audio.crash(wallHit / 30);
           // faster than 100 km/h into a wall (not a graze): three coins jump out of it
-          if (fast && wallHit > WALL_COIN_HIT && now - this.wallCoinsAt > 1500) {
-            this.wallCoinsAt = now;
+          if (fast && wallHit > WALL_COIN_HIT && now - this.coins.wallCoinsAt > 1500) {
+            this.coins.wallCoinsAt = now;
             // the faster, the more: 100 km/h → 3, 150 → 5, 200 → 10
             const kmh = Math.abs(this.vehicle.speed) * 3.6;
-            this.wallCoins(building.position as [number, number], oldHeading, kmh >= 200 ? 10 : kmh >= 150 ? 5 : 3);
+            this.coins.wallCoins(building.position as [number, number], oldHeading, kmh >= 200 ? 10 : kmh >= 150 ? 5 : 3);
           }
           if (building.stopped) {
             this.vehicle.position = building.position;
@@ -4161,7 +3975,7 @@ export class GameEngine {
         }
         this.resolveVehicleContacts(now);
         this.players.bump(now);
-        this.collectRoadPickups();
+        this.coins.collectRoadPickups();
         this.accumulator -= 1 / 60;
       }
       if (this.trafficBots.length) this.combatLayer?.updateTargets(this.targetVehicles());
@@ -4283,7 +4097,7 @@ export class GameEngine {
       }
     }
     this.soundFrame(now);
-    this.updateFieldCoins(now);
+    this.coins.updateFieldCoins(now);
     if (now - this.hudTime > 100) {
       this.hudTime = now;
       if (!this.approachFrom) this.saveCamera(now);
@@ -4307,94 +4121,13 @@ export class GameEngine {
     }
   };
 
-  /**
-   * Coin grids on big open fields: every 1 km cell of the world has one candidate spot,
-   * size and turn (the same for everybody); when we come within 700 m it is checked once —
-   * no houses, water or roads over the grid and a margin round it — and if clear, its coins
-   * are laid in rows 3 m apart. Taken coins come back like road coins (1.5 km away).
-   */
-  private updateFieldCoins(now: number) {
-    if (now - this.fieldAt < 1500 || !this.driving || this.mode !== 'roam') return;
-    this.fieldAt = now;
-    const here = this.vehicle.position as [number, number];
-    const kx = 111_319.49 * Math.cos(here[1] * Math.PI / 180), ky = 111_319.49;
-    const cx = Math.floor(here[0] * kx / FIELD_CELL_M), cy = Math.floor(here[1] * ky / FIELD_CELL_M);
-    const hash = (a: number, b: number, salt: number) => {
-      let h = (Math.imul(a, 73856093) ^ Math.imul(b, 19349663) ^ Math.imul(salt, 83492791)) >>> 0;
-      h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0;
-      return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
-    };
-    let added = false;
-    for (let dx = -1; dx <= 1; dx++) {
-      for (let dy = -1; dy <= 1; dy++) {
-        const gx = cx + dx, gy = cy + dy;
-        const key = `${gx}:${gy}`;
-        const center: [number, number] = [
-          (gx + 0.15 + hash(gx, gy, 1) * 0.7) * FIELD_CELL_M / kx,
-          (gy + 0.15 + hash(gx, gy, 2) * 0.7) * FIELD_CELL_M / ky,
-        ];
-        if (metersBetween(here, center) > 700) continue;
-        let spots = this.fieldCells.get(key);
-        if (spots === undefined) {
-          // ground or water not in yet: look again later. A tile whose water is still
-          // waiting to be read would pass the open sea off as a field.
-          if (this.map.groundAt(center) == null || this.pendingIngest.size > 0 || !this.water.near(here, 200)) continue;
-          const [cols, rows] = FIELD_GRIDS[Math.floor(hash(gx, gy, 3) * FIELD_GRIDS.length)];
-          const turn = hash(gx, gy, 4) * Math.PI;
-          spots = this.layFieldGrid(center, cols, rows, turn);
-          this.fieldCells.set(key, spots);
-        }
-        if (!spots) continue;
-        spots.forEach((at, i) => {
-          const id = `field:${key}:${i}`;
-          if (this.pickups.has(id) || this.collectedPickups.has(id) || metersBetween(here, at) > 800) return;
-          // and each coin once more, against the water as it stands now: never on the sea
-          if (this.water.inSea(at, this.cachedWater)) return;
-          this.pickups.set(id, { position: at, color: '#f2c230', kind: 'coin' });
-          added = true;
-        });
-      }
-    }
-    if (added) this.combatLayer?.setPickups(this.pickupVisuals());
-  }
-
-  /** The grid's coin spots if the field is clear (houses, water, roads), else null. */
-  private layFieldGrid(center: [number, number], cols: number, rows: number, turn: number): [number, number][] | null {
-    const width = (cols - 1) * FIELD_STEP_M, depth = (rows - 1) * FIELD_STEP_M;
-    const ux = [Math.cos(turn), -Math.sin(turn)], uy = [Math.sin(turn), Math.cos(turn)];
-    const at = (u: number, v: number) => offsetPosition(center, ux[0] * u + uy[0] * v, ux[1] * u + uy[1] * v) as [number, number];
-    // the area with a margin, sampled every ~6 m — against the houses round the grid itself
-    // (our collision set only reaches 260 m round the car) and the water (900 m)
-    const margin = 10;
-    const none = new Set<string>();
-    const houses = new BuildingCollisions();
-    houses.update(center, this.map.world.buildingsNear(center, Math.hypot(width, depth) / 2 + margin + 20, this.map.exaggeration));
-    for (let u = -width / 2 - margin; u <= width / 2 + margin; u += 6) {
-      for (let v = -depth / 2 - margin; v <= depth / 2 + margin; v += 6) {
-        const p = at(u, v);
-        if (houses.blocked(p, p, turn) || this.water.covers(p, true)) return null;
-      }
-    }
-    // no road through or right beside it (a field, not a car park or a junction)
-    for (let u = -width / 2; u <= width / 2 + 0.1; u += 9) {
-      for (let v = -depth / 2; v <= depth / 2 + 0.1; v += 9) {
-        if (this.trafficNetwork.nearest(at(u, v), none, 0, 14)) return null;
-      }
-    }
-    const out: [number, number][] = [];
-    for (let i = 0; i < cols; i++) {
-      for (let j = 0; j < rows; j++) out.push(at(-width / 2 + i * FIELD_STEP_M, -depth / 2 + j * FIELD_STEP_M));
-    }
-    return out;
-  }
-
   /** The scene as heard this frame: our car, the street, sirens, engines and trains around. */
   private soundFrame(now: number) {
     const velocityOf = (speed: number, heading: number): [number, number] => [Math.sin(heading) * speed, Math.cos(heading) * speed];
-    if (now - this.urbanAt > 2000) {
-      this.urbanAt = now;
+    if (now - this.coins.urbanAt > 2000) {
+      this.coins.urbanAt = now;
       // houses in the collision reach around us: a crowded street hums, a field is quiet
-      this.urbanLevel = Math.min(1, this.collisions.polygons.length / 400);
+      this.coins.urbanLevel = Math.min(1, this.collisions.polygons.length / 400);
     }
     const alive = (id: string) => this.combatLayer?.isTargetAlive(id) !== false;
     const police = this.crime.heist
@@ -4438,7 +4171,7 @@ export class GameEngine {
       velocity: velocityOf(this.vehicle.speed, travel),
       ear: this.map.cameraRange(),
       night: this.map.nightLevel(),
-      urban: this.urbanLevel,
+      urban: this.coins.urbanLevel,
       police,
       ownSiren,
       engines,
@@ -4468,7 +4201,7 @@ export class GameEngine {
     this.travel.clearMarkers();
     for (const marker of this.serviceMarkers.values()) marker.remove();
     this.serviceMarkers.clear();
-    this.pickups.clear();
+    this.coins.pickups.clear();
     this.combatLayer?.setPickups([]);
     this.trafficMarkerLayer?.remove();
     this.trafficMarkers.clear();
