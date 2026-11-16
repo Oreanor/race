@@ -138,7 +138,7 @@ const GROUND_FRAGMENT = /* glsl */ `
     float lum = dot(vColor, vec3(0.2126, 0.7152, 0.0722));
     float sandy = warm * smoothstep(0.7, 0.74, lum);
     vec4 grain = groundGrain(vWorld);
-    float detail = 1.0 + grain.r * greenish * 0.6 + grain.g * sandy * 0.5 + grain.b * (warm - sandy) * 0.55;
+    float detail = 1.0 + grain.r * greenish * (grain.r > 0.0 ? 0.3 : 0.6) + grain.g * sandy * 0.5 + grain.b * (warm - sandy) * 0.55;
     vec3 albedo = mix(vColor * mix(1.0, tone, greenish) * detail, snow, uSeason.w * uSnow * greenish);
     // sky light plus sunlight on the slope (hillshade comes from the real sun)
     vec3 light = uAmbient * 0.9 + uSunColor * 0.55 * max(dot(n, uSun), 0.0) * cloudSun(vWorld) + (headlight(vWorld, n) + lampLight()) * 0.91;

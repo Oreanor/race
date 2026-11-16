@@ -40,10 +40,10 @@ export type GroundData = {
 };
 export type GroundHeights = Pick<GroundData, 'heights' | 'driveHeights' | 'waterLevel'>;
 
-const BACKGROUND = '#b1d59b';
+const BACKGROUND = '#93c272';
 const BANK = '#cdc4ad';
-const GREEN = '#b1d59b';
-const WOOD = '#7fb27f';
+const GREEN = '#93c272';
+const WOOD = '#68a25e';
 
 function hex(c: string): Rgb {
   const v = Number.parseInt(c.slice(1), 16);
@@ -57,7 +57,7 @@ export function landColor(layer: string, cls: string, sub: string): string | nul
     if (cls === 'sand') return '#efe3c2';
     if (cls === 'rock') return '#d6d2c8';
     if (cls === 'ice') return '#f3f6f6';
-    if (cls === 'wetland') return '#a9cfa6';
+    if (cls === 'wetland') return '#8dbf88';
     return GREEN;
   }
   if (/park|grass|cemetery|pitch|playground|garden/.test(cls) || /park|garden/.test(sub)) return GREEN;

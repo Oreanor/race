@@ -213,7 +213,7 @@ export class ThreeMap {
     this.canvas.style.touchAction = 'none';
     // a light grade over the whole picture (world, sky, cars): richer colour, a touch more
     // contrast. Done by the compositor, so it costs next to nothing
-    this.canvas.style.filter = 'saturate(1.12) contrast(1.06)';
+    this.canvas.style.filter = 'saturate(1.2) contrast(1.06)';
     this.container.appendChild(this.canvas);
     this.markerLayer = document.createElement('div');
     this.markerLayer.style.cssText = 'position:absolute;inset:0;overflow:hidden;pointer-events:none;z-index:2';
@@ -1295,7 +1295,7 @@ export class ThreeMap {
       this.renderer.setClearColor(new THREE.Color().setRGB(l.sky.r, l.sky.g, l.sky.b, THREE.SRGBColorSpace));
       // colour grade by the time of day, done by the compositor (costs nothing): warmer and
       // punchier at sunset, cooler and brighter at dawn, a little greyer at night
-      const grade = `saturate(${(1.12 + 0.12 * l.warm - 0.18 * l.night).toFixed(3)}) contrast(${(1.06 + 0.05 * l.warm + 0.03 * l.night).toFixed(3)}) sepia(${(0.12 * l.warm).toFixed(3)}) hue-rotate(${(-6 * l.cool).toFixed(1)}deg) brightness(${(1 + 0.03 * l.cool).toFixed(3)})`;
+      const grade = `saturate(${(1.2 + 0.12 * l.warm - 0.18 * l.night).toFixed(3)}) contrast(${(1.06 + 0.05 * l.warm + 0.03 * l.night).toFixed(3)}) sepia(${(0.12 * l.warm).toFixed(3)}) hue-rotate(${(-6 * l.cool).toFixed(1)}deg) brightness(${(1 + 0.03 * l.cool).toFixed(3)})`;
       if (this.canvas.style.filter !== grade) this.canvas.style.filter = grade;
     }
     const eyeScene = new THREE.Vector3((eye.x - this.origin.x01) / perMeter, eye.z / perMeter, (eye.y - this.origin.y01) / perMeter);
