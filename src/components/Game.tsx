@@ -522,7 +522,7 @@ export default function Game() {
           setApproaching(live.approaching);
         }
       };
-      game.onTravelOffer = (offer) => setTravelOffer(offer);
+      game.travel.onOffer = (offer) => setTravelOffer(offer);
       game.shops.onServiceOffer = (offer) => setServiceOffer(offer);
       game.shops.onBankOffer = (offer) => setBankOffer(offer);
       game.dealer.onOffer = (offer) => setDealerOffer(offer);
@@ -1134,10 +1134,10 @@ export default function Game() {
         <TravelDialog
           offer={travelOffer}
           current={place}
-          onStay={() => engine.current?.declineTravel()}
+          onStay={() => engine.current?.travel.decline()}
           onBuy={(city) => {
             const kind = travelOffer.kind;
-            const carry = engine.current?.buyTicket(city.coords);
+            const carry = engine.current?.travel.buyTicket(city.coords);
             if (!carry) return;
             cityHopRef.current = true;
             carryRef.current = carry;

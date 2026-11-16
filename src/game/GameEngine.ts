@@ -80,9 +80,10 @@ import { MissionBotDriver, type BotDriverHost } from './traffic/MissionBots.ts';
 import { Shops, type ShopsHost } from './economy/Shops.ts';
 import { Dealership, type DealershipHost } from './economy/Dealership.ts';
 import { Ramp, type RampHost } from './Ramp.ts';
+import { TravelDesk, type TravelHost } from './economy/TravelDesk.ts';
 import { Nitro } from './Nitro.ts';
 import { JobPin, makeMapLabel, makeOffscreenIndicator, newMarker, paintMissionIndicator, setPinRange, type MapMarker } from './hud/mapPins.ts';
-import { hubAt, hubsFromFeatures, kilometres, nearestHub, ticketPrice, type Hub, type HubKind } from './Travel.ts';
+import { hubsFromFeatures, kilometres, nearestHub } from './Travel.ts';
 import { bearingTo, BOUNTY_RANGE_KM, loadBounty, makeBounty, saveBounty, type Bounty } from './Bounty.ts';
 import type { GameSave } from './save.ts';
 import { BOX_REACH_M, COLLECT_BOXES, COLLECT_REWARD, deliveryReward, DELIVERY_MAX_M, DELIVERY_MIN_M, DELIVERY_REACH_M, randomItem, scatterBoxes, type DeliveryItem, type Errand } from './Errands.ts';
@@ -96,7 +97,6 @@ import type {
   PlayerCarry,
   RideOffer as RideOfferType,
   Settings,
-  TravelOffer,
 } from './offers.ts';
 import {
   ARENA_FEE,
@@ -359,6 +359,8 @@ export class GameEngine {
   };
   /** the nitro bar under the speedometer */
   private nitro = new Nitro();
+  /** ports, airports and railway stations: a ticket to any city (see TravelDesk) */
+  readonly travel = new TravelDesk(this.travelHost());
   /** J: the ramp we put down (see Ramp) */
   private rampTool = new Ramp(this.rampHost());
   /** the car dealership and the garage swap (see Dealership) */
@@ -422,9 +424,6 @@ export class GameEngine {
   private mapLabelsAtPos: [number, number] | null = null;
   private fuelOut = false;
   private refuelling = false;
-  /** ports, airports and railway stations: reaching one offers a ticket to any city */
-  onTravelOffer: (offer: TravelOffer | null) => void = () => {};
-  private hubs = new Map<string, Hub>();
   /** after a purchase: React keeps the menu car index in sync */
   onCarBought: (car: Car) => void = () => {};
   private repairShops = new Map<string, Station>();
@@ -495,9 +494,6 @@ export class GameEngine {
       this.map.setStreamCalm(true);
     }
   }
-  private hubMarkers = new Map<string, MapMarker>();
-  private offeredHub: string | null = null;
-  private travelOpen = false;
   private carry: PlayerCarry | null = null;
   get money() { return this.playerMoney; }
   private pickups = new Map<string, ActivePickup>();
@@ -895,6 +891,25 @@ export class GameEngine {
     this.nitro.tick(dt, this.keys.has('Space'), !this.fuel.empty);
   }
 
+  /** The ticket desk's window on the game. */
+  private travelHost(): TravelHost {
+    const game = this;
+    return {
+      get runReady() { return game.runReady; },
+      get driving() { return game.driving; },
+      get mode() { return game.mode; },
+      get fuelOut() { return game.fuelOut; },
+      get vehicle() { return game.vehicle; },
+      get keys() { return game.keys; },
+      get map() { return game.map; },
+      mapViewOpen: () => game.mapViewOpen(),
+      labelOn: (kind) => game.mapLabelOn(kind),
+      get playerMoney() { return game.playerMoney; },
+      set playerMoney(money) { game.playerMoney = money; },
+      carry: () => ({ money: game.playerMoney, fuel: game.fuel.ratio, loan: game.shops.loanDebt, garage: [...game.garage] }),
+    };
+  }
+
   /** The ramp's window on the game. */
   private rampHost(): RampHost {
     const game = this;
@@ -912,7 +927,7 @@ export class GameEngine {
 
   /** Some dialog is up (an event offer, a ticket, a counter, the showroom, an empty tank). */
   private dialogOpen() {
-    return Boolean(this.eventOffer || this.travelOpen || this.shops.serviceOpen || this.dealer.open || this.fuelOut);
+    return Boolean(this.eventOffer || this.travel.open || this.shops.serviceOpen || this.dealer.open || this.fuelOut);
   }
 
   /** The showroom's window on the game. */
@@ -923,7 +938,7 @@ export class GameEngine {
       get driving() { return game.driving; },
       get paused() { return game.paused; },
       get mode() { return game.mode; },
-      counterOpen: () => Boolean(game.shops.serviceOpen || game.travelOpen || game.fuelOut),
+      counterOpen: () => Boolean(game.shops.serviceOpen || game.travel.open || game.fuelOut),
       get dealerships() { return game.dealerships; },
       get vehicle() { return game.vehicle; },
       get keys() { return game.keys; },
@@ -1123,7 +1138,7 @@ export class GameEngine {
   setMapLabelFilters(filters: MapLabelFilters) {
     this.mapLabelFilters = { ...filters };
     this.labelServices();
-    this.refreshHubMarkers();
+    this.travel.refreshMarkers();
   }
 
   private mapLabelOn(kind: MapLabelKind) {
@@ -3031,9 +3046,8 @@ export class GameEngine {
     for (const marker of this.serviceMarkers.values()) marker.remove();
     this.serviceMarkers.clear();
     this.labelServices();
-    for (const marker of this.hubMarkers.values()) marker.remove();
-    this.hubMarkers.clear();
-    this.collectHubs([]);
+    this.travel.clearMarkers();
+    this.travel.refreshMarkers();
     for (const mission of this.missions) mission.label = t(`mission.${mission.kind}`, { n: mission.n });
     for (const marker of this.errandMarkers.values()) marker.remove();
     this.errandMarkers.clear();
@@ -3285,7 +3299,7 @@ export class GameEngine {
         this.bountyPickup
         && !this.bountyOfferShown
         && !this.eventOffer
-        && !this.travelOpen
+        && !this.travel.open
         && !this.shops.serviceOpen
         && !this.dealer.open
         && !this.fuelOut
@@ -4147,7 +4161,7 @@ export class GameEngine {
       this.mapLabelsAtPos = null;
     }
     this.labelServices();
-    this.refreshHubMarkers();
+    this.travel.refreshMarkers();
   }
 
   private clearMapLabelMarkers() {
@@ -4155,10 +4169,7 @@ export class GameEngine {
       marker.remove();
       this.serviceMarkers.delete(id);
     }
-    for (const [id, marker] of this.hubMarkers) {
-      marker.remove();
-      this.hubMarkers.delete(id);
-    }
+    this.travel.clearMarkers();
   }
 
   /** Real petrol stations from the POI layer; remembered as the player drives on. */
@@ -4302,76 +4313,7 @@ export class GameEngine {
 
   /** Ports, airports and railway stations from real data, with a map label each. */
   private collectHubs(pois: MapFeature[]) {
-    for (const hub of hubsFromFeatures(this.readSourceLayer('aerodrome_label'), pois)) {
-      if (!this.hubs.has(hub.id)) this.hubs.set(hub.id, hub);
-    }
-    this.refreshHubMarkers();
-  }
-
-  private refreshHubMarkers() {
-    if (!this.driving && !this.mapViewOpen()) {
-      for (const [id, marker] of this.hubMarkers) {
-        marker.remove();
-        this.hubMarkers.delete(id);
-      }
-      return;
-    }
-    const c = this.mapViewOpen() ? this.map.getCenter() : null;
-    const here: [number, number] = c ? [c.lng, c.lat] : [...this.vehicle.position];
-    const hubReach = this.mapViewOpen() ? 14000 : 2500;
-    const hubLabel: Record<HubKind, string> = { airport: t('hub.airport'), port: t('hub.port'), station: t('hub.station') };
-    const hubColor: Record<HubKind, { main: string; soft: string }> = {
-      airport: { main: '#9bb56a', soft: '#d4e878' },
-      port: { main: '#2a7f9e', soft: '#6ab8d0' },
-      station: { main: '#8a5a2b', soft: '#c49a60' },
-    };
-    for (const hub of this.hubs.values()) {
-      // M map: wide; driving: nearby hubs only so the street stays readable
-      const near = metersBetween(hub.position, here) < hubReach;
-      const show = near && this.mapLabelOn(hub.kind);
-      const marker = this.hubMarkers.get(hub.id);
-      if (show && !marker) {
-        const text = hubLabel[hub.kind];
-        this.hubMarkers.set(hub.id, newMarker({
-          element: makeMapLabel(`hub-map-marker is-${hub.kind}`, text, text, hubColor[hub.kind]),
-          anchor: 'bottom',
-        }).setLngLat(hub.position).addTo(this.map));
-      } else if (!show && marker) {
-        marker.remove();
-        this.hubMarkers.delete(hub.id);
-      }
-    }
-  }
-
-  /** Arriving at a hub offers a ticket once; leaving its area re-arms the offer. */
-  private updateTravel() {
-    if (!this.runReady || this.mode !== 'roam' || this.travelOpen || this.fuelOut) return;
-    const hub = hubAt(this.vehicle.position, [...this.hubs.values()]);
-    if (!hub) { this.offeredHub = null; return; }
-    if (hub.id === this.offeredHub || Math.abs(this.vehicle.speed) > 6) return;
-    this.offeredHub = hub.id;
-    this.travelOpen = true;
-    this.keys.clear();
-    this.vehicle.speed = 0;
-    // Local hunts stay in-city — no ticket destination for the bounty.
-    this.onTravelOffer({ kind: hub.kind, from: [...this.vehicle.position], money: Math.floor(this.playerMoney) });
-  }
-
-  declineTravel() {
-    this.travelOpen = false;
-    this.onTravelOffer(null);
-  }
-
-  /** Pay for the trip. Returns what the player carries to the destination, or null when it is too expensive. */
-  buyTicket(destination: [number, number]): PlayerCarry | null {
-    const hub = this.offeredHub ? this.hubs.get(this.offeredHub) : null;
-    if (!hub) return null;
-    const price = ticketPrice(this.vehicle.position, destination, hub.kind);
-    if (this.playerMoney < price) return null;
-    this.playerMoney -= price;
-    this.travelOpen = false;
-    this.onTravelOffer(null);
-    return { money: this.playerMoney, fuel: this.fuel.ratio, loan: this.shops.loanDebt, garage: [...this.garage] };
+    this.travel.collect(hubsFromFeatures(this.readSourceLayer('aerodrome_label'), pois));
   }
 
   private updateFuel(_dt: number) {
@@ -4386,7 +4328,7 @@ export class GameEngine {
     const here = station ?? shop ?? dealer ?? bank;
     if (!here) this.offeredService = null;
     // not before the saved run (purse, garage, health) is in: a dialog would show it empty
-    else if (this.runReady && here.id !== this.offeredService && Math.abs(this.vehicle.speed) < 7 && !this.shops.serviceOpen && !this.dealer.open && !this.shops.bankOpen && !this.travelOpen && !this.fuelOut && this.mode === 'roam') {
+    else if (this.runReady && here.id !== this.offeredService && Math.abs(this.vehicle.speed) < 7 && !this.shops.serviceOpen && !this.dealer.open && !this.shops.bankOpen && !this.travel.open && !this.fuelOut && this.mode === 'roam') {
       this.offeredService = here.id;
       if (dealer && here.id === dealer.id) this.dealer.tryOpen();
       else if (bank && here.id === bank.id) this.shops.openBank();
@@ -5038,7 +4980,7 @@ export class GameEngine {
         this.collectStations();
         this.paintFuelStations();
         this.labelServices();
-        this.refreshHubMarkers();
+        this.travel.refreshMarkers();
         this.fullScoopAt = now;
         this.rememberIngested(focus);
         yield null;
@@ -5056,7 +4998,7 @@ export class GameEngine {
         }
         this.paintFuelStations();
         this.labelServices();
-        this.refreshHubMarkers();
+        this.travel.refreshMarkers();
         yield null;
       }
       // else: collisionDirty only (buildings) — collectWorldThree already refreshed solids
@@ -5275,7 +5217,7 @@ export class GameEngine {
       this.crime.hijackHint();
       this.syncExtraTargets(dt, now);
       this.updateFuel(dt);
-      this.updateTravel();
+      this.travel.update();
       if (blocked) this.say(t('hint.building'));
       else if (shore) this.say(t('hint.shore'));
       else if ([t('hint.building'), t('hint.shore')].includes(this.message)) this.say('');
@@ -5396,7 +5338,7 @@ export class GameEngine {
       this.hud(this.vehicle.speed * 3.6, this.vehicle.distance, this.fps, this.hudParticipants());
       if (!this.approachFrom) {
         const near = nearestStation(this.vehicle.position, [...this.stations.values()]);
-        const hub = nearestHub(this.vehicle.position, [...this.hubs.values()]);
+        const hub = nearestHub(this.vehicle.position, [...this.travel.hubs.values()]);
         // only hint the hub when you're close enough that it matters (not from across town)
         const hubHint = hub?.hub.kind === 'airport' ? 800 : hub?.hub.kind === 'station' ? 220 : 120;
         const hubHud = hub && hub.distance < hubHint
@@ -5573,8 +5515,7 @@ export class GameEngine {
     this.combatLayer?.setFireHouse(null);
     this.trafficBots = this.trafficBots.filter((b) => !isAmbulanceWreckId(b.id));
     this.eventIndicatorLayer?.remove();
-    for (const marker of this.hubMarkers.values()) marker.remove();
-    this.hubMarkers.clear();
+    this.travel.clearMarkers();
     for (const marker of this.serviceMarkers.values()) marker.remove();
     this.serviceMarkers.clear();
     this.pickups.clear();
