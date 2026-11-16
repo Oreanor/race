@@ -6683,7 +6683,7 @@ export class GameEngine {
       active: this.driving && !this.paused && !this.approachFrom && !this.plunge,
       revs: this.vehicle.revs,
       speed: this.vehicle.speed,
-      throttle: this.keys.has('KeyW') || this.keys.has('ArrowUp'),
+      throttle: this.keys.has('KeyW'),
       boost: this.keys.has('Space') && !this.fuel.empty,
       slip: this.vehicle.slip,
       litres: this.car.engine,

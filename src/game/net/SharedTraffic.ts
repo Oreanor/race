@@ -1,7 +1,7 @@
 import { cars as carsConfig, vehicleConfig, type Car } from '@/config/vehicle.config';
 import { HIT_DAMAGE, NET_HZ, TRAFFIC_MAX, type TrafficCar } from '@/net/protocol';
 import type { TargetVehicle, VehicleSceneLayer } from '@/rendering/VehicleLayer';
-import { advanceTrafficBot, createTrafficBot, type TrafficBot, type TrafficRoadNetwork } from '../TrafficBots.ts';
+import { advanceTrafficBot, backOff, createTrafficBot, type TrafficBot, type TrafficRoadNetwork } from '../TrafficBots.ts';
 import { METERS_PER_DEGREE, metersBetween, VehicleController, type Position } from '../VehicleController.ts';
 
 // Light traffic everybody around sees and can shoot at. Among players near each
@@ -401,7 +401,9 @@ export class SharedTraffic {
         ? [{ id: 'player', position: here, alive: true }]
         : [];
       // calm traffic yields; hunters ignore us and cut in
-      const obstacles = hunting ? [] : [here, ...this.host.others().map((p) => p.position)];
+      // …and the other cars of the traffic, so they queue instead of ramming each other
+      const obstacles = hunting ? [] : [here, ...this.host.others().map((p) => p.position),
+        ...this.driven.filter((o) => o !== d && !o.deadAt).map((o) => o.bot.position)];
       const before: Position = [...d.bot.position] as Position;
       // close chase: drive straight at the player instead of looping the block
       const direct = hunting && metersBetween(d.bot.position, here) < 120
@@ -414,8 +416,11 @@ export class SharedTraffic {
         d.bot.controller.position = [...hit.position] as Position;
         d.bot.controller.speed *= hit.stopped ? -0.3 : 0.7;
         d.bot.position = [...hit.position] as Position;
-        // find its way back onto the road from here
-        if (hit.stopped) { d.bot.route = []; d.bot.routeIndex = 1; d.bot.repathAt = 0; }
+        // into a house: calm traffic backs out and turns about (pressing on parked it against the wall)
+        if (hit.stopped) {
+          if (hunting) { d.bot.route = []; d.bot.routeIndex = 1; d.bot.repathAt = 0; }
+          else backOff(d.bot, Math.random() < 0.5 ? 1 : -1, now);
+        }
       }
     }
   }

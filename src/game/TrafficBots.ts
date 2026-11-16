@@ -593,6 +593,13 @@ export type TrafficBot = {
   blockedFor?: number;
   /** driving straight at something it can see, off the roads */
   cutting?: boolean;
+  /** calm traffic backing out (ms timestamp): reverse with the wheel turned, then turn about */
+  backingUntil?: number;
+  backingSide?: number;
+  /** the next route starts the other way (it gave up on the road ahead) */
+  turnBack?: boolean;
+  /** how long the gas has been down with the car not moving (s) */
+  stalledFor?: number;
   mood: BotMood;
   huntId: string | null;
   huntRange: number;
@@ -730,7 +737,8 @@ export function trafficBotKeys(bot: TrafficBot, network: TrafficRoadNetwork, hun
         ?? network.randomAway(bot.position, new Set(), 700, 7500, bot.routeSeed + 7);
       if (away) bot.goal = [...away.position] as Position;
     }
-    const route = network.routeForBot(bot.position, bot.heading, bot.routeSeed, bot.goal ?? undefined);
+    const route = network.routeForBot(bot.position, bot.turnBack ? bot.heading + Math.PI : bot.heading, bot.routeSeed, bot.goal ?? undefined);
+    bot.turnBack = false;
     if (route == null) return cruiseKeys(bot);
     bot.route = route;
     bot.routeIndex = 1;
@@ -824,23 +832,49 @@ export function advanceTrafficBot(
     bot.route = [];
     bot.routeIndex = 1;
   }
+  const calm = bot.mood !== 'hunt';
+  const now = performance.now();
+  if (calm && bot.backingUntil && now < bot.backingUntil) {
+    // backing out: slow, wheel turned so the nose swings away
+    const back = new Set(['KeyS', (bot.backingSide ?? 1) > 0 ? 'KeyD' : 'KeyA']);
+    bot.controller.step(dt, back, { ...config, reverseSpeed: Math.min(config.reverseSpeed, 3.5) });
+    bot.position = [...bot.controller.position];
+    bot.heading = bot.controller.heading;
+    return;
+  }
   let keys = trafficBotKeys(bot, network, huntTop);
-  let step = config;
-  const block = bot.mood === 'hunt' ? null : inTheWay(bot, obstacles);
+  const block = calm ? inTheWay(bot, obstacles) : null;
   if (block) {
     bot.blockedFor = (bot.blockedFor ?? 0) + dt;
-    if (bot.blockedFor < 1.5) {
-      // brake to a stop, never back into the car behind
-      keys = new Set(bot.controller.speed > 0.4 ? ['KeyS'] : []);
-    } else {
-      // creep round it on the freer side
-      keys = new Set(['KeyW', block.side > 0 ? 'KeyA' : 'KeyD']);
-      step = { ...config, maxSpeed: Math.min(config.maxSpeed, 4.5) };
-    }
+    // brake to a stop and wait — never shove through; after a while give up and turn about
+    keys = new Set(bot.controller.speed > 0.4 ? ['KeyS'] : []);
+    if (bot.blockedFor > 2.5) backOff(bot, block.side > 0 ? 1 : -1, now);
   } else if (bot.blockedFor) bot.blockedFor = Math.max(0, bot.blockedFor - dt * 2);
-  bot.controller.step(dt, keys, step);
+  // gas down and going nowhere (a wall, a kerb post, a car it can't see): back out and turn about
+  if (calm && keys.has('KeyW') && Math.abs(bot.controller.speed) < 0.6) {
+    bot.stalledFor = (bot.stalledFor ?? 0) + dt;
+    if (bot.stalledFor > 1.5) backOff(bot, Math.random() < 0.5 ? 1 : -1, now);
+  } else if (bot.stalledFor) bot.stalledFor = Math.max(0, bot.stalledFor - dt);
+  bot.controller.step(dt, keys, config);
   bot.position = [...bot.controller.position];
   bot.heading = bot.controller.heading;
+}
+
+/**
+ * Calm traffic gives up on the way ahead: about a second and a half in reverse with the
+ * wheel turned (`side` > 0 swings the nose left), then a fresh route the other way.
+ */
+export function backOff(bot: TrafficBot, side: number, now = performance.now()) {
+  if (bot.mood === 'hunt' || (bot.backingUntil && now < bot.backingUntil)) return;
+  bot.backingUntil = now + 1400;
+  bot.backingSide = side;
+  bot.turnBack = true;
+  bot.blockedFor = 0;
+  bot.stalledFor = 0;
+  bot.cutting = false;
+  bot.route = [];
+  bot.routeIndex = 1;
+  bot.repathAt = 0;
 }
 
 /**
