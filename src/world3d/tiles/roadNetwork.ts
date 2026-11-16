@@ -249,9 +249,19 @@ export function planRoadNetwork(ways: Map<number, RoadWay>, extent: number, span
   });
 
   const nodes: Node[] = [], parent: number[] = [];
-  const makeNode = (p: RoadPoint, way: RoadWay) => {
+  // a bridge's deck stands clear of the water under it: a long span over a river by
+  // ~2 m, a short one over a brook or a ditch by under a metre (2 m there left the deck
+  // hanging over the banks like a platform)
+  const waterClearance = (route: Route) => {
+    let length = 0;
+    for (let i = 1; i < route.pts.length; i++) length += distance(route.pts[i - 1], route.pts[i]);
+    length /= at.toMerc;
+    return length < 25 ? 0.8 : length < 60 ? 0.8 + (length - 25) / 35 * 1.4 : 2.2;
+  };
+  const makeNode = (p: RoadPoint, route: Route) => {
+    const way = route.way;
     const id = nodes.length, base = at.driveAt(...p), bed = at.groundAt(...p), water = at.waterAt(...p);
-    nodes.push({ p, base, floor: way.bridge && water != null && bed < water - 1 ? Math.max(base, water + 2.2) : base, h: base, half: (way.half ?? (way.foot ? 1 : way.rail ? 3.4 : 4.2)) * at.toMerc, edges: [] });
+    nodes.push({ p, base, floor: way.bridge && water != null && bed < water - 1 ? Math.max(base, water + waterClearance(route)) : base, h: base, half: (way.half ?? (way.foot ? 1 : way.rail ? 3.4 : 4.2)) * at.toMerc, edges: [] });
     parent.push(id); return id;
   };
   const root = (id: number): number => { let r = id; while (parent[r] !== r) r = parent[r]; while (parent[id] !== id) { const next = parent[id]; parent[id] = r; id = next; } return r; };
@@ -272,7 +282,7 @@ export function planRoadNetwork(ways: Map<number, RoadWay>, extent: number, span
       for (const cut of cuts) {
         if (Math.abs(cut.t - previous) > EPS) {
           const p = point({ a: route.pts[i], b: route.pts[i + 1] } as Segment, cut.t);
-          node = cut.t < EPS && i > 0 ? route.nodes[route.nodes.length - 1] : makeNode(p, route.way);
+          node = cut.t < EPS && i > 0 ? route.nodes[route.nodes.length - 1] : makeNode(p, route);
           if (cut.t > EPS || i === 0) route.nodes.push(node);
           previous = cut.t;
         }
