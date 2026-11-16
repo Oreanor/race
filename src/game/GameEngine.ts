@@ -379,8 +379,9 @@ export class GameEngine {
     ambulance: new JobPin('ambulance-map-marker', 'ambulance'),
     bus: new JobPin('bus-map-marker', 'bus'),
   };
-  /** the nitro bar under the speedometer: 0…1 left, and whether it is burning now */
-  private nitro = { level: 1, active: false };
+  /** the nitro bar under the speedometer: 0…1 left, whether it is burning now, and
+   *  `spent`: run dry with Space still down — it waits for Space to be let go */
+  private nitro = { level: 1, active: false, spent: false };
   /** the Howler's and the Batmobile's cable (see Hauler) */
   private hauler = new Hauler(this.haulHost());
   /** us on the map (M): a dot with an arrow along our heading */
@@ -738,8 +739,7 @@ export class GameEngine {
       }
       if (!this.driving || this.paused) return;
       if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'ShiftLeft', 'ShiftRight', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyR', 'Tab', 'KeyM', 'KeyJ', 'KeyE'].includes(e.code)) e.preventDefault();
-      if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft', 'ShiftRight', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) this.keys.add(e.code);
-      if (e.code === 'Space' && !e.repeat) this.fireNitro();
+      if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'ShiftLeft', 'ShiftRight', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) this.keys.add(e.code);
       if (e.code === 'KeyR') this.resetCamera();
       if (e.code === 'Tab' && !e.repeat) {
         if (this.tryOpenDealer()) { /* showroom takes Tab on the lot */ }
@@ -931,18 +931,19 @@ export class GameEngine {
     return this.nitro;
   }
 
-  /** Space: the nitro burns what is left in the bar, all of it (no stopping half way). */
-  private fireNitro() {
-    if (!this.driving || this.paused || this.nitro.active || this.nitro.level < 0.02 || this.fuel.empty) return;
-    this.nitro.active = true;
-  }
-
-  /** Burning: the bar empties in NITRO_BURN_S; then it refills by itself in NITRO_REFILL_S. */
+  /**
+   * Space held: the nitro burns the bar (a full one in NITRO_BURN_S); let go and it stops
+   * and refills by itself (empty to full in NITRO_REFILL_S). Run dry with Space still
+   * down, it waits for a fresh press — else every refilled drop would flicker it on.
+   */
   private tickNitro(dt: number) {
     const n = this.nitro;
+    const held = this.keys.has('Space');
+    if (!held) n.spent = false;
+    n.active = held && !n.spent && n.level > 0 && !this.fuel.empty;
     if (n.active) {
       n.level = Math.max(0, n.level - dt / NITRO_BURN_S);
-      if (n.level <= 0 || this.fuel.empty) n.active = false;
+      if (n.level <= 0) { n.spent = true; n.active = false; }
     } else n.level = Math.min(1, n.level + dt / NITRO_REFILL_S);
   }
 
@@ -5647,7 +5648,7 @@ export class GameEngine {
         const oldHeading = this.vehicle.heading;
         // An empty tank: no throttle, no boost; the car rolls out.
         this.tickNitro(1 / 60);
-        const held = this.nitro.active ? new Set([...this.keys, 'Space']) : this.keys;
+        const held = this.nitro.active || !this.keys.has('Space') ? this.keys : new Set([...this.keys].filter(key => key !== 'Space'));
         const driveKeys = this.fuel.empty ? new Set([...held].filter(key => !NO_FUEL_KEYS.has(key))) : held;
         const travelled = this.vehicle.distance;
         this.vehicle.step(1 / 60, driveKeys, { ...vehicleConfig, acceleration: this.car.acceleration, maxSpeed: this.car.maxSpeed });

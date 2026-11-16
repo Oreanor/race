@@ -55,7 +55,7 @@ function copy(lang: Lang): Copy {
       ] },
       { title: 'Ещё', items: [
         <><b>H</b> — угнать припаркованную машину рядом: полиция в погоню, оторвётесь — машина уйдёт на чёрный рынок за полцены.</>,
-        <><b>Space</b> — нитро: тратит полоску под спидометром (полная — 10 секунд), потом она сама набирается за 20 секунд; можно жечь и неполную.</>,
+        <><b>Space</b> — нитро, пока держите: тратит полоску под спидометром (полной хватает на 10 секунд); отпустили — она сама набирается, с нуля за 20 секунд.</>,
         <><b>J</b> — поставить трамплин, <b>T</b> — время суток (Shift+T — сезон), <b>Y</b> — стиль архитектуры, <b>M</b> — карта, клик ставит цель.</>,
         <>Онлайн вы ездите в одном мире с другими игроками; <b>Enter</b> — чат. Трафик мирный, но если по нему стрелять или таранить, он может разозлиться.</>,
         <>Деньги, гараж и прогресс сохраняются. «Начать заново» в настройках стирает всё.</>,
@@ -97,7 +97,7 @@ function copy(lang: Lang): Copy {
       ] },
       { title: 'Mais', items: [
         <><b>H</b> — roubar um carro estacionado ao lado: a polícia persegue; fuja e o carro vai para o mercado negro por metade do preço.</>,
-        <><b>Space</b> — nitro: gasta a barra sob o velocímetro (cheia — 10 segundos), depois enche sozinha em 20 segundos; pode usar o que houver.</>,
+        <><b>Space</b> — nitro enquanto segurar: gasta a barra sob o velocímetro (cheia dura 10 segundos); ao soltar, enche sozinha, do zero em 20 segundos.</>,
         <><b>J</b> — rampa, <b>T</b> — hora do dia (Shift+T — estação), <b>Y</b> — estilo de arquitetura, <b>M</b> — mapa, clique para marcar o destino.</>,
         <>Online conduz no mesmo mundo que outros jogadores; <b>Enter</b> — chat. O trânsito é calmo, mas se disparar ou bater nele pode zangar-se.</>,
         <>Dinheiro, garagem e progresso ficam guardados. «Recomeçar» nas definições apaga tudo.</>,
@@ -139,7 +139,7 @@ function copy(lang: Lang): Copy {
       ] },
       { title: 'More', items: [
         <><b>H</b> — hijack a parked car beside you: the police give chase; lose them and it goes to the black market for half its price.</>,
-        <><b>Space</b> — nitro: burns the bar under the speedometer (a full one lasts 10 seconds), then it refills by itself in 20 seconds; you can burn whatever is in it.</>,
+        <><b>Space</b> — nitro while held: burns the bar under the speedometer (a full one lasts 10 seconds); let go and it refills by itself, from empty in 20 seconds.</>,
         <><b>J</b> — a ramp, <b>T</b> — time of day (Shift+T — season), <b>Y</b> — architecture style, <b>M</b> — the map, click to pin a target.</>,
         <>Online you share the world with other players; <b>Enter</b> — chat. Traffic is calm, but shoot or ram it and it may turn on you.</>,
         <>Money, garage and progress are saved. «Start over» in the settings wipes it all.</>,
