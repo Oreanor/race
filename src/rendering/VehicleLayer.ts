@@ -105,7 +105,7 @@ function endFade(mats: FadeMat[]) {
 }
 
 /** how long a taken coin hops and falls before it is gone (ms) */
-const POP_MS = 560;
+const POP_MS = 640;
 
 export function vehicleLayer(
   car: Car,
@@ -1600,7 +1600,7 @@ export function vehicleLayer(
           pickup.mesh.rotation.y = now * 0.0007;
         }
       }
-      // a taken coin: jumps ~0.9 m up spinning fast and vanishes on the way down (POP_MS in
+      // a taken coin: jumps ~1.2 m up spinning fast and vanishes on the way down (POP_MS in
       // all), before it is back at its hover
       for (let i = popping.length - 1; i >= 0; i--) {
         const pop = popping[i];
@@ -1612,7 +1612,7 @@ export function vehicleLayer(
         }
         if (pop.ground == null) pop.ground = map.groundAt(pop.position);
         const lift = (pop.ground ?? height()) - height();
-        const up = Math.max(0.05, 0.78 + 5.5 * t - 9 * t * t);
+        const up = Math.max(0.05, 0.78 + 6.5 * t - 9 * t * t);
         pop.mesh.position.copy(scenePoint(here, pop.position, heading, lift + up));
         pop.mesh.rotation.y = pop.phase + t * 22;
         const fade = Math.min(1, Math.max(0, (POP_MS / 1000 - t) / 0.22));
