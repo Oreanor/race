@@ -69,17 +69,62 @@ export function streetFurniture(vt: VectorTile, span: number, metersScale: numbe
 
 type Street = { distance: number; half: number; px: number; pz: number; nx: number; nz: number };
 
+/** Road segments in square cells (by the segment array), so a lookup reads the cells round it, not every road. */
+const segGrids = new WeakMap<number[], { cell: number; cells: Map<string, number[]> }>();
+function segGrid(segs: number[]) {
+  let g = segGrids.get(segs);
+  if (g) return g;
+  let span = 0;
+  for (let s = 0; s < segs.length; s += 5) span = Math.max(span, segs[s], segs[s + 1], segs[s + 2], segs[s + 3]);
+  const cell = Math.max(span / 64, 1e-9);
+  const cells = new Map<string, number[]>();
+  for (let s = 0; s < segs.length; s += 5) {
+    const x0 = Math.floor(Math.min(segs[s], segs[s + 2]) / cell), x1 = Math.floor(Math.max(segs[s], segs[s + 2]) / cell);
+    const z0 = Math.floor(Math.min(segs[s + 1], segs[s + 3]) / cell), z1 = Math.floor(Math.max(segs[s + 1], segs[s + 3]) / cell);
+    if ((x1 - x0 + 1) * (z1 - z0 + 1) > 4096) continue;
+    for (let x = x0; x <= x1; x++) for (let z = z0; z <= z1; z++) {
+      const key = x + ',' + z, list = cells.get(key);
+      if (list) list.push(s); else cells.set(key, [s]);
+    }
+  }
+  g = { cell, cells };
+  segGrids.set(segs, g);
+  return g;
+}
+
 /** The nearest road centre line: how far, its half width, the nearest point on it and the unit normal from it toward (x, z). */
 function nearestRoad(segs: number[], x: number, z: number): Street | null {
+  // ring by ring through the cells round the point: stop once no nearer road can be further out
+  const { cell, cells } = segGrid(segs);
+  const cx = Math.floor(x / cell), cz = Math.floor(z / cell);
   let best: Street | null = null;
-  for (let s = 0; s < segs.length; s += 5) {
+  const seen = new Set<number>();
+  for (let r = 0; r <= 64; r++) {
+    if (best && (r - 1) * cell > best.distance) break;
+    for (let dx = -r; dx <= r; dx++) for (let dz = -r; dz <= r; dz++) {
+      if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
+      for (const s of cells.get((cx + dx) + ',' + (cz + dz)) ?? []) {
+        if (seen.has(s)) continue;
+        seen.add(s);
+        best = closerRoad(segs, s, x, z, best);
+      }
+    }
+  }
+  if (best || !segs.length) return best;
+  // a point far outside every road's cells: the plain walk
+  for (let s = 0; s < segs.length; s += 5) best = closerRoad(segs, s, x, z, best);
+  return best;
+}
+
+function closerRoad(segs: number[], s: number, x: number, z: number, best: Street | null): Street | null {
+  {
     const ax = segs[s], az = segs[s + 1], bx = segs[s + 2], bz = segs[s + 3];
     const dx = bx - ax, dz = bz - az, len2 = dx * dx + dz * dz;
-    if (len2 < 1e-12) continue;
+    if (len2 < 1e-12) return best;
     const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / len2));
     const px = ax + dx * t, pz = az + dz * t;
     const distance = Math.hypot(x - px, z - pz);
-    if (best && distance >= best.distance) continue;
+    if (best && distance >= best.distance) return best;
     // the normal toward the point; a point on the line takes the left side
     const len = Math.sqrt(len2);
     let nx = -dz / len, nz = dx / len;

@@ -454,7 +454,35 @@ function transportWays(layer: VectorTile['layers'][string]): Map<number, Way> {
 
 /** Plan topology and heights together; no height edits after the solve. */
 export function planBridges(ownWays: Map<number, Way>, extent: number, span: number, at: Surfaces, extra?: Map<number, Way>): Map<number, Planned> {
-  return planRoadNetwork(waysInContext(ownWays, extra ?? new Map(), extent), extent, span, at);
+  return planRoadNetwork(nearStructures(waysInContext(ownWays, extra ?? new Map(), extent), extent, span, at.toMerc), extent, span, at);
+}
+
+/** how far (m) from a bridge or a raised way a road still goes into the height solve (its ramps) */
+const STRUCTURE_REACH = 400;
+
+/**
+ * Only the ways that can take part in a deck go to the height solve: bridges, raised ways
+ * (layer above 0), and the roads within STRUCTURE_REACH of one (the ramps up to them and
+ * the roads they cross). A road far from any of them lies on the ground anyway: solving it
+ * cost every tile a node every 8 m on every road of a 3 × 3 window (Moscow: ~0.5 s a tile).
+ */
+function nearStructures(ways: Map<number, Way>, extent: number, span: number, toMerc: number): Map<number, Way> {
+  const reach = STRUCTURE_REACH * toMerc / (span / extent);
+  const box = (way: Way) => {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const line of way.lines) for (const p of line) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
+    return [x0, y0, x1, y1] as const;
+  };
+  const anchors: (readonly [number, number, number, number])[] = [];
+  for (const way of ways.values()) if (way.bridge || way.level > 0) anchors.push(box(way));
+  const out = new Map<number, Way>();
+  if (!anchors.length) return out;
+  for (const [id, way] of ways) {
+    if (way.bridge || way.level > 0) { out.set(id, way); continue; }
+    const [x0, y0, x1, y1] = box(way);
+    if (anchors.some(([a0, b0, a1, b1]) => x0 <= a1 + reach && x1 >= a0 - reach && y0 <= b1 + reach && y1 >= b0 - reach)) out.set(id, way);
+  }
+  return out;
 }
 
 /** True when this footbridge end continues into another planned deck. */
