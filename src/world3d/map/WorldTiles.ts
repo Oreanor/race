@@ -91,9 +91,25 @@ type WaterSeams = {
 /** how far into a tile the water eases toward the level shared with its neighbour (m) */
 const SEAM_EASE = 150;
 
+/** jobs a worker holds at once (one building, one ready to go) */
+const WORKER_QUEUE = 2;
+/** how much tile memory (bytes, estimated) is kept before the least recently needed go */
+const RESIDENT_BUDGET = 600 * 1048576;
+
+/** A tile's resident size, as stats() estimates it. */
+function tileBytes(data: WorldTileData) {
+  return data.buildings.stats.bytes + data.raw.byteLength
+    + [data.ground.terrain, ...data.ground.layers, data.ground.water].reduce((n, m) => n + m.positions.byteLength * 2, 0)
+    + data.roads.positions.byteLength * 2;
+}
+
 type Live = {
   key: string;
   tile: TileId;
+  /** about how much memory it holds (bytes), worked out once */
+  bytes: number;
+  /** when it was last wanted (in view, round the car): the oldest go first when memory is short */
+  usedAt: number;
   data: WorldTileData;
   group: THREE.Group;
   waiting: (() => void)[];
@@ -490,17 +506,23 @@ export class WorldTiles {
         this.softKeepAt = null;
       }
     }
-    // spread unloads across frames â€” dumping a full M-map rectangle in one tick tanks FPS.
-    // while soft-keeping the map rectangle, drip slowly (never dump the softKeep set itself)
-    const holdingMap = !screen && this.softKeep.size > 0;
-    // fly-in: don't dispose meshes mid-lerp (unload hitch = the other half of Ñ…Ñ€ÑÑÑ‚ÑŒ)
-    const dropCap = calm ? 0 : holdingMap ? 1 : screen ? 2 : 6;
-    let dropped = 0;
+    // Loaded tiles stay as long as there is memory for them: what is wanted now (in view, round
+    // the car) is never let go, the rest goes oldest-needed first once the budget is full —
+    // pan the map back, drive back, and it is still there. (Unloading everything outside the
+    // current view or ring threw away tiles that took two seconds each to build.)
+    const nowUse = performance.now();
+    let resident = 0;
     for (const [key, live] of this.tiles) {
-      if (keep.has(key)) continue;
-      if (dropped >= dropCap) break;
-      this.unload(key, live);
-      dropped++;
+      if (keep.has(key)) live.usedAt = nowUse;
+      resident += live.bytes;
+    }
+    if (resident > RESIDENT_BUDGET && !calm) {
+      const spare = [...this.tiles.values()].filter((l) => !keep.has(l.key)).sort((a, b) => a.usedAt - b.usedAt);
+      // a few a frame: dumping a map's worth at once hitches
+      for (let n = 0; n < spare.length && n < 3 && resident > RESIDENT_BUDGET; n++) {
+        resident -= spare[n].bytes;
+        this.unload(spare[n].key, spare[n]);
+      }
     }
     if (!calm) {
       // the map rectangle keeps its loaded tiles, not its unfinished loads: those took every
@@ -532,6 +554,7 @@ export class WorldTiles {
       }
       this.request(plan.key, plan.tile);
     }
+    this.pump();
     let backlog = 0;
     for (const live of this.tiles.values()) backlog += live.waiting.length;
     let budget = o.uploadsPerFrame;
@@ -627,15 +650,37 @@ export class WorldTiles {
     }
   }
 
-  private request(key: string, tile: TileId) {
-    let worker = -1;
-    for (let i = 0; i < this.workers.length; i++) {
-      if (this.workerReady[i] && (worker < 0 || this.load[i] < this.load[worker])) worker = i;
+  /**
+   * Jobs whose bytes are in, waiting for a worker. A worker gets a new job only when it has
+   * fewer than WORKER_QUEUE: a build takes ~1-3 s, and a tile that just came into view must
+   * not wait behind a queue dealt out before it appeared — each free worker takes the most
+   * wanted ready job (the plan's order: in view first).
+   */
+  private ready: { id: number; key: string; tile: TileId; vectorUrl: string; demUrl: string | null; demNeighbours: (string | null)[] | null; vectors: Record<string, ArrayBuffer>; demBytes: Record<string, ArrayBuffer | null> }[] = [];
+
+  private pump() {
+    if (this.disposed || !this.ready?.length) return;
+    this.ready = this.ready.filter((r) => this.pending.get(r.key)?.id === r.id && this.jobs.has(r.id));
+    const order = new Map((this.streamPlan?.wanted ?? []).map((t, i) => [t.key, i]));
+    this.ready.sort((a, b) => (order.get(a.key) ?? 1e9) - (order.get(b.key) ?? 1e9));
+    while (this.ready.length) {
+      let worker = -1;
+      for (let i = 0; i < this.workers.length; i++) {
+        if (this.workerReady[i] && this.load[i] < WORKER_QUEUE && (worker < 0 || this.load[i] < this.load[worker])) worker = i;
+      }
+      if (worker < 0) return;
+      const r = this.ready.shift()!;
+      this.jobs.set(r.id, { key: r.key, worker });
+      this.load[worker]++;
+      this.post(worker, r.id, r.key, r.tile, r.vectorUrl, r.demUrl, r.demNeighbours, r.vectors, r.demBytes);
     }
-    if (worker < 0) return;
+  }
+
+  private request(key: string, tile: TileId) {
+    if (!this.workers.some((_, i) => this.workerReady[i])) return;
     const id = this.nextId++;
-    this.load[worker]++;
-    this.jobs.set(id, { key, worker });
+    // no worker yet (-1): it gets one when its bytes are in and a worker is free (pump)
+    this.jobs.set(id, { key, worker: -1 });
     this.pending.set(key, { id, key, tile });
     const size = 2 ** tile.z;
     const around = [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]].map(([dx, dy]) => {
@@ -656,8 +701,9 @@ export class WorldTiles {
     ]);
     void gathered.then(() => {
       // dropped (cancelled or the tile left the plan) while its bytes came: nothing to build
-      if (this.disposed || this.pending.get(key)?.id !== id || this.workers[worker] == null) return;
-      this.post(worker, id, key, tile, vectorUrl, demUrl, demNeighbours, vectors, demBytes);
+      if (this.disposed || this.pending.get(key)?.id !== id || !this.jobs.has(id)) return;
+      this.ready.push({ id, key, tile, vectorUrl, demUrl, demNeighbours, vectors, demBytes });
+      this.pump();
     });
   }
 
@@ -682,6 +728,12 @@ export class WorldTiles {
     const job = this.jobs.get(id);
     if (!job) return;
     this.releaseFetches(id);
+    if (job.worker < 0) {
+      // not dealt out yet: it just leaves the queue
+      this.jobs.delete(id);
+      this.ready = this.ready.filter((r) => r.id !== id);
+      return;
+    }
     this.workers[job.worker]?.postMessage({ type: 'cancel', id });
     this.jobs.delete(id);
     this.load[job.worker] = Math.max(0, this.load[job.worker] - 1);
@@ -692,6 +744,8 @@ export class WorldTiles {
     if (!job) return;
     this.jobs.delete(message.id);
     this.load[job.worker] = Math.max(0, this.load[job.worker] - 1);
+    // this worker is free for the next most wanted job
+    this.pump();
     const pending = this.pending.get(job.key);
     if (!pending || pending.id !== message.id) return;
     this.pending.delete(job.key);
@@ -721,7 +775,7 @@ export class WorldTiles {
     lampMap.generateMipmaps = false;
     lampMap.needsUpdate = true;
     const live: Live = {
-      key, tile: data.tile, data, group, waiting: [], deferred: [], buildings: [], roads: null,
+      key, bytes: tileBytes(data), usedAt: performance.now(), tile: data.tile, data, group, waiting: [], deferred: [], buildings: [], roads: null,
       disposables: [lampMap], extra: new Map(), props: new Map(), floraMeshes: null, propCells: null,
       footprintCells: null, footprintSeen: null, lampMap, spires: null, fade: 0,
     };
