@@ -1033,7 +1033,9 @@ export function vehicleLayer(
         fx.glassShatter(here, hitAt, bounce, now);
       } else if (wallHit || groundHit) {
         const normal: Enu = groundHit ? { e: bounce.e * 0.4, n: bounce.n * 0.4, u: 1 } : bounce;
-        fx.impact(here, hitAt, normal, now, { scale: groundHit ? 0.7 : 0.9, dust: true });
+        // the ground: paved chips and sparks, grass, earth and sand throw clods; a wall is stone
+        const surface = groundHit ? (map?.surfaceAt(end) ?? 'paved') : 'paved';
+        fx.impact(here, hitAt, normal, now, { scale: groundHit ? 0.7 : 0.9, material: surface === 'paved' ? 'hard' : 'soil', surface });
       }
     }
   }
@@ -1170,7 +1172,10 @@ export function vehicleLayer(
       fx.muzzle(here, muzzleAt, dir, now);
       fx.tracer(here, muzzleAt, hitAt, now);
       if (hit) fx.impact(here, hitAt, { e: -dir.e, n: -dir.n, u: Math.max(0.35, -dir.u) }, now, { scale: 0.9 });
-      else fx.impact(here, hitAt, { e: 0, n: 0, u: 1 }, now, { scale: 0.6, dust: true });
+      else {
+        const surface = map?.surfaceAt(offsetPosition(here, hitAt.e, hitAt.n) as Position) ?? 'paved';
+        fx.impact(here, hitAt, { e: 0, n: 0, u: 1 }, now, { scale: 0.6, material: surface === 'paved' ? 'hard' : 'soil', surface });
+      }
     },
     get onRemoteHit() { return remoteHitHandler; },
     set onRemoteHit(handler: (id: string) => boolean) { remoteHitHandler = handler; },

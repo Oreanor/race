@@ -20,10 +20,12 @@ function eastNorth(origin: Position, point: Position) {
 /** World offset relative to the car, meters. */
 export type Enu = { e: number; n: number; u: number };
 
-type Kind = 'flash' | 'flame' | 'spark' | 'fire' | 'smoke' | 'dust' | 'ring' | 'ember' | 'tracer' | 'tiresmoke' | 'grit' | 'water' | 'mist';
+type Kind = 'flash' | 'flame' | 'spark' | 'chipspark' | 'fire' | 'smoke' | 'dust' | 'ring' | 'ember' | 'tracer' | 'tiresmoke' | 'grit' | 'water' | 'mist';
 
 /** What the rear wheels are on: asphalt and pavements smoke, the rest throws dust and grit. */
 export type Surface = 'paved' | 'dirt' | 'grass' | 'sand';
+/** what a bullet hits: metal (sparks), hard (sparks and chips), soil (clods, no sparks) */
+export type HitMaterial = 'metal' | 'hard' | 'soil';
 
 type Particle = {
   kind: Kind;
@@ -39,8 +41,8 @@ type Particle = {
   tint?: [number, number, number];
 };
 
-const SHAPE: Record<Kind, number> = { flash: 0, flame: 0, spark: 0, ember: 0, fire: 0, smoke: 2, dust: 2, ring: 1, tracer: 0, tiresmoke: 2, grit: 0, water: 3, mist: 2 };
-const ADDITIVE: Record<Kind, boolean> = { flash: true, flame: true, spark: true, ember: true, fire: true, smoke: false, dust: false, ring: true, tracer: true, tiresmoke: false, grit: false, water: false, mist: false };
+const SHAPE: Record<Kind, number> = { flash: 0, flame: 0, spark: 0, chipspark: 0, ember: 0, fire: 0, smoke: 2, dust: 2, ring: 1, tracer: 0, tiresmoke: 2, grit: 0, water: 3, mist: 2 };
+const ADDITIVE: Record<Kind, boolean> = { flash: true, flame: true, spark: true, chipspark: true, ember: true, fire: true, smoke: false, dust: false, ring: true, tracer: true, tiresmoke: false, grit: false, water: false, mist: false };
 
 /** dust cloud, grit and tyre-smoke colours per surface (linear) */
 const SURFACE_FX: Record<Surface, { dust: [number, number, number]; grit: [number, number, number] }> = {
@@ -61,6 +63,11 @@ function shade(p: Particle, t: number): [number, number, number, number] {
     case 'flame': {
       const c = lerp3([3.2, 2.2, 0.9], [2.4, 0.7, 0.12], t);
       return [c[0], c[1], c[2], 1 - t];
+    }
+    case 'chipspark': {
+      // struck off stone: fiery orange from the start, dying to red
+      const c = lerp3([3.2, 1.5, 0.3], [1.2, 0.2, 0.03], t);
+      return [c[0], c[1], c[2], 1 - t * t];
     }
     case 'spark':
     case 'ember': {
@@ -308,11 +315,11 @@ export class WorldParticles {
     }, now);
   }
 
-  private spark(here: Position, at: Enu, dir: Enu, spread: number, speed: number, now: number, life = 380, snap = false) {
+  private spark(here: Position, at: Enu, dir: Enu, spread: number, speed: number, now: number, life = 380, snap = false, fiery = false) {
     const ve = dir.e + rand(-spread, spread), vn = dir.n + rand(-spread, spread), vu = dir.u + rand(-spread * 0.5, spread);
     const l = Math.hypot(ve, vn, vu) || 1;
     this.add(here, at, {
-      kind: 'spark', ve: ve / l * speed, vn: vn / l * speed, vu: vu / l * speed,
+      kind: fiery ? 'chipspark' : 'spark', ve: ve / l * speed, vn: vn / l * speed, vu: vu / l * speed,
       life: rand(life * 0.6, life * 1.25), size0: rand(0.05, 0.08), size1: 0.03, drag: snap ? 3 : 1.6, gravity: 9.8, stretch: snap ? 0.022 : 0.035,
     }, now);
   }
@@ -536,41 +543,59 @@ export class WorldParticles {
     }
   }
 
-  /** Bullet impact: a spray of sparks bouncing back from the surface, a flash, dust on walls and ground. */
-  impact(here: Position, at: Enu, normal: Enu, now: number, options: { scale?: number; dust?: boolean } = {}) {
-    const s = options.scale ?? 1;
-    this.add(here, at, { kind: 'flash', ve: 0, vn: 0, vu: 0, life: 70, size0: 0.35 * s, size1: 0.6 * s, drag: 0, gravity: 0, stretch: 0 }, now);
-    const count = Math.round(rand(7, 12) * s);
-    // bullet sparks: fast, short, snapping off the hit
-    for (let i = 0; i < count; i++) this.spark(here, at, normal, 0.85, rand(9, 20) * Math.sqrt(s), now, 250, true);
-    if (options.dust) {
-      for (let i = 0; i < 2; i++) {
-        this.add(here, at, {
-          kind: 'dust', ve: normal.e * rand(0.4, 1) + rand(-0.4, 0.4), vn: normal.n * rand(0.4, 1) + rand(-0.4, 0.4), vu: rand(0.3, 0.9),
-          life: rand(450, 750), size0: 0.25, size1: 0.9, drag: 2.2, gravity: -0.3, stretch: 0,
-        }, now);
-      }
+  /**
+   * Bullet impact, by what it hits:
+   * - metal (cars, trains): a flash and a spray of sparks, nothing else;
+   * - hard (asphalt, pavement, walls): fiery orange sparks, grey chips and a pale puff;
+   * - soil (grass, earth, sand): no sparks — dark brown clods thrown up and a brown puff.
+   */
+  impact(here: Position, at: Enu, normal: Enu, now: number, options: { scale?: number; material?: HitMaterial; surface?: Surface } = {}) {
+    const s = options.scale ?? 1, material = options.material ?? 'metal';
+    if (material !== 'soil') {
+      this.add(here, at, { kind: 'flash', ve: 0, vn: 0, vu: 0, life: 70, size0: 0.35 * s, size1: 0.6 * s, drag: 0, gravity: 0, stretch: 0 }, now);
+      const count = Math.round(rand(7, 12) * s);
+      // bullet sparks: fast, short, snapping off the hit (off stone they start orange, not white)
+      for (let i = 0; i < count; i++) this.spark(here, at, normal, 0.85, rand(9, 20) * Math.sqrt(s), now, 250, true, material === 'hard');
+    }
+    if (material === 'metal') return;
+    const soil = material === 'soil';
+    // chips (stone) or clods (earth): bigger and fewer off soil, they arc and drop
+    const tint: [number, number, number] = soil
+      ? (options.surface === 'sand' ? [0.4, 0.31, 0.19] : [0.13, 0.08, 0.04])
+      : [0.32, 0.31, 0.29];
+    const bits = Math.round((soil ? rand(9, 14) : rand(5, 8)) * s);
+    for (let i = 0; i < bits; i++) {
+      const kick = soil ? rand(2.5, 6) : rand(4, 9);
+      this.add(here, { e: at.e + rand(-0.1, 0.1), n: at.n + rand(-0.1, 0.1), u: at.u + 0.05 }, {
+        kind: 'grit', tint: soil ? [tint[0] * rand(0.8, 1.3), tint[1] * rand(0.8, 1.3), tint[2] * rand(0.8, 1.3)] : tint,
+        ve: (normal.e + rand(-0.7, 0.7)) * kick, vn: (normal.n + rand(-0.7, 0.7)) * kick, vu: (Math.max(0.4, normal.u) + rand(0, 0.8)) * kick,
+        life: rand(500, 950), size0: soil ? rand(0.07, 0.15) : rand(0.03, 0.06), size1: soil ? rand(0.05, 0.11) : 0.02,
+        drag: soil ? 0.8 : 1.1, gravity: 9.8, stretch: 0,
+      }, now);
+    }
+    const puff: [number, number, number] = soil
+      ? (options.surface === 'sand' ? [0.62, 0.52, 0.36] : [0.3, 0.22, 0.14])
+      : [0.6, 0.59, 0.56];
+    for (let i = 0; i < (soil ? 3 : 2); i++) {
+      this.add(here, at, {
+        kind: 'dust', tint: puff, ve: normal.e * rand(0.4, 1) + rand(-0.4, 0.4), vn: normal.n * rand(0.4, 1) + rand(-0.4, 0.4), vu: rand(0.3, 0.9),
+        life: rand(450, 750), size0: 0.25, size1: soil ? 1.1 : 0.9, drag: 2.2, gravity: -0.3, stretch: 0,
+      }, now);
     }
   }
 
-  /** Bus-shelter pane: pale shards flying off the glass, a short flash. */
+  /** Glass: a white spark and fine pale shards, no cloud. */
   glassShatter(here: Position, at: Enu, normal: Enu, now: number) {
-    this.add(here, at, { kind: 'flash', ve: 0, vn: 0, vu: 0, life: 90, size0: 0.45, size1: 0.85, drag: 0, gravity: 0, stretch: 0 }, now);
+    this.add(here, at, { kind: 'flash', ve: 0, vn: 0, vu: 0, life: 70, size0: 0.3, size1: 0.55, drag: 0, gravity: 0, stretch: 0 }, now);
+    for (let i = 0; i < 4; i++) this.spark(here, at, normal, 0.85, rand(8, 16), now, 200, true);
     const tint: [number, number, number] = [0.72, 0.88, 0.98];
-    for (let i = 0; i < 16; i++) {
-      const ve = normal.e * rand(2, 7) + rand(-4, 4);
-      const vn = normal.n * rand(2, 7) + rand(-4, 4);
-      const vu = rand(1.5, 8);
-      this.add(here, { e: at.e + rand(-0.2, 0.2), n: at.n + rand(-0.2, 0.2), u: at.u + rand(-0.15, 0.35) }, {
+    for (let i = 0; i < 18; i++) {
+      const ve = normal.e * rand(2, 6) + rand(-3, 3);
+      const vn = normal.n * rand(2, 6) + rand(-3, 3);
+      const vu = rand(1, 6);
+      this.add(here, { e: at.e + rand(-0.15, 0.15), n: at.n + rand(-0.15, 0.15), u: at.u + rand(-0.1, 0.25) }, {
         kind: 'grit', tint, ve, vn, vu,
-        life: rand(420, 900), size0: rand(0.04, 0.09), size1: 0.02, drag: 1.1, gravity: 9.8, stretch: 0.025,
-      }, now);
-    }
-    for (let i = 0; i < 3; i++) {
-      this.add(here, at, {
-        kind: 'dust', tint: [0.55, 0.7, 0.82],
-        ve: normal.e * rand(0.3, 0.9) + rand(-0.5, 0.5), vn: normal.n * rand(0.3, 0.9) + rand(-0.5, 0.5), vu: rand(0.4, 1.2),
-        life: rand(380, 650), size0: 0.2, size1: 0.7, drag: 2.0, gravity: -0.25, stretch: 0,
+        life: rand(380, 800), size0: rand(0.02, 0.045), size1: 0.012, drag: 1.1, gravity: 9.8, stretch: 0.02,
       }, now);
     }
   }
@@ -680,7 +705,7 @@ export class WorldParticles {
       p.ve *= k; p.vn *= k; p.vu = p.vu * k - p.gravity * dt;
       p.e += p.ve * dt; p.n += p.vn * dt; p.u += p.vu * dt;
       const floor = this.altitude + 0.03;
-      if (p.u < floor && (p.kind === 'spark' || p.kind === 'ember')) { p.u = floor; p.vu = Math.abs(p.vu) * 0.35; p.ve *= 0.6; p.vn *= 0.6; }
+      if (p.u < floor && (p.kind === 'spark' || p.kind === 'chipspark' || p.kind === 'ember')) { p.u = floor; p.vu = Math.abs(p.vu) * 0.35; p.ve *= 0.6; p.vn *= 0.6; }
       // grit lands and skids to a stop
       if (p.u < floor && p.kind === 'grit') { p.u = floor; p.vu = 0; p.ve *= 0.5; p.vn *= 0.5; }
       // water droplets splash once on the ground, then flatten into a short-lived puddle bead
