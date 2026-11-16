@@ -61,7 +61,8 @@ function shade(p: Particle, t: number): [number, number, number, number] {
   switch (p.kind) {
     case 'flash': return [4, 3.3, 2.2, (1 - t) * (1 - t)];
     case 'flame': {
-      const c = lerp3([3.2, 2.2, 0.9], [2.4, 0.7, 0.12], t);
+      // muzzle fire: hot yellow, warming to amber as it goes
+      const c = lerp3([3.4, 2.9, 1.1], [2.8, 1.6, 0.3], t);
       return [c[0], c[1], c[2], 1 - t];
     }
     case 'chipspark': {
@@ -290,7 +291,8 @@ export class WorldParticles {
 
   /** Muzzle flash: a hot core, flame tongues along the shot, a couple of sparks. */
   muzzle(here: Position, at: Enu, dir: Enu, now: number) {
-    this.add(here, at, { kind: 'flash', ve: 0, vn: 0, vu: 0, life: 40, size0: 0.2, size1: 0.3, drag: 0, gravity: 0, stretch: 0 }, now);
+    // the core is yellow fire too (the white flash is for hits)
+    this.add(here, at, { kind: 'flame', ve: 0, vn: 0, vu: 0, life: 40, size0: 0.22, size1: 0.3, drag: 0, gravity: 0, stretch: 0 }, now);
     for (let i = 0; i < 3; i++) {
       const speed = rand(7, 13);
       const spread = 0.18;
