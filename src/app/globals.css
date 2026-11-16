@@ -144,7 +144,7 @@
   --shell-bg:#e5e8dc;
 }
 .game-shell[data-theme='night']{
-  --ui-bg:#121820d4;--ui-soft:#1c2430cc;--ui-line:#3d4b5caa;
+  --ui-bg:#121820cc;--ui-soft:#1c2430cc;--ui-line:#3d4b5caa;
   --ui-ink:#e6edf4;--ui-muted:#a8b8c6;
   --ui-accent:#7aa8c8;--ui-accent-hover:#8fb9d4;--ui-accent-ink:#0e1620;
   --ui-alert:#ff7a66;--ui-good:#4dcc93;
