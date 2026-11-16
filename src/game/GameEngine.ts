@@ -1963,7 +1963,8 @@ export class GameEngine {
     const kind = drop?.kind ?? 'here';
     const fine = WRECK_COSTS[kind];
     this.playerMoney = Math.max(0, this.playerMoney - fine);
-    if (drop && this.mapLoaded) this.placeCarAt(drop.position);
+    const wreckSpot = drop ? drop.position : this.nearbyRoadSpot();
+    if (wreckSpot && this.mapLoaded) this.placeCarAt(wreckSpot);
     else { this.vehicle.speed = 0; this.vehicle.throttle = 0; }
     const bill = t(`wreck.${kind}`, { fine: formatNumber(fine) });
     this.say(failed ? `${t('mission.failed')} · ${bill}` : bill, true);
@@ -2016,18 +2017,22 @@ export class GameEngine {
   }
 
   /**
-   * The best of `places` to be brought to: the nearest one whose ground is already loaded,
-   * so a tow, a rescue or an arrest lands at once; only when none is, the nearest at all.
+   * The nearest of `places` whose ground is already loaded, so a tow, a rescue or an arrest
+   * lands at once; null when none is (then the car goes to a free spot on a road nearby).
    */
   private nearestReady<T>(places: Iterable<T>, at: (place: T) => Position): T | null {
     const here = this.vehicle.position;
-    let ready: T | null = null, readyD = Infinity, any: T | null = null, anyD = Infinity;
+    let ready: T | null = null, readyD = Infinity;
     for (const place of places) {
       const d = metersBetween(here, at(place));
-      if (d < anyD) { any = place; anyD = d; }
       if (d < readyD && this.arrivalReady(at(place))) { ready = place; readyD = d; }
     }
-    return ready ?? any;
+    return ready;
+  }
+
+  /** A free spot on a loaded road near us, for when no fitting place is loaded: no wait. */
+  private nearbyRoadSpot(): Position | null {
+    return this.findFreeRoad(this.vehicle.position, 800)?.position ?? null;
   }
 
   /** The closest hospital or filling station to us (of those already loaded, if any). */
@@ -2947,7 +2952,8 @@ export class GameEngine {
     const fine = (kind ? ARREST_COSTS[kind] : ARREST_FINE) + stolen;
     this.playerMoney = Math.max(0, this.playerMoney - fine);
     this.playerHp = this.playerMaxHp;
-    if (drop && this.mapLoaded) this.placeCarAt(drop.station.position);
+    const arrestSpot = drop ? drop.station.position : this.nearbyRoadSpot();
+    if (arrestSpot && this.mapLoaded) this.placeCarAt(arrestSpot);
     else {
       this.vehicle.speed = 0;
       this.vehicle.throttle = 0;
@@ -5421,7 +5427,9 @@ export class GameEngine {
       this.onFuelOut(false);
       this.say(near ? t('tow.done') : t('tow.none'), true);
     };
-    if (near && this.mapLoaded) this.placeCarAt(near.station.position, finish);
+    // no station loaded: a free spot on a road nearby (the tank is filled all the same)
+    const towSpot = near ? near.station.position : this.nearbyRoadSpot();
+    if (towSpot && this.mapLoaded) this.placeCarAt(towSpot, finish);
     else finish();
   }
 
