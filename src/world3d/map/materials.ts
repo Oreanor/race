@@ -31,6 +31,11 @@ export const groundDetail = {
   uDetailShift: { value: new THREE.Vector2() },
   /** fixed pattern metres per scene metre (the scene's metre changes with the origin's latitude) */
   uDetailScale: { value: 1 },
+  /**
+   * The origin in fixed pattern metres, folded every 10 km, for the shaders' noise (grass
+   * tone, asphalt wear, water chop): on raw scene positions it jumped at every rebase
+   */
+  uWorldShift: { value: new THREE.Vector2() },
 };
 /** metres per mercator unit the pattern is laid out in: the first origin's, kept for the session */
 let detailMetersPer01 = 0;
@@ -48,7 +53,19 @@ export function setGroundDetailOrigin(x01: number, y01: number, metersPer01: num
   const fold = (v: number) => ((v % period) + period) % period;
   groundDetail.uDetailShift.value.set(fold(x01 * detailMetersPer01), fold(y01 * detailMetersPer01));
   groundDetail.uDetailScale.value = detailMetersPer01 / metersPer01;
+  const wide = (v: number) => ((v % WORLD_FOLD) + WORLD_FOLD) % WORLD_FOLD;
+  groundDetail.uWorldShift.value.set(wide(x01 * detailMetersPer01), wide(y01 * detailMetersPer01));
 }
+
+/** how far (m) the world-anchored noise runs before it folds (a step there; float32 keeps cm detail) */
+const WORLD_FOLD = 10000;
+
+/** GLSL: a world-anchored ground position (east, south metres) for noise, steady across rebases. */
+const ANCHOR = /* glsl */ `
+  uniform vec2 uWorldShift;
+  uniform float uDetailScale;
+  vec2 anchored(vec2 xz) { return xz * uDetailScale + uWorldShift; }
+`;
 
 let groundTexture: THREE.Texture | null = null;
 /** Put the ground texture on (public/textures/ground-realistic.png, scripts/ground-textures.py); loaded once. */
@@ -69,7 +86,7 @@ const DETAIL = /* glsl */ `
   uniform sampler2D uDetail;
   uniform float uDetailOn;
   uniform vec2 uDetailShift;
-  uniform float uDetailScale;
+  ${ANCHOR}
   vec4 groundGrain(vec3 world) {
     if (uDetailOn < 0.5) return vec4(0.0);
     float near = 1.0 - smoothstep(140.0, 420.0, distance(world, uCameraPos));
@@ -110,10 +127,11 @@ const GROUND_FRAGMENT = /* glsl */ `
     // uSnow is 0 equatorward of ~42° so mild winters stay green
     float greenish = smoothstep(0.02, 0.1, vColor.g - max(vColor.r, vColor.b))
       * smoothstep(0.4, 0.55, vColor.g);
-    float mottled = 0.5 + 0.5 * sin(vWorld.x * 1.55) * sin(vWorld.z * 1.7);
+    vec2 wa = anchored(vWorld.xz);
+    float mottled = 0.5 + 0.5 * sin(wa.x * 1.55) * sin(wa.y * 1.7);
     vec3 snow = vec3(0.91, 0.935, 0.96) * mix(0.93, 1.03, mottled);
     // grass is never one flat green: drier and lusher patches, a finer mottle
-    float tone = 0.86 + 0.2 * vnoise(vWorld.xz * 0.05) + 0.08 * vnoise(vWorld.xz * 0.4);
+    float tone = 0.86 + 0.2 * vnoise(wa * 0.05) + 0.08 * vnoise(wa * 0.4);
     // the texture's grain on grass, sand and earth only: warm (yellow-brown) ground is sand
     // when light, earth when dark; grey city ground and concrete keep their plain colour
     float warm = smoothstep(0.05, 0.08, vColor.g - vColor.b) * step(vColor.g, vColor.r + 0.02) * (1.0 - greenish);
@@ -157,7 +175,7 @@ export function overlayMaterial(u: BaseUniforms, layer: number) {
  */
 export function waterMaterial(u: BaseUniforms) {
   return new THREE.ShaderMaterial({
-    uniforms: { ...u, uTime: worldTime },
+    uniforms: { ...u, uTime: worldTime, uWorldShift: groundDetail.uWorldShift, uDetailScale: groundDetail.uDetailScale },
     vertexShader: /* glsl */ `
       uniform float uExag;
       attribute float aGround;
@@ -180,6 +198,7 @@ export function waterMaterial(u: BaseUniforms) {
       varying float vShore;
       varying float vPool;
       varying vec3 vWorld;
+      ${ANCHOR}
 
       // layered value noise — irregular chop, not a lattice of cosines
       float swell(vec2 p) {
@@ -192,7 +211,7 @@ export function waterMaterial(u: BaseUniforms) {
       }
 
       void main() {
-        vec2 p = vWorld.xz;
+        vec2 p = anchored(vWorld.xz);
         float t = uTime;
         float dist = distance(vWorld, uCameraPos);
         // calm the chop far away so distant rivers don't shimmer into a mesh
@@ -334,8 +353,9 @@ export function roadMaterial(u: BaseUniforms, track = false) {
           return;
         #endif
         // asphalt is worn unevenly: broad lighter and darker stretches, and darker patched spots
-        float wear = 0.94 + 0.1 * vnoise(vWorld.xz * 0.08) + 0.04 * vnoise(vWorld.xz * 0.9);
-        float mend = smoothstep(0.66, 0.74, vnoise(vWorld.xz * 0.21 + 13.0)) * 0.08;
+        vec2 wa = anchored(vWorld.xz);
+        float wear = 0.94 + 0.1 * vnoise(wa * 0.08) + 0.04 * vnoise(wa * 0.9);
+        float mend = smoothstep(0.66, 0.74, vnoise(wa * 0.21 + 13.0)) * 0.08;
         // asphalt grain on the carriageway (grey, not light): kerbs, pavements, paint and
         // concrete keep their plain colour
         float spread = max(vColor.r, max(vColor.g, vColor.b)) - min(vColor.r, min(vColor.g, vColor.b));
