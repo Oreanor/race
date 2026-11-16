@@ -531,7 +531,7 @@ export default function Game() {
         const index = introCars.findIndex((entry) => entry.id === bought.id);
         if (index >= 0) setCar(index);
       };
-      game.onBountyOffer = (offer) => setBountyOffer(offer);
+      game.wanted.onOffer = (offer) => setBountyOffer(offer);
       game.onRideOffer = (offer) => setRideOffer(offer);
       game.onEventOffer = (offer) => setEventOffer(offer);
       game.onEventResult = (result) => setEventResult(result);
@@ -1159,8 +1159,8 @@ export default function Game() {
         <Dialog
           title={t('bounty.title')}
           actions={<>
-            <button type="button" className="ui-btn" autoFocus onClick={() => engine.current?.acceptBounty()}>{t('bounty.take')}</button>
-            <button type="button" className="ui-btn is-ghost" onClick={() => engine.current?.declineBounty()}>{t('bounty.later')}</button>
+            <button type="button" className="ui-btn" autoFocus onClick={() => engine.current?.wanted.accept()}>{t('bounty.take')}</button>
+            <button type="button" className="ui-btn is-ghost" onClick={() => engine.current?.wanted.decline()}>{t('bounty.later')}</button>
           </>}
         >
           <p className="ui-text">{t('bounty.text', { name: bountyOffer.name, car: bountyOffer.car, place: bountyOffer.place, country: bountyOffer.country, km: formatNumber(bountyOffer.km) })}</p>
