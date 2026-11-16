@@ -357,6 +357,12 @@ export class ThreeMap {
     return this.world.surfaceAt(lng, lat);
   }
 
+  /** On water: a lake, river, stream or canal (see WorldTiles.wetAt). */
+  wetAt(p: LngLatLike) {
+    const [lng, lat] = toLngLat(p);
+    return this.world.wetAt(lng, lat);
+  }
+
   /** On a paved road or pavement (see WorldTiles.pavedAt). */
   pavedAt(p: LngLatLike) {
     const [lng, lat] = toLngLat(p);

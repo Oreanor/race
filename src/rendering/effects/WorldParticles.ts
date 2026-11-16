@@ -146,7 +146,9 @@ const VERTEX = /* glsl */ `
       float len = length(axis);
       up = len > 1e-5 ? axis / len : vec3(0.0, 1.0, 0.0);
       side = normalize(cross(up, forward));
-      corner.y = corner.y * (size + length(iAxis)) / size;
+      // as long as the streak looks from here (its part across the view): the full length
+      // drew a streak pointing away from the camera far up the screen, past its end
+      corner.y = corner.y * (size + len) / size;
     } else {
       side = normalize(cross(vec3(0.0, 1.0, 0.0), forward));
       up = cross(forward, side);
@@ -302,7 +304,7 @@ export class WorldParticles {
   muzzle(here: Position, at: Enu, dir: Enu, now: number) {
     // a flickering flower of flame right at the muzzle: a yellow core, petals evenly round
     // the barrel (turned a little each shot) and one along it. Nothing flies off.
-    this.add(here, at, { kind: 'flame', ve: 0, vn: 0, vu: 0, life: 40, size0: 0.2, size1: 0.26, drag: 0, gravity: 0, stretch: 0 }, now);
+    this.add(here, at, { kind: 'flame', ve: 0, vn: 0, vu: 0, life: rand(22, 34), size0: rand(0.16, 0.24), size1: 0.28, drag: 0, gravity: 0, stretch: 0 }, now);
     const ref = Math.abs(dir.u) < 0.9 ? { e: 0, n: 0, u: 1 } : { e: 1, n: 0, u: 0 };
     let a1 = { e: dir.n * ref.u - dir.u * ref.n, n: dir.u * ref.e - dir.e * ref.u, u: dir.e * ref.n - dir.n * ref.e };
     const l1 = Math.hypot(a1.e, a1.n, a1.u) || 1;
@@ -312,7 +314,7 @@ export class WorldParticles {
     const petal = (d: Enu, length: number) => this.add(here, { e: at.e + d.e * length * 0.5, n: at.n + d.n * length * 0.5, u: at.u + d.u * length * 0.5 }, {
       // a barely moving particle stretched along its direction: a petal of the given length
       kind: 'flame', ve: d.e * crawl, vn: d.n * crawl, vu: d.u * crawl,
-      life: rand(32, 44), size0: 0.09, size1: 0.06, drag: 0, gravity: 0, stretch: length / crawl,
+      life: rand(18, 30), size0: 0.055, size1: 0.035, drag: 0, gravity: 0, stretch: length / crawl,
     }, now);
     for (let k = 0; k < petals; k++) {
       const ang = turn + (k / petals) * Math.PI * 2;

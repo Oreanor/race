@@ -1114,6 +1114,32 @@ export class WorldTiles {
   }
 
   /** Actual wet bed, as distinct from the dry-bank grid used for driving. */
+  /**
+   * On water: a lake, river or sea polygon, or a stream, ditch or canal line within its
+   * drawn width (those are ribbons, not in the water grid). For bullets: water splashes.
+   */
+  wetAt(lng: number, lat: number): boolean {
+    if (this.waterLevelAt(lng, lat) != null) return true;
+    const live = this.liveAt(lng, lat);
+    if (!live) return false;
+    const kx = METERS_PER_DEGREE * Math.cos(lat * Math.PI / 180), ky = METERS_PER_DEGREE;
+    for (const feature of live.data.features.waterway ?? []) {
+      const p = feature.properties ?? {};
+      if (p.brunnel === 'tunnel') continue;
+      // the widths streamMesh draws them at
+      const half = (String(p.class ?? '') === 'canal' ? 4 : 1.3) + 0.2;
+      const g = feature.geometry;
+      const lines = (g.type === 'LineString' ? [g.coordinates] : g.type === 'MultiLineString' ? g.coordinates : []) as [number, number][][];
+      for (const line of lines) for (let i = 1; i < line.length; i++) {
+        const ax = (line[i - 1][0] - lng) * kx, ay = (line[i - 1][1] - lat) * ky;
+        const dx = (line[i][0] - line[i - 1][0]) * kx, dy = (line[i][1] - line[i - 1][1]) * ky;
+        const t = Math.max(0, Math.min(1, -(ax * dx + ay * dy) / (dx * dx + dy * dy || 1)));
+        if (Math.hypot(ax + dx * t, ay + dy * t) <= half) return true;
+      }
+    }
+    return false;
+  }
+
   waterLevelAt(lng: number, lat: number): number | null {
     const live = this.liveAt(lng, lat);
     if (!live) return null;
@@ -1943,6 +1969,9 @@ export class WorldTiles {
     type Cand = { rings: [number, number][][]; crest: number; roof: RoofProfile; peak: number };
     const candidates: Cand[] = [];
     this.eachFootprint(mid, length / 2 + 30, (rings, height, roof, crest) => {
+      // a flat outline (a terrace, an underground part, a part with no height) is no wall:
+      // its 'roof' lay on the ground and took the aim and the shots over a yard
+      if (height < 1.5) return;
       candidates.push({ rings: rings(), crest: crest * exaggeration, roof, peak: crest * exaggeration + height });
     });
     if (!candidates.length) return null;

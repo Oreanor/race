@@ -940,6 +940,7 @@ export function vehicleLayer(
       let wallHit = false;
       let glassHit = false;
       let groundHit = false;
+      let wetHit = false;
       if (wall) {
         const wallDelta = eastNorth(here, wall.point);
         const wallT = (wallDelta.east - cam.east) * ux + (wall.altitude - carAlt - cam.up) * uy + (wallDelta.north - cam.north) * uz;
@@ -970,7 +971,9 @@ export function vehicleLayer(
         bestT = Math.min(bestT, rayLen);
         hitUp = markAlt - carAlt;
         groundHit = true;
-        markGround(groundMark, markAlt);
+        // water takes no mark: it only splashes
+        wetHit = map.wetAt(groundMark);
+        if (!wetHit) markGround(groundMark, markAlt);
       }
 
       const end = offsetPosition(here, cam.east + ux * bestT, cam.north + uz * bestT);
@@ -1035,6 +1038,8 @@ export function vehicleLayer(
         if (!trainHit.vintage) fx.impact(here, hitAt, bounce, now, { scale: 0.8 });
       } else if (glassHit) {
         fx.glassShatter(here, hitAt, bounce, now);
+      } else if (wetHit) {
+        fx.splash(here, hitAt, { e: 0, n: 0, u: 1 }, now, 0.35);
       } else if (wallHit || groundHit) {
         const normal: Enu = groundHit ? { e: bounce.e * 0.4, n: bounce.n * 0.4, u: 1 } : bounce;
         // the ground: paved chips and sparks, grass, earth and sand throw clods; a wall is stone
@@ -1178,6 +1183,7 @@ export function vehicleLayer(
       if (hit) fx.impact(here, hitAt, { e: -dir.e, n: -dir.n, u: Math.max(0.35, -dir.u) }, now, { scale: 0.9 });
       else {
         const spot = offsetPosition(here, hitAt.e, hitAt.n) as Position;
+        if (map?.wetAt(spot)) { fx.splash(here, hitAt, { e: 0, n: 0, u: 1 }, now, 0.3); return; }
         const hard = map?.pavedAt(spot) ?? false;
         fx.impact(here, hitAt, { e: 0, n: 0, u: 1 }, now, { scale: 0.6, material: hard ? 'hard' : 'soil', surface: hard ? 'paved' : map?.surfaceAt(spot) });
       }
