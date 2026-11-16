@@ -1034,8 +1034,8 @@ export function vehicleLayer(
       } else if (wallHit || groundHit) {
         const normal: Enu = groundHit ? { e: bounce.e * 0.4, n: bounce.n * 0.4, u: 1 } : bounce;
         // the ground: paved chips and sparks, grass, earth and sand throw clods; a wall is stone
-        const surface = groundHit ? (map?.surfaceAt(end) ?? 'paved') : 'paved';
-        fx.impact(here, hitAt, normal, now, { scale: groundHit ? 0.7 : 0.9, material: surface === 'paved' ? 'hard' : 'soil', surface });
+        const hard = !groundHit || (map?.pavedAt(end) ?? false);
+        fx.impact(here, hitAt, normal, now, { scale: groundHit ? 0.7 : 0.9, material: hard ? 'hard' : 'soil', surface: hard ? 'paved' : map?.surfaceAt(end) });
       }
     }
   }
@@ -1173,8 +1173,9 @@ export function vehicleLayer(
       fx.tracer(here, muzzleAt, hitAt, now);
       if (hit) fx.impact(here, hitAt, { e: -dir.e, n: -dir.n, u: Math.max(0.35, -dir.u) }, now, { scale: 0.9 });
       else {
-        const surface = map?.surfaceAt(offsetPosition(here, hitAt.e, hitAt.n) as Position) ?? 'paved';
-        fx.impact(here, hitAt, { e: 0, n: 0, u: 1 }, now, { scale: 0.6, material: surface === 'paved' ? 'hard' : 'soil', surface });
+        const spot = offsetPosition(here, hitAt.e, hitAt.n) as Position;
+        const hard = map?.pavedAt(spot) ?? false;
+        fx.impact(here, hitAt, { e: 0, n: 0, u: 1 }, now, { scale: 0.6, material: hard ? 'hard' : 'soil', surface: hard ? 'paved' : map?.surfaceAt(spot) });
       }
     },
     get onRemoteHit() { return remoteHitHandler; },

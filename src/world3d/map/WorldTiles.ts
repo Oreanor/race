@@ -17,6 +17,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { bakeLampLight, FELL_STRIDE, GLASS_STRIDE, LAMP_ARM, LAMP_MAP, lampRegion, SOLID_STRIDE } from '../tiles/vegetationTile.ts';
 import { roofClearanceAt, type RoofProfile } from '@/game/buildings/RoofGenerator';
 import { METERS_PER_DEGREE } from '@/game/meters';
+import { roadStyle } from '../tiles/roadStyle.ts';
 import type { SkinId } from '../buildings/skins.ts';
 
 /** Window rhythm for fire markers — must track what the façade shader draws per skin. */
@@ -1142,6 +1143,34 @@ export class WorldTiles {
       }
     }
     return found;
+  }
+
+  /**
+   * On a paved road or pavement: within the drawn width of a transportation line (dirt
+   * tracks and unpaved paths are earth). Untagged open land is drawn as grass, so this, not
+   * surfaceAt (which calls everything untagged paved), tells a bullet stone from soil.
+   */
+  pavedAt(lng: number, lat: number): boolean {
+    const live = this.liveAt(lng, lat);
+    if (!live) return false;
+    const kx = METERS_PER_DEGREE * Math.cos(lat * Math.PI / 180), ky = METERS_PER_DEGREE;
+    for (const feature of live.data.features.transportation ?? []) {
+      const p = feature.properties ?? {};
+      const cls = String(p.class ?? ''), sub = String(p.subclass ?? '');
+      if (cls === 'track' || p.surface === 'unpaved') continue;
+      const style = roadStyle(cls, sub, Number(p.ramp) === 1);
+      if (!style) continue;
+      const half = style.width / 2 + 0.3;
+      const g = feature.geometry;
+      const lines = (g.type === 'LineString' ? [g.coordinates] : g.type === 'MultiLineString' ? g.coordinates : []) as [number, number][][];
+      for (const line of lines) for (let i = 1; i < line.length; i++) {
+        const ax = (line[i - 1][0] - lng) * kx, ay = (line[i - 1][1] - lat) * ky;
+        const dx = (line[i][0] - line[i - 1][0]) * kx, dy = (line[i][1] - line[i - 1][1]) * ky;
+        const t = Math.max(0, Math.min(1, -(ax * dx + ay * dy) / (dx * dx + dy * dy || 1)));
+        if (Math.hypot(ax + dx * t, ay + dy * t) <= half) return true;
+      }
+    }
+    return false;
   }
 
   private featureBox = new WeakMap<GeoFeature, [number, number, number, number]>();

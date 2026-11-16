@@ -357,6 +357,12 @@ export class ThreeMap {
     return this.world.surfaceAt(lng, lat);
   }
 
+  /** On a paved road or pavement (see WorldTiles.pavedAt). */
+  pavedAt(p: LngLatLike) {
+    const [lng, lat] = toLngLat(p);
+    return this.world.pavedAt(lng, lat);
+  }
+
   /** The house a shop is in (or the nearest within `radius` m): middle, top, footprint radius (m). */
   houseAt(p: LngLatLike, radius = 80) {
     const house = this.world.houseAt(toLngLat(p), radius);
