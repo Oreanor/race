@@ -524,12 +524,11 @@ export class WorldTiles {
       const failed = this.failures.get(plan.key);
       if (failed && now < failed.at) continue;
       if (this.pending.size >= flightCap) break;
-      // the map's far rectangle takes at most half the slots: the other half is always free
-      // for the tiles round the player (the rectangle kept them all, the car drove into black)
+      // keep a couple of slots for the car ring, but don't starve the panned-in view
       if (screen && this.ringKeys.size && !this.ringKeys.has(plan.key)) {
         let far = 0;
         for (const k of this.pending.keys()) if (!this.ringKeys.has(k)) far++;
-        if (far >= Math.ceil(flightCap / 2)) continue;
+        if (far >= Math.max(2, flightCap - 2)) continue;
       }
       this.request(plan.key, plan.tile);
     }
