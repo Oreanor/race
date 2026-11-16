@@ -78,6 +78,7 @@ import { canCable, Hauler, type HaulHost } from './Hauler.ts';
 import { Heist, type HeistHost } from './crime/Heist.ts';
 import { MissionBotDriver, type BotDriverHost } from './traffic/MissionBots.ts';
 import { Shops, type ShopsHost } from './economy/Shops.ts';
+import { Dealership, type DealershipHost } from './economy/Dealership.ts';
 import { JobPin, makeMapLabel, makeOffscreenIndicator, newMarker, paintMissionIndicator, setPinRange, type MapMarker } from './hud/mapPins.ts';
 import { hubAt, hubsFromFeatures, kilometres, nearestHub, ticketPrice, type Hub, type HubKind } from './Travel.ts';
 import { bearingTo, BOUNTY_RANGE_KM, loadBounty, makeBounty, saveBounty, type Bounty } from './Bounty.ts';
@@ -85,7 +86,6 @@ import type { GameSave } from './save.ts';
 import { BOX_REACH_M, COLLECT_BOXES, COLLECT_REWARD, deliveryReward, DELIVERY_MAX_M, DELIVERY_MIN_M, DELIVERY_REACH_M, randomItem, scatterBoxes, type DeliveryItem, type Errand } from './Errands.ts';
 import type {
   BountyOffer,
-  DealerOffer,
   EventOffer,
   EventResult,
   FuelHud,
@@ -365,6 +365,8 @@ export class GameEngine {
   /** the nitro bar under the speedometer: 0…1 left, whether it is burning now, and
    *  `spent`: run dry with Space still down — it waits for Space to be let go */
   private nitro = { level: 1, active: false, spent: false };
+  /** the car dealership and the garage swap (see Dealership) */
+  readonly dealer = new Dealership(this.dealerHost());
   /** the fuel station, the car service and the bank: their dialogs and the loan (see Shops) */
   readonly shops = new Shops(this.shopsHost());
   /** the mission bots at the wheel (see MissionBotDriver) */
@@ -427,8 +429,6 @@ export class GameEngine {
   /** ports, airports and railway stations: reaching one offers a ticket to any city */
   onTravelOffer: (offer: TravelOffer | null) => void = () => {};
   private hubs = new Map<string, Hub>();
-  /** car dealership dialog (Tab when on the lot, or arriving slowly) */
-  onDealerOffer: (offer: DealerOffer | null) => void = () => {};
   /** after a purchase: React keeps the menu car index in sync */
   onCarBought: (car: Car) => void = () => {};
   private repairShops = new Map<string, Station>();
@@ -445,7 +445,6 @@ export class GameEngine {
   private offeredService: string | null = null;
   /** cars we own: bought ones pile up here, none is sold back */
   private garage = new Set<string>();
-  private dealerOpen = false;
   /** key M: camera rises straight up for a ~2 × 2 km view from above (0 chase … 1 overview) */
   private overview = 0;
   private overviewTarget = 0;
@@ -706,11 +705,11 @@ export class GameEngine {
       if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'ShiftLeft', 'ShiftRight', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) this.keys.add(e.code);
       if (e.code === 'KeyR') this.resetCamera();
       if (e.code === 'Tab' && !e.repeat) {
-        if (this.tryOpenDealer()) { /* showroom takes Tab on the lot */ }
+        if (this.dealer.tryOpen()) { /* showroom takes Tab on the lot */ }
         else this.cycleMissionFocus();
       }
       if (e.code === 'KeyJ' && !e.repeat) this.beginRampCharge();
-      if (e.code === 'KeyC' && !e.repeat) this.swapCar();
+      if (e.code === 'KeyC' && !e.repeat) this.dealer.swapCar();
       if (e.code === 'KeyH' && !e.repeat) this.crime.tryHijack();
       if (e.code === 'KeyF' && !e.repeat) { this.beaconsOn = !this.beaconsOn; this.combatLayer?.setBeacons(this.beaconsOn); }
       if (e.code === 'KeyG' && !e.repeat) this.audio.hornOn(true);
@@ -911,6 +910,34 @@ export class GameEngine {
     } else n.level = Math.min(1, n.level + dt / NITRO_REFILL_S);
   }
 
+  /** Some dialog is up (an event offer, a ticket, a counter, the showroom, an empty tank). */
+  private dialogOpen() {
+    return Boolean(this.eventOffer || this.travelOpen || this.shops.serviceOpen || this.dealer.open || this.fuelOut);
+  }
+
+  /** The showroom's window on the game. */
+  private dealerHost(): DealershipHost {
+    const game = this;
+    return {
+      get runReady() { return game.runReady; },
+      get driving() { return game.driving; },
+      get paused() { return game.paused; },
+      get mode() { return game.mode; },
+      counterOpen: () => Boolean(game.shops.serviceOpen || game.travelOpen || game.fuelOut),
+      get dealerships() { return game.dealerships; },
+      get vehicle() { return game.vehicle; },
+      get keys() { return game.keys; },
+      offered: (id) => { game.offeredService = id; },
+      get car() { return game.car; },
+      get garage() { return game.garage; },
+      get playerMoney() { return game.playerMoney; },
+      set playerMoney(money) { game.playerMoney = money; },
+      setCar: (car) => game.setCar(car),
+      onCarBought: (car) => game.onCarBought(car),
+      say: (text, toast) => game.say(text, toast),
+    };
+  }
+
   /** The counters' window on the game: the car, its tank and health, the purse. */
   private shopsHost(): ShopsHost {
     const game = this;
@@ -1090,63 +1117,6 @@ export class GameEngine {
     }
     this.syncArenaAvailability(prev, next);
     this.syncMissionVisuals(true);
-  }
-
-  /** Lot catalogue for the dealership dialog. */
-  private dealerState(): DealerOffer {
-    return { money: Math.floor(this.playerMoney), currentId: this.car.id, owned: [...this.garage] };
-  }
-
-  /** Open the showroom when standing on a dealership lot (Tab, or slow arrival). */
-  private tryOpenDealer() {
-    if (!this.runReady) return false;
-    if (!this.driving || this.mode !== 'roam' || this.dealerOpen || this.shops.serviceOpen || this.travelOpen || this.fuelOut) return false;
-    const lot = atStation(this.vehicle.position, [...this.dealerships.values()], SERVICE_REACH.dealer);
-    if (!lot) return false;
-    this.offeredService = lot.id;
-    this.dealerOpen = true;
-    this.keys.clear();
-    this.vehicle.speed = 0;
-    this.onDealerOffer(this.dealerState());
-    return true;
-  }
-
-  leaveDealer() {
-    this.dealerOpen = false;
-    this.onDealerOffer(null);
-  }
-
-  /** Buy `carId` at its full price into the garage (nothing is sold back) and get in; one we own is free. */
-  buyDealerCar(carId: string) {
-    if (!this.dealerOpen) return;
-    const next = carsConfig.find((c) => c.id === carId);
-    if (!next || next.id === this.car.id) return;
-    if (!this.garage.has(next.id)) {
-      const price = carPrice(next);
-      if (price > this.playerMoney) return;
-      this.playerMoney -= price;
-      this.garage.add(next.id);
-    }
-    this.setCar(next);
-    this.onCarBought(next);
-    this.onDealerOffer(this.dealerState());
-  }
-
-  /** C: get into the next car of the garage, right where we are (not during a race or a fight). */
-  private swapCar() {
-    // a race or a fight is driven in the car it started in (the rivals were matched to it)
-    if (this.driving && !this.paused && this.mode !== 'roam') { this.say(t('garage.locked'), true); return; }
-    if (!this.driving || this.paused || this.mode !== 'roam' || this.garage.size < 2) {
-      if (this.driving && this.garage.size < 2) this.say(t('garage.one'), true);
-      return;
-    }
-    const owned = carsConfig.filter((car) => this.garage.has(car.id));
-    const at = owned.findIndex((car) => car.id === this.car.id);
-    const next = owned[(at + 1) % owned.length];
-    if (!next || next.id === this.car.id) return;
-    this.setCar(next);
-    this.onCarBought(next);
-    this.say(t('garage.swap', { car: next.name }), true);
   }
 
   /** Show / hide map plaques by category (fuel, hotels, airports…). */
@@ -3317,7 +3287,7 @@ export class GameEngine {
         && !this.eventOffer
         && !this.travelOpen
         && !this.shops.serviceOpen
-        && !this.dealerOpen
+        && !this.dealer.open
         && !this.fuelOut
         && now > this.bountyApproachCooldown
         && metersBetween(here, this.bountyPickup) <= MISSION_PICKUP_M
@@ -3328,7 +3298,7 @@ export class GameEngine {
       return;
     }
     if (!this.bounty) {
-      const busy = this.mode !== 'roam' || this.errand || this.bountyPending || this.eventOffer || this.travelOpen || this.shops.serviceOpen || this.dealerOpen || this.fuelOut || this.fire.active || this.impoundActive || this.taxi.active || this.busTour.active;
+      const busy = this.mode !== 'roam' || this.errand || this.bountyPending || this.dialogOpen() || this.fire.active || this.impoundActive || this.taxi.active || this.busTour.active;
       if (busy || now < this.bountyOfferAt) return;
       const seed = Math.round(here[0] * 1e5) ^ Math.round(here[1] * 1e5) ^ (now | 0);
       const avoid = this.missions.map(mission => mission.position);
@@ -3456,7 +3426,7 @@ export class GameEngine {
       position: this.vehicle.position,
       heading: this.vehicle.heading,
       mode: this.mode,
-      busy: Boolean(this.eventOffer || this.travelOpen || this.shops.serviceOpen || this.dealerOpen || this.fuelOut),
+      busy: Boolean(this.dialogOpen()),
       bountyFight: this.bountyFight,
       errand: Boolean(this.errand),
       onMission: this.onMission(),
@@ -3503,7 +3473,7 @@ export class GameEngine {
       position: this.vehicle.position,
       heading: this.vehicle.heading,
       mode: this.mode,
-      busy: Boolean(this.eventOffer || this.travelOpen || this.shops.serviceOpen || this.dealerOpen || this.fuelOut || this.taxi.pending || this.busTour.pending),
+      busy: Boolean(this.dialogOpen() || this.taxi.pending || this.busTour.pending),
       bountyFight: this.bountyFight,
       errand: Boolean(this.errand),
       onMission: this.onMission(),
@@ -3551,7 +3521,7 @@ export class GameEngine {
       position: this.vehicle.position,
       heading: this.vehicle.heading,
       mode: this.mode,
-      busy: Boolean(this.eventOffer || this.travelOpen || this.shops.serviceOpen || this.dealerOpen || this.fuelOut || this.taxi.pending || this.busTour.pending || this.ambulance.pending),
+      busy: Boolean(this.dialogOpen() || this.taxi.pending || this.busTour.pending || this.ambulance.pending),
       bountyFight: this.bountyFight,
       errand: Boolean(this.errand),
       onMission: this.onMission(),
@@ -3693,7 +3663,7 @@ export class GameEngine {
     return {
       position: this.vehicle.position,
       mode: this.mode,
-      busy: Boolean(this.eventOffer || this.travelOpen || this.shops.serviceOpen || this.dealerOpen || this.fuelOut || this.busTour.active || this.busTour.pickup || this.busTour.pending || this.taxi.pending),
+      busy: Boolean(this.dialogOpen() || this.busTour.active || this.busTour.pickup || this.busTour.pending || this.taxi.pending),
       stops: [...this.busStops.values()],
       say: (text, toast) => this.say(text, toast),
       addMoney: (amount) => { this.playerMoney += amount; },
@@ -3711,7 +3681,7 @@ export class GameEngine {
       position: this.vehicle.position,
       heading: this.vehicle.heading,
       mode: this.mode,
-      busy: Boolean(this.eventOffer || this.travelOpen || this.shops.serviceOpen || this.dealerOpen || this.fuelOut || this.taxi.pending || this.busTour.pending),
+      busy: Boolean(this.dialogOpen() || this.taxi.pending || this.busTour.pending),
       bountyFight: this.bountyFight,
       errand: Boolean(this.errand),
       onMission: this.onMission(),
@@ -3785,7 +3755,7 @@ export class GameEngine {
       return;
     }
     if (this.mode !== 'roam' || this.bountyFight || this.errand || this.onMission()) return;
-    const busy = this.eventOffer || this.travelOpen || this.shops.serviceOpen || this.dealerOpen || this.fuelOut;
+    const busy = this.dialogOpen();
     if (busy || now < this.impoundOfferAt) return;
     const seed = Math.round(here[0] * 1e5) ^ Math.round(here[1] * 1e5) ^ (now | 0);
     const avoid = this.missions.map((mission) => mission.position);
@@ -4416,9 +4386,9 @@ export class GameEngine {
     const here = station ?? shop ?? dealer ?? bank;
     if (!here) this.offeredService = null;
     // not before the saved run (purse, garage, health) is in: a dialog would show it empty
-    else if (this.runReady && here.id !== this.offeredService && Math.abs(this.vehicle.speed) < 7 && !this.shops.serviceOpen && !this.dealerOpen && !this.shops.bankOpen && !this.travelOpen && !this.fuelOut && this.mode === 'roam') {
+    else if (this.runReady && here.id !== this.offeredService && Math.abs(this.vehicle.speed) < 7 && !this.shops.serviceOpen && !this.dealer.open && !this.shops.bankOpen && !this.travelOpen && !this.fuelOut && this.mode === 'roam') {
       this.offeredService = here.id;
-      if (dealer && here.id === dealer.id) this.tryOpenDealer();
+      if (dealer && here.id === dealer.id) this.dealer.tryOpen();
       else if (bank && here.id === bank.id) this.shops.openBank();
       else this.shops.openService(station ? 'fuel' : 'repair');
     }

@@ -525,7 +525,7 @@ export default function Game() {
       game.onTravelOffer = (offer) => setTravelOffer(offer);
       game.shops.onServiceOffer = (offer) => setServiceOffer(offer);
       game.shops.onBankOffer = (offer) => setBankOffer(offer);
-      game.onDealerOffer = (offer) => setDealerOffer(offer);
+      game.dealer.onOffer = (offer) => setDealerOffer(offer);
       game.onCarBought = (bought) => {
         // `car` indexes the price-sorted carousel (introCars), not the config order
         const index = introCars.findIndex((entry) => entry.id === bought.id);
@@ -1125,8 +1125,8 @@ export default function Game() {
       {dealerOffer && driving && !fuelOut && (
         <DealershipDialog
           offer={dealerOffer}
-          onBuy={(carId) => engine.current?.buyDealerCar(carId)}
-          onLeave={() => engine.current?.leaveDealer()}
+          onBuy={(carId) => engine.current?.dealer.buy(carId)}
+          onLeave={() => engine.current?.dealer.leave()}
         />
       )}
 
