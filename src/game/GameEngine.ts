@@ -6430,14 +6430,12 @@ export class GameEngine {
       // open/hold: screen rectangle. closing: only while still mostly top-down —
       // mid-pitch unproject would inflate bounds; softKeep covers the rest of the blend
       this.map.setScreenStream(this.overviewTarget > 0 || this.overview > 0.65);
-      // hold calm a bit after the blend lands — first free frames were still uploading towers
+      // calm only during the camera blend; once the map is open keep streaming so panned tiles can appear
       const mapBlending = this.overviewTarget > 0 ? this.overview < 0.98 : this.overview > 0.02;
-      const mapHoldCalm = this.overviewFree && this.overviewTarget > 0 && performance.now() < this.mapCalmUntil;
-      this.map.setStreamCalm(mapBlending || mapHoldCalm);
+      this.map.setStreamCalm(mapBlending);
       if (this.overviewTarget > 0 && this.overview > 0.98) {
         if (!this.overviewFree) {
           this.overviewFree = true;
-          this.mapCalmUntil = performance.now() + 1800;
           this.setOverviewMapNav(true);
           this.stopGun();
           // labels next tick — same frame as leaving calm was hitching the open
