@@ -136,19 +136,28 @@ const VERTEX = /* glsl */ `
     vec3 side;
     vec3 up;
     vec2 corner = position.xy;
+    vUv = position.xy * 2.0;
+    vColor = iColor;
+    vMeta = iMeta.yz;
+    if (dot(iAxis, iAxis) > 1e-6 && !(iMeta.y > 0.5 && iMeta.y < 1.5)) {
+      // streak: a band between its two ends (centre -/+ half the axis), each end in its own
+      // perspective and the width across the band as seen from there. A camera-facing quad
+      // as long as the axis ran a tracer flying away from the camera far up the screen, and
+      // one as long as the axis looks (projected) shrank it to a dot
+      vec3 dir = normalize(iAxis);
+      vec3 end = iPos + iAxis * (corner.y > 0.0 ? 0.5 : -0.5);
+      vec3 across = cross(dir, normalize(uEye - end));
+      float al = length(across);
+      across = al > 1e-4 ? across / al : normalize(cross(vec3(0.0, 1.0, 0.0), normalize(uEye - end)));
+      // the ends rounded off by half a width
+      vec3 q = end + across * corner.x * size + dir * sign(corner.y) * size * 0.5;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(q, 1.0);
+      return;
+    }
     if (iMeta.y > 0.5 && iMeta.y < 1.5) {
       // ground ring: flat, horizontal
       side = vec3(1.0, 0.0, 0.0);
       up = vec3(0.0, 0.0, 1.0);
-    } else if (dot(iAxis, iAxis) > 1e-6) {
-      // streak: long side along the motion as seen from the camera
-      vec3 axis = iAxis - forward * dot(iAxis, forward);
-      float len = length(axis);
-      up = len > 1e-5 ? axis / len : vec3(0.0, 1.0, 0.0);
-      side = normalize(cross(up, forward));
-      // as long as the streak looks from here (its part across the view): the full length
-      // drew a streak pointing away from the camera far up the screen, past its end
-      corner.y = corner.y * (size + len) / size;
     } else {
       side = normalize(cross(vec3(0.0, 1.0, 0.0), forward));
       up = cross(forward, side);
@@ -160,9 +169,6 @@ const VERTEX = /* glsl */ `
       side = s2;
     }
     vec3 p = iPos + (side * corner.x + up * corner.y) * size;
-    vUv = position.xy * 2.0;
-    vColor = iColor;
-    vMeta = iMeta.yz;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
   }
 `;

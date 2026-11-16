@@ -767,7 +767,10 @@ export class ThreeMap {
       n.set(h.normal[0], h.normal[1], -h.normal[2]).normalize();
       p.set((mercatorX01(h.at[0]) - this.origin.x01) / perMeter, h.altitude, (mercatorY01(h.at[1]) - this.origin.y01) / perMeter).addScaledVector(n, 0.02);
       q.setFromUnitVectors(z, n);
-      m.compose(p, q, one.setScalar(0.8 + ((i * 7919) % 5) * 0.1));
+      // a mark in the ground is a small crater, and it is seen at a grazing angle: at the
+      // wall size it shrank to a pixel and most shots into the ground seemed to leave none
+      const grazing = Math.abs(h.normal[1]) > 0.5 ? 2.2 : 1;
+      m.compose(p, q, one.setScalar((0.8 + ((i * 7919) % 5) * 0.1) * grazing));
       this.holeMesh.setMatrixAt(i, m);
     });
     this.holeMesh.count = this.holes.length;
