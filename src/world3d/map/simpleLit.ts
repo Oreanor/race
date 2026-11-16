@@ -67,7 +67,7 @@ const LEAF_VERTEX = /* glsl */ `
 
 /**
  * GLSL (fragment): leaf light and shade, projected from three sides in the plant's frame
- * (it stays on the plant: on world positions it slid at every rebase), a tile every 1.6 m,
+ * (it stays on the plant: on world positions it slid at every rebase), a tile every 3.2 m,
  * fading out with distance (far leaves would only shimmer); and warmer / cooler patches.
  */
 const LEAF_FRAGMENT = /* glsl */ `
@@ -79,7 +79,7 @@ const LEAF_FRAGMENT = /* glsl */ `
     vec3 w = abs(normalize(vLeafN));
     w = w * w * w * w;
     w /= (w.x + w.y + w.z + 1e-4);
-    vec3 p = vLeafPos / 1.6;
+    vec3 p = vLeafPos / 3.2;
     float leaf = 0.5;
     if (uLeavesOn > 0.5) leaf = texture2D(uLeaves, p.zy).r * w.x + texture2D(uLeaves, p.xz).r * w.y + texture2D(uLeaves, p.xy).r * w.z;
     float near = 1.0 - smoothstep(35.0, 120.0, dist);
