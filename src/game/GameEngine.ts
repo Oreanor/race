@@ -75,6 +75,7 @@ import { fuelStationsLayer } from '@/rendering/FuelStationsLayer';
 import { isVintageTrain, trainsLayer } from '@/rendering/TrainsLayer';
 import { RailNetwork, TrainTraffic } from './Trains.ts';
 import { canCable, Hauler, type HaulHost } from './Hauler.ts';
+import { Heist, policePace, type HeistHost } from './crime/Heist.ts';
 import { JobPin, makeMapLabel, makeOffscreenIndicator, newMarker, paintMissionIndicator, setPinRange, type MapMarker } from './hud/mapPins.ts';
 import { hubAt, hubsFromFeatures, kilometres, nearestHub, ticketPrice, type Hub, type HubKind } from './Travel.ts';
 import { bearingTo, BOUNTY_RANGE_KM, loadBounty, makeBounty, saveBounty, type Bounty } from './Bounty.ts';
@@ -98,9 +99,6 @@ import type {
 import {
   ARENA_FEE,
   ARENA_PRIZE,
-  ARREST_COSTS,
-  ARREST_FINE,
-  BANK_CRACK_MS,
   CASH_BUNDLE,
   CUSTOM_PIN_COLORS,
   ERRAND_BEACONS,
@@ -116,7 +114,6 @@ import {
   GRAVITY,
   COIN_RESPAWN_M,
   COIN_SPACING_M,
-  BLACK_MARKET_SHARE,
   HAULER_ID,
   IMPOUND_ARRIVE_M,
   IMPOUND_REWARD,
@@ -125,8 +122,6 @@ import {
   METERS_PER_DEGREE,
   MISSION_COLORS,
   MISSION_PICKUP_M,
-  POLICE_GIVE_UP_M,
-  POLICE_GIVE_UP_MS,
   BOUNTY_CAR_IDS,
   POLICE_IDS,
   RACE_FEE,
@@ -144,16 +139,8 @@ const wrapDegrees = (deg: number) => ((deg + 180) % 360 + 360) % 360 - 180;
 const CAMERA_STORE = 'race.camera';
 /** a racer looks this far (m) straight toward the flag: clear of houses and water → it cuts across */
 const RACE_LOOK_M = 400;
-/** on the run: how often a patrol in the traffic may join the chase (ms) */
-const POLICE_JOIN_MS = 20_000;
 /** a tow, a ticket, a respawn: the ground this far (m) round the arrival must be in first */
 const ARRIVAL_M = 400;
-/** the odds of a patrol joining at each POLICE_JOIN_MS check */
-const POLICE_JOIN_CHANCE = 0.25;
-/** no patrol joins once the nearest police car is this far behind (m): we are getting away */
-const POLICE_JOIN_NEAR_M = 350;
-/** the patrol car's top speed (Fleetline, m/s): a stolen car slower than this draws one patrol car at a time */
-const POLICE_CAR_SPEED = 150 / 3.6;
 /** hit a wall faster than this (km/h) and coins jump out of it (3; 5 from 150, 10 from 200) */
 const WALL_COIN_KMH = 100;
 /** …when the wall takes at least this much of the speed (m/s, ~40 km/h): a hit, not a graze */
@@ -382,6 +369,8 @@ export class GameEngine {
   /** the nitro bar under the speedometer: 0…1 left, whether it is burning now, and
    *  `spent`: run dry with Space still down — it waits for Space to be let go */
   private nitro = { level: 1, active: false, spent: false };
+  /** bank jobs, hijacks and the police after us (see Heist) */
+  private crime = new Heist(this.heistHost());
   /** the Howler's and the Batmobile's cable (see Hauler) */
   private hauler = new Hauler(this.haulHost());
   /** us on the map (M): a dot with an arrow along our heading */
@@ -446,28 +435,16 @@ export class GameEngine {
   onCarBought: (car: Car) => void = () => {};
   private repairShops = new Map<string, Station>();
   private dealerships = new Map<string, Station>();
-  /** banks from the POI layer; a robbed one stays shut until the time in `bankShut` */
+  /** banks from the POI layer; a robbed one stays shut a while (see Heist) */
   private banks = new Map<string, Station>();
-  private bankShut = new Map<string, number>();
-  /** shots landing on a bank right now: which one and for how long */
-  private bankShots: { id: string; ms: number; last: number } | null = null;
-  /**
-   * A bank job in progress (mode 'arena' for the guns and contacts): cash picked up so far,
-   * police to send (a downed car calls two more), a touch or a wrecked car = arrest.
-   */
-  private heist: { cash: number; reinforce: number; sent: number; caught: boolean; joined?: number; joinAt?: number; stolen?: { carId: string; previousId: string; owned: boolean; fuel: number } } | null = null;
   /** each chasing bot's last look at its target: is the way clear of houses (checked every 300 ms) */
   private botSight = new Map<string, { at: number; clear: boolean }>();
   /** hunters that got stuck: no cutting across until then (ms) */
   private botNoCut = new Map<string, number>();
   /** where each hunter last made headway (for spotting a stuck one) */
   private botProgress = new Map<string, { at: number; position: Position }>();
-  /** when each police car fell that far behind (it gives up after POLICE_GIVE_UP_MS) */
-  private policeFar = new Map<string, number>();
   /** parking lots from the POI layer */
   private parkingLots = new Map<string, [number, number]>();
-  /** the parked car we last told the player about (H to hijack) */
-  private hijackHintFor: string | null = null;
   /** Police stations, prisons, courts, hospitals — arrest drop-off points. */
   private civics = new Map<string, Station & { kind: CivicKind }>();
   private serviceMarkers = new Map<string, MapMarker>();
@@ -622,7 +599,7 @@ export class GameEngine {
       send: (cars) => this.players.sendTraffic(cars),
       hit: (id) => this.players.hitTraffic(id),
       // the police after us: everybody sees them, they chase only us
-      extras: () => this.heist ? this.trafficBots
+      extras: () => this.crime.heist ? this.trafficBots
         .filter((bot) => bot.id.startsWith('police') && this.combatLayer?.isTargetAlive(bot.id) !== false)
         .map((bot) => ({ id: bot.id, car: bot.car.id, p: bot.position, h: bot.heading, s: bot.controller.speed, hp: Math.round(this.combatLayer?.targetHp(bot.id) ?? 1000) })) : [],
       hitExtra: (id) => { this.combatLayer?.damageTarget(id, HIT_DAMAGE); },
@@ -689,7 +666,7 @@ export class GameEngine {
         (text) => this.say(text),
         (cam, camAlt, ground, groundAlt, mark) => {
           const hit = this.map.raycastBuildings(cam, camAlt, ground, groundAlt, mark);
-          if (mark && hit) this.bankShot(hit.point);
+          if (mark && hit) this.crime.bankShot(hit.point);
           return hit;
         },
         (point, altitude) => this.map.markGround(point, altitude),
@@ -747,7 +724,7 @@ export class GameEngine {
       }
       if (e.code === 'KeyJ' && !e.repeat) this.beginRampCharge();
       if (e.code === 'KeyC' && !e.repeat) this.swapCar();
-      if (e.code === 'KeyH' && !e.repeat) this.tryHijack();
+      if (e.code === 'KeyH' && !e.repeat) this.crime.tryHijack();
       if (e.code === 'KeyF' && !e.repeat) { this.beaconsOn = !this.beaconsOn; this.combatLayer?.setBeacons(this.beaconsOn); }
       if (e.code === 'KeyG' && !e.repeat) this.audio.hornOn(true);
       if (e.code === 'KeyM' && !e.repeat) this.toggleOverview();
@@ -945,6 +922,61 @@ export class GameEngine {
       n.level = Math.max(0, n.level - dt / NITRO_BURN_S);
       if (n.level <= 0) { n.spent = true; n.active = false; }
     } else n.level = Math.min(1, n.level + dt / NITRO_REFILL_S);
+  }
+
+  /** A chase's window on the game. */
+  private heistHost(): HeistHost {
+    const game = this;
+    return {
+      get mode() { return game.mode; },
+      set mode(mode) { game.mode = mode; },
+      get bountyFight() { return game.bountyFight; },
+      get driving() { return game.driving; },
+      get paused() { return game.paused; },
+      onMission: () => game.onMission(),
+      get banks() { return game.banks; },
+      get vehicle() { return game.vehicle; },
+      get renderVehicle() { return game.renderVehicle; },
+      get bearing() { return game.bearing; },
+      set bearing(bearing) { game.bearing = bearing; },
+      get accumulator() { return game.accumulator; },
+      set accumulator(value) { game.accumulator = value; },
+      get car() { return game.car; },
+      get fuel() { return game.fuel; },
+      get garage() { return game.garage; },
+      setCar: (car) => game.setCar(car),
+      onCarBought: (car) => game.onCarBought(car),
+      get collisions() { return game.collisions; },
+      get water() { return game.water; },
+      get map() { return game.map; },
+      get mapLoaded() { return game.mapLoaded; },
+      get combatLayer() { return game.combatLayer; },
+      get sharedTraffic() { return game.sharedTraffic; },
+      get trafficNetwork() { return game.trafficNetwork; },
+      get trafficBots() { return game.trafficBots; },
+      set trafficBots(bots) { game.trafficBots = bots; },
+      get pickups() { return game.pickups; },
+      nextDropId: () => game.dropSerial++,
+      refreshPickups: () => game.combatLayer?.setPickups(game.pickupVisuals()),
+      botsChanged: () => { game.ensureTrafficMarkers(); game.combatLayer?.setTargets(game.targetVehicles()); },
+      forgetContacts: () => game.vehicleContactTimes.clear(),
+      hideEventBeacons: () => game.hideEventBeacons(),
+      showEventBeacons: () => game.showEventBeacons(),
+      clearEventBots: () => game.clearEventBots(),
+      get eventCooldown() { return game.eventCooldown; },
+      set eventCooldown(at) { game.eventCooldown = at; },
+      get playerHp() { return game.playerHp; },
+      set playerHp(hp) { game.playerHp = hp; },
+      get playerMaxHp() { return game.playerMaxHp; },
+      get playerMoney() { return game.playerMoney; },
+      set playerMoney(money) { game.playerMoney = money; },
+      onEventResult: (result) => game.onEventResult(result),
+      get audio() { return game.audio; },
+      nearestCivic: () => game.nearestCivic(),
+      nearbyRoadSpot: () => game.nearbyRoadSpot(),
+      placeCarAt: (position) => game.placeCarAt(position),
+      say: (text, toast) => game.say(text, toast),
+    };
   }
 
   /** The cable's window on the game: our car, the world, the cars it can take. */
@@ -1258,7 +1290,7 @@ export class GameEngine {
       money: Math.floor(this.playerMoney),
       fuel: this.fuel.ratio,
       hp: this.playerHp,
-      carId: this.heist?.stolen?.previousId ?? this.car.id, // a stolen car is never kept
+      carId: this.crime.heist?.stolen?.previousId ?? this.car.id, // a stolen car is never kept
       position: [...this.vehicle.position] as [number, number],
       heading: this.vehicle.heading,
       place: { name: place.name, country: place.country, coords: [...place.coords] as [number, number] },
@@ -1290,7 +1322,7 @@ export class GameEngine {
     if (this.taxi.pending || this.taxi.active) this.suspendTaxi();
     if (this.busTour.pending || this.busTour.active) this.suspendBusTour();
     this.mode = 'roam';
-    this.heist = null;
+    this.crime.heist = null;
     this.raceGoal = null;
     this.combatLayer?.setRaceFinish(null);
     this.clearEventBots();
@@ -1332,7 +1364,7 @@ export class GameEngine {
     this.raceCheckpointMarkers.clear();
     this.trafficBots = [];
     this.hunterGuns.clear();
-    this.policeFar.clear();
+    this.crime.policeFar.clear();
     this.botSight.clear();
     this.raceStartAt = 0;
     this.combatLayer?.setTargets([]);
@@ -1738,8 +1770,8 @@ export class GameEngine {
 
       applyPosition(a, collision.a);
       applyPosition(b, collision.b);
-      if (this.heist && ((a.id === 'player' && b.id.startsWith('police')) || (b.id === 'player' && a.id.startsWith('police')))) {
-        this.heist.caught = true;
+      if (this.crime.heist && ((a.id === 'player' && b.id.startsWith('police')) || (b.id === 'player' && a.id.startsWith('police')))) {
+        this.crime.heist.caught = true;
       }
       const key = `${a.id}:${b.id}`;
       if (now - (this.vehicleContactTimes.get(key) ?? 0) < 280) return;
@@ -1943,7 +1975,7 @@ export class GameEngine {
     this.playerHp = Math.max(0, this.playerHp - amount);
     this.combatLayer?.flashPlayer(flash);
     // a bank job ends in an arrest (updateHeist), with its own place and bill
-    if (this.playerHp > 0 || this.heist) return;
+    if (this.playerHp > 0 || this.crime.heist) return;
     this.wreck();
   }
 
@@ -2565,7 +2597,7 @@ export class GameEngine {
       this.combatLayer?.popPickup(id);
       if (pickup.kind === 'cash') {
         money += CASH_BUNDLE;
-        if (this.heist) this.heist.cash += CASH_BUNDLE;
+        if (this.crime.heist) this.crime.heist.cash += CASH_BUNDLE;
       } else money += 10;
     }
     if (!money) return;
@@ -2617,98 +2649,6 @@ export class GameEngine {
     controller.position = offsetPosition(at, px, py) as [number, number];
     controller.speed *= -0.2;
     return true;
-  }
-
-  /** A bullet hit a wall: on a bank's house, three seconds of fire crack it open. */
-  private bankShot(point: [number, number]) {
-    if (this.mode !== 'roam' || this.bountyFight || !this.driving || this.onMission()) return;
-    const now = performance.now();
-    let bank: Station | null = null;
-    for (const candidate of this.banks.values()) {
-      if (metersBetween(point, candidate.place ?? candidate.position) > 22) continue;
-      if (metersBetween(this.vehicle.position, candidate.place ?? candidate.position) > 36) continue;
-      if ((this.bankShut.get(candidate.id) ?? 0) > now) { this.say(t('heist.shut')); return; }
-      bank = candidate;
-      break;
-    }
-    if (!bank) return;
-    const shots = this.bankShots;
-    if (!shots || shots.id !== bank.id || now - shots.last > 450) {
-      this.bankShots = { id: bank.id, ms: 0, last: now };
-      this.say(t('heist.cracking'), true);
-      return;
-    }
-    shots.ms += now - shots.last;
-    shots.last = now;
-    if (shots.ms >= BANK_CRACK_MS) {
-      this.bankShots = null;
-      this.startHeist(bank);
-    }
-  }
-
-  /** The bank gives: 3–5 bundles fly out of the door, and three police cars come from three sides. */
-  private startHeist(bank: Station) {
-    const now = performance.now();
-    this.bankShut.set(bank.id, now + 15 * 60_000);
-    const from = (bank.place ?? bank.position) as [number, number];
-    const count = 3 + Math.floor(Math.random() * 3);
-    for (let i = 0; i < count; i++) {
-      const angle = Math.random() * Math.PI * 2;
-      const r = 1.5 + Math.random() * 3;
-      let rest = offsetPosition(bank.position, Math.sin(angle) * r, Math.cos(angle) * r) as [number, number];
-      if (this.collisions.sightBlocked(bank.position, rest)) rest = [...bank.position] as [number, number];
-      this.pickups.set(`cash:${this.dropSerial++}`, { position: rest, color: '#3f8f4e', kind: 'cash', drop: { from: [...from] as [number, number], at: now } });
-    }
-    this.combatLayer?.setPickups(this.pickupVisuals());
-    this.startChase();
-    this.say(t('heist.alarm'), true);
-  }
-
-  /** Three police cars come for us (a bank job or a hijack); `stolen`: the car we took. */
-  private startChase(stolen?: { carId: string; previousId: string; owned: boolean; fuel: number }) {
-    this.trafficBots = [];
-    this.heist = { cash: 0, reinforce: 0, sent: 0, caught: false, stolen };
-    this.mode = 'arena';
-    this.vehicleContactTimes.clear();
-    this.hideEventBeacons();
-    this.sendPolice(3);
-  }
-
-  /** H beside a parked car (ours or somebody else's): get in and drive off — the police come. */
-  private tryHijack() {
-    if (!this.driving || this.paused || this.mode !== 'roam' || this.bountyFight) return;
-    if (this.onMission()) { this.say(t('mission.busy'), true); return; }
-    const near = this.sharedTraffic.parkedNear(this.vehicle.position, 4.5);
-    if (!near) { this.say(t('hijack.none'), true); return; }
-    if (Math.abs(this.vehicle.speed) > 2.5) { this.say(t('hijack.slow'), true); return; }
-    this.sharedTraffic.takeParked(near.id);
-    const previous = this.car;
-    // our own tank waits with our car; the stolen one has whatever its owner left in it
-    const ourFuel = this.fuel.level;
-    // a stolen car never joins the garage: get away and it goes to the black market
-    const owned = this.garage.has(near.car.id);
-    this.setCar(near.car);
-    this.onCarBought(near.car);
-    this.fuel.level = this.fuel.spec.tank * (0.25 + Math.random() * 0.6);
-    // we sit in it where it stood; our own car waits in the garage
-    this.vehicle.position = [...near.position] as [number, number];
-    this.vehicle.heading = near.heading;
-    this.vehicle.speed = 0;
-    this.vehicle.throttle = 0;
-    this.bearing = this.vehicle.heading * 180 / Math.PI;
-    this.renderVehicle.reset(this.vehicle);
-    this.accumulator = 0;
-    this.startChase({ carId: near.car.id, previousId: previous.id, owned, fuel: ourFuel });
-    this.say(t('hijack.started', { car: near.car.name }), true);
-  }
-
-  /** A word when we stop beside a parked car. */
-  private hijackHint() {
-    if (!this.driving || this.mode !== 'roam' || this.onMission() || Math.abs(this.vehicle.speed) > 2.5) return;
-    const near = this.sharedTraffic.parkedNear(this.vehicle.position, 4.5);
-    if (!near || near.id === this.hijackHintFor) return;
-    this.hijackHintFor = near.id;
-    this.say(t('hijack.hint', { car: near.car.name }), true);
   }
 
   /**
@@ -2776,197 +2716,6 @@ export class GameEngine {
     this.botProgress.set(bot.id, { at: now, position: [...bot.position] as Position });
   }
 
-  /**
-   * The police drive their own cars honestly: that car's pickup and top speed, no rubber band
-   * to ours; the boost like ours on the straights. They got the call and pull away from a standstill.
-   */
-  private policePace(bot: { position: [number, number] | Position; car: Car }) {
-    return {
-      ...vehicleConfig,
-      acceleration: bot.car.acceleration,
-      maxSpeed: bot.car.maxSpeed,
-    };
-  }
-
-  /**
-   * Free ground 100–200 m from us, roughly toward `angle`: no road needed (they cut across
-   * yards and squares anyway), just not inside a house or in the water. The old road pick
-   * (sampled randomAway) missed and fell back to any node, often ~1 km off.
-   */
-  private policeSpawn(me: [number, number], angle: number, taken: [number, number][], far = false): [number, number] | null {
-    // the first call: 100–200 m, they pull away at once; reinforcements drive in from farther
-    for (const r of far ? [550, 480, 620, 450, 650] : [150, 120, 180, 105, 195]) {
-      for (const turn of [0, 0.35, -0.35, 0.7, -0.7, 1.05, -1.05]) {
-        const a = angle + turn;
-        const spot = offsetPosition(me, Math.sin(a) * r, Math.cos(a) * r) as [number, number];
-        // our collision set only reaches 260 m: farther, ask the houses round the spot itself
-        let walls = this.collisions;
-        if (far) {
-          walls = new BuildingCollisions();
-          walls.update(spot, this.map.world.buildingsNear(spot, 30, this.map.exaggeration));
-        }
-        if (walls.blocked(spot, spot, a + Math.PI) || this.water.covers(spot, true)) continue;
-        if (taken.some((other) => metersBetween(other, spot) < 12)) continue;
-        taken.push(spot);
-        return spot;
-      }
-    }
-    return null;
-  }
-
-  /** Police cars 100–200 m out (reinforcements: 450–650 m), spread round us, coming in. */
-  private sendPolice(count: number, far = false) {
-    const heist = this.heist;
-    if (!heist) return;
-    const me = this.vehicle.position as [number, number];
-    const used = new Set<string>();
-    const base = Math.random() * Math.PI * 2;
-    const police = carsConfig.filter((car) => car.id === '09' || car.id === '16');
-    const spots: [number, number][] = [];
-    for (let k = 0; k < count && heist.sent < 14; k++) {
-      const angle = base + (k / count) * Math.PI * 2;
-      const spot = this.policeSpawn(me, angle, spots, far);
-      const r = far ? 550 : 150;
-      const around = spot ?? offsetPosition(me, Math.sin(angle) * r, Math.cos(angle) * r) as [number, number];
-      const car = police[(heist.sent + k) % police.length] ?? carsConfig[0];
-      const bot = createTrafficBot(`police-${heist.sent}`, t('heist.police'), car, this.trafficNetwork, around, angle + Math.PI, used, 'hunt', (heist.sent + 1) * 7919, { min: 0, max: 70 });
-      if (spot) {
-        // stand exactly there, facing us; the first path is found from here
-        const heading = Math.atan2(
-          (me[0] - spot[0]) * Math.cos(spot[1] * Math.PI / 180),
-          me[1] - spot[1],
-        );
-        bot.controller.position = [...spot];
-        bot.controller.heading = heading;
-        bot.controller.speed = 0;
-        bot.position = [...spot];
-        bot.heading = heading;
-        bot.route = [];
-        bot.routeIndex = 1;
-        bot.repathAt = 0;
-      }
-      heist.sent++;
-      this.trafficBots.push(bot);
-    }
-    this.ensureTrafficMarkers();
-    this.combatLayer?.setTargets(this.targetVehicles());
-  }
-
-  /** The chase: police shoot to kill; a touch or a wrecked car is an arrest. 1 km ahead = freedom. */
-  private updateHeist() {
-    const heist = this.heist!;
-    if (heist.reinforce > 0) {
-      // reinforcements drive in from farther, not out of thin air beside us
-      this.sendPolice(heist.reinforce, true);
-      heist.reinforce = 0;
-    }
-    // on the run, a patrol out in the traffic may spot us and join in: every 20 s one
-    // chance in four (a slow stolen car is a long chase), 1–3 cars at a time, up to 6 after us at once (14 in a chase at most, see sendPolice)
-    const nowJoin = performance.now();
-    heist.joinAt ??= nowJoin + POLICE_JOIN_MS;
-    if (nowJoin >= heist.joinAt) {
-      heist.joinAt = nowJoin + POLICE_JOIN_MS;
-      const hunters = this.trafficBots.filter((bot) => bot.id.startsWith('police') && this.combatLayer?.isTargetAlive(bot.id) !== false);
-      const after = hunters.length;
-      // pulling away from them (the nearest well behind): nobody new takes it up
-      const nearest = Math.min(...hunters.map((bot) => metersBetween(this.vehicle.position, bot.position)));
-      if (after > 0 && after < 6 && nearest < POLICE_JOIN_NEAR_M && Math.random() < POLICE_JOIN_CHANCE) {
-        heist.joined = (heist.joined ?? 0) + 1;
-        // a patrol is one to three cars at a time; one in a car slower than theirs
-        const slow = this.car.maxSpeed < POLICE_CAR_SPEED;
-        const patrol = slow ? 1 : 1 + Math.floor(Math.random() * 3);
-        this.sendPolice(Math.min(patrol, 6 - after), true);
-        this.say(t('heist.joined'), true);
-      }
-    }
-    if (this.playerHp > 0 && this.playerHp <= this.playerMaxHp * 0.35) this.combatLayer?.burnPlayer();
-    if (heist.caught || this.playerHp <= 0) {
-      this.arrest();
-      return;
-    }
-    // police left far behind give up
-    const me = this.vehicle.position;
-    const chasing = this.trafficBots.filter((bot) => this.combatLayer?.isTargetAlive(bot.id) !== false);
-    const now = performance.now();
-    for (const bot of chasing) {
-      if (metersBetween(bot.position, me) > POLICE_GIVE_UP_M) { if (!this.policeFar.has(bot.id)) this.policeFar.set(bot.id, now); }
-      else this.policeFar.delete(bot.id);
-    }
-    const behind = chasing.filter((bot) => now - (this.policeFar.get(bot.id) ?? now) > POLICE_GIVE_UP_MS);
-    if (behind.length) {
-      const gone = new Set(behind.map((bot) => bot.id));
-      this.trafficBots = this.trafficBots.filter((bot) => !gone.has(bot.id));
-      this.ensureTrafficMarkers();
-      this.combatLayer?.setTargets(this.targetVehicles());
-      if (this.trafficBots.some((bot) => this.combatLayer?.isTargetAlive(bot.id))) this.say(t('heist.lost'), true);
-    }
-    if (!this.trafficBots.some((bot) => this.combatLayer?.isTargetAlive(bot.id) !== false)) this.endHeist();
-  }
-
-  /** Got away: keep the cash. */
-  private endHeist() {
-    const cash = this.heist?.cash ?? 0;
-    const stolen = this.heist?.stolen;
-    this.heist = null;
-    this.mode = 'roam';
-    this.clearEventBots();
-    this.showEventBeacons();
-    this.eventCooldown = performance.now() + 8000;
-    if (stolen) {
-      // got away in a stolen car: the fence pays half its price and we split it with the crew —
-      // a quarter is ours; we're back in our own car
-      const sold = carsConfig.find((car) => car.id === stolen.carId);
-      const price = sold ? Math.round(carPrice(sold) * BLACK_MARKET_SHARE) : 0;
-      this.playerMoney += price;
-      const previous = carsConfig.find((car) => car.id === stolen.previousId);
-      if (previous) { this.setCar(previous); this.onCarBought(previous); this.fuel.level = Math.min(this.fuel.spec.tank, stolen.fuel); }
-      this.onEventResult({ kind: 'hijack', won: true, cash: price, name: sold?.name ?? '' });
-    } else this.onEventResult({ kind: 'heist', won: true, cash });
-  }
-
-  /** Arrested: car blows up; wake at the nearest police / prison / court / hospital with a fat bill. */
-  private arrest() {
-    const heist = this.heist!;
-    const stolen = heist.cash;
-    // a hijacked car goes back to its owner; we are in our own again
-    if (heist.stolen) {
-      const previous = carsConfig.find((car) => car.id === heist.stolen!.previousId);
-      // our own car, with our own fuel as we left it
-      if (previous) { this.setCar(previous); this.onCarBought(previous); this.fuel.level = Math.min(this.fuel.spec.tank, heist.stolen.fuel); }
-    }
-    this.heist = null;
-    this.mode = 'roam';
-    this.clearEventBots();
-    this.showEventBeacons();
-    this.eventCooldown = performance.now() + 8000;
-    // the cash still lying about goes back to the bank
-    for (const [id, pickup] of this.pickups) if (pickup.kind === 'cash') this.pickups.delete(id);
-    this.combatLayer?.setPickups(this.pickupVisuals());
-    this.combatLayer?.explodePlayer();
-    this.audio.explosion(null);
-    const drop = this.nearestCivic();
-    const kind = drop?.kind ?? null;
-    const fine = (kind ? ARREST_COSTS[kind] : ARREST_FINE) + stolen;
-    this.playerMoney = Math.max(0, this.playerMoney - fine);
-    this.playerHp = this.playerMaxHp;
-    const arrestSpot = drop ? drop.station.position : this.nearbyRoadSpot();
-    if (arrestSpot && this.mapLoaded) this.placeCarAt(arrestSpot);
-    else {
-      this.vehicle.speed = 0;
-      this.vehicle.throttle = 0;
-      this.renderVehicle.reset(this.vehicle);
-      this.accumulator = 0;
-    }
-    const messages = {
-      police: 'heist.arrested.police',
-      prison: 'heist.arrested.prison',
-      court: 'heist.arrested.court',
-      hospital: 'heist.arrested.hospital',
-    } as const;
-    const message = t(kind ? messages[kind] : 'heist.arrested', { fine: formatNumber(fine) });
-    this.onEventResult({ kind: 'arrest', won: false, cash: fine, name: message });
-  }
-
   /** Closest police station, prison, courthouse or hospital to the wreck. */
   /** The closest police station, court or prison (of those already loaded, if any). */
   private nearestCivic(): { station: Station; kind: CivicKind; distance: number } | null {
@@ -3028,7 +2777,7 @@ export class GameEngine {
         if (player) this.audio.coin();
         if (pickup.kind === 'cash') {
           money += CASH_BUNDLE;
-          if (this.heist) this.heist.cash += CASH_BUNDLE;
+          if (this.crime.heist) this.crime.heist.cash += CASH_BUNDLE;
           this.say(t('heist.cash', { n: formatNumber(CASH_BUNDLE) }), true);
         } else money += 10;
       }
@@ -3106,7 +2855,7 @@ export class GameEngine {
 
   private updateEvents() {
     if (!this.driving) return;
-    if (this.heist) { this.updateHeist(); return; }
+    if (this.crime.heist) { this.crime.update(); return; }
     this.updateBounty();
     this.updateFire();
     this.updateImpound();
@@ -3179,7 +2928,7 @@ export class GameEngine {
   /** On a mission of any kind (arena, race, chase, a hunt, an errand, a fire, an impound): nothing else is offered or shown. */
   private onMission() {
     return this.mode !== 'roam'
-      || Boolean(this.heist)
+      || Boolean(this.crime.heist)
       || this.bountyFight
       || (Boolean(this.bounty) && this.canHuntBounty())
       || Boolean(this.errand)
@@ -4707,7 +4456,7 @@ export class GameEngine {
     const shop = atStation(herePos, [...this.repairShops.values()], SERVICE_REACH.repair);
     const dealer = atStation(herePos, [...this.dealerships.values()], SERVICE_REACH.dealer);
     const now = performance.now();
-    const bank = atStation(herePos, [...this.banks.values()].filter((b) => (this.bankShut.get(b.id) ?? 0) <= now), SERVICE_REACH.bank);
+    const bank = atStation(herePos, [...this.banks.values()].filter((b) => (this.crime.bankShut.get(b.id) ?? 0) <= now), SERVICE_REACH.bank);
     this.refuelling = false;
     // arriving (slowly) at a station, service, showroom or bank opens its dialog once per visit
     const here = station ?? shop ?? dealer ?? bank;
@@ -5009,7 +4758,7 @@ export class GameEngine {
       if (this.errand) { this.clearErrand(); this.completeActiveMission(); }
       if (this.mode !== 'roam') {
         this.mode = 'roam';
-        this.heist = null;
+        this.crime.heist = null;
         this.raceGoal = null;
         this.combatLayer?.setRaceFinish(null);
         this.clearEventBots();
@@ -5748,7 +5497,7 @@ export class GameEngine {
           const previous: [number, number] = [...bot.position];
           const oldHeading = bot.heading;
           const police = bot.id.startsWith('police');
-          const pace = police ? this.policePace(bot) : {
+          const pace = police ? policePace(bot) : {
             ...vehicleConfig,
             acceleration: bot.car.acceleration,
             maxSpeed: bot.car.maxSpeed,
@@ -5809,7 +5558,7 @@ export class GameEngine {
       }
       if (this.trafficBots.length) this.combatLayer?.updateTargets(this.targetVehicles());
       this.updateHunterGuns(now);
-      this.hijackHint();
+      this.crime.hijackHint();
       this.syncExtraTargets(dt, now);
       this.updateFuel(dt);
       this.updateTravel();
@@ -6040,7 +5789,7 @@ export class GameEngine {
       this.urbanLevel = Math.min(1, this.collisions.polygons.length / 400);
     }
     const alive = (id: string) => this.combatLayer?.isTargetAlive(id) !== false;
-    const police = this.heist
+    const police = this.crime.heist
       ? this.trafficBots.filter((bot) => bot.id.startsWith('police') && alive(bot.id))
         .map((bot) => ({ id: bot.id, position: bot.position as [number, number], velocity: velocityOf(bot.controller.speed, bot.controller.heading) }))
       : [];

@@ -27,6 +27,7 @@ const { tilesAround } = await import('../src/world3d/tiles/tilePlan.ts');
 const { offsetPosition } = await import('../src/game/VehicleController.ts');
 const { MapCamera } = await import('../src/world3d/map/camera.ts');
 const { GameEngine } = await import('../src/game/GameEngine.ts');
+const { Heist } = await import('../src/game/crime/Heist.ts');
 const { PreparedTransfer } = await import('../src/game/PreparedTransfer.ts');
 const { missionAreas } = await import('../src/game/missionPopulation.ts');
 const { cameraTransition } = await import('../src/game/cameraTransition.ts');
@@ -86,7 +87,7 @@ test('engine cannot award a race to a player or bot at the finish before their c
     raceStartAt: 0, raceDeadline: performance.now() + 600000, raceWarned: false,
     vehicle: { position: course.finish },
     trafficBots: [{ id: 'race-0', driver: 'Rival', position: course.finish }],
-    combatLayer: { isTargetAlive: () => true }, botSight: new Map(),
+    combatLayer: { isTargetAlive: () => true }, botSight: new Map(), crime: { heist: null },
     updateBounty() {}, updateFire() {}, updateImpound() {}, updateTaxi() {}, updateAmbulance() {}, updateBus() {},
     ensureRaceGoalMarker() {}, syncMissionVisuals() {}, say() {}, endRace: id => winners.push(id),
   });
@@ -258,13 +259,14 @@ test('a paused tow commits the loaded camera, car and payment together', () => {
 
 test('police capture raises an arrest modal result instead of only a toast', () => {
   let result = null;
-  const engine = Object.assign(Object.create(GameEngine.prototype), {
-    heist: { cash: 123 }, pickups: new Map(), playerMoney: 10000, playerMaxHp: 1000,
-    vehicle: { speed: 1, throttle: 1 }, renderVehicle: { reset() {} },
-    clearEventBots() {}, showEventBeacons() {}, nearestCivic: () => null,
+  const crime = new Heist({
+    mode: 'arena', pickups: new Map(), playerMoney: 10000, playerHp: 0, playerMaxHp: 1000, mapLoaded: false,
+    vehicle: { speed: 1, throttle: 1 }, renderVehicle: { reset() {} }, combatLayer: null,
+    clearEventBots() {}, showEventBeacons() {}, refreshPickups() {}, nearestCivic: () => null, nearbyRoadSpot: () => null,
     audio: { explosion() {} }, onEventResult: r => { result = r; },
   });
-  engine.arrest();
+  crime.heist = { cash: 123 };
+  crime.arrest();
   assert.equal(result.kind, 'arrest');
   assert.equal(result.won, false);
   assert.ok(result.name.length > 0);
