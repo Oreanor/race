@@ -143,10 +143,16 @@ class Shape {
     const geometry = mergeGeometries(this.parts.map((p) => p.g), false)!;
     const count = geometry.getAttribute('position').count;
     const part = new Float32Array(count);
+    // every vertex knows the middle of its own piece: in winter a foliage mass shrinks
+    // into its own centre, not toward the trunk
+    const centre = new Float32Array(count * 3);
+    const box = new THREE.Box3(), mid = new THREE.Vector3();
     let at = 0;
     for (const p of this.parts) {
       const n = p.g.getAttribute('position').count;
       if (p.leaf) part.fill(1, at, at + n);
+      box.setFromBufferAttribute(p.g.getAttribute('position') as THREE.BufferAttribute).getCenter(mid);
+      for (let i = at; i < at + n; i++) centre.set([mid.x, mid.y, mid.z], i * 3);
       at += n;
       p.g.dispose();
     }
@@ -157,6 +163,7 @@ class Shape {
     for (let i = 0; i < count; i++) shade[i] = part[i] ? (position.getY(i) - lo) / Math.max(1e-3, hi - lo) : 0;
     geometry.setAttribute('aPart', new THREE.BufferAttribute(part, 1));
     geometry.setAttribute('aShade', new THREE.BufferAttribute(shade, 1));
+    geometry.setAttribute('aCenter', new THREE.BufferAttribute(centre, 3));
     geometry.computeBoundingSphere();
     return geometry;
   }
@@ -489,6 +496,10 @@ function hedgeShape(fine: boolean) {
   g.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
   g.setAttribute('aPart', new THREE.Float32BufferAttribute(new Array(positions.length / 3).fill(1), 1));
   g.setAttribute('aShade', new THREE.Float32BufferAttribute(shade, 1));
+  // a hedge thins toward its own core line
+  const core: number[] = [];
+  for (let i = 0; i < positions.length; i += 3) core.push(positions[i], centre, 0);
+  g.setAttribute('aCenter', new THREE.Float32BufferAttribute(core, 3));
   g.setIndex(index);
   g.computeBoundingSphere();
   return g;

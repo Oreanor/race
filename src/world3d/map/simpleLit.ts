@@ -324,6 +324,7 @@ export function floraLit(uniforms: SimpleLitUniforms) {
       attribute vec4 iTraits;
       attribute float aPart;
       attribute float aShade;
+      attribute vec3 aCenter;
       varying vec3 vNormal;
       varying vec3 vWorld;
       varying vec3 vColor;
@@ -356,8 +357,8 @@ export function floraLit(uniforms: SimpleLitUniforms) {
         vShade = aShade;
         vColor = aPart > 0.5 ? leaf : iBark;
         vec3 local = position;
-        // leaves pull in to the stem at their own height; at zero they vanish
-        if (aPart > 0.5) local.xz *= leafy;
+        // each foliage mass shrinks into its own centre (no sliding toward the trunk); at zero it is gone
+        if (aPart > 0.5) local = mix(aCenter, local, leafy);
         leafFrame(local, normal, instanceMatrix);
         vec4 p = instanceMatrix * vec4(local, 1.0);
         mat3 im = mat3(instanceMatrix);

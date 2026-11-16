@@ -416,7 +416,7 @@ export class VegetationRenderer {
       mesh.visible = !(level === 2 && SMALL.has(index));
       if ((was === 0) === (level === 0)) continue; // same shape (far at 1 and 2)
       const shape = level === 0 ? this.flora[index] : this.floraFar[index];
-      for (const name of ['position', 'normal', 'aPart', 'aShade']) mesh.geometry.setAttribute(name, shape.getAttribute(name));
+      for (const name of ['position', 'normal', 'aPart', 'aShade', 'aCenter']) mesh.geometry.setAttribute(name, shape.getAttribute(name));
       mesh.geometry.setIndex(shape.getIndex());
     }
   }
