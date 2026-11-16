@@ -87,7 +87,7 @@ test('engine cannot award a race to a player or bot at the finish before their c
     raceStartAt: 0, raceDeadline: performance.now() + 600000, raceWarned: false,
     vehicle: { position: course.finish },
     trafficBots: [{ id: 'race-0', driver: 'Rival', position: course.finish }],
-    combatLayer: { isTargetAlive: () => true }, botSight: new Map(), crime: { heist: null },
+    combatLayer: { isTargetAlive: () => true }, botDriver: { forget() {} }, crime: { heist: null },
     updateBounty() {}, updateFire() {}, updateImpound() {}, updateTaxi() {}, updateAmbulance() {}, updateBus() {},
     ensureRaceGoalMarker() {}, syncMissionVisuals() {}, say() {}, endRace: id => winners.push(id),
   });

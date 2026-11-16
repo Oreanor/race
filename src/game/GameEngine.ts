@@ -64,7 +64,7 @@ import { HealthMeters, type Meter } from './hud/HealthMeters.ts';
 import { TestTargets } from './TestTargets.ts';
 import { HIT_DAMAGE, PLAYER_HP } from '@/net/protocol';
   import { formatRange, MARKER_PIN_METERS, nameIndicator, placeIndicator } from './hud/indicators.ts';
-import { advanceTrafficBot, createTrafficBot, TrafficRoadNetwork, type TrafficBot } from './TrafficBots.ts';
+import { createTrafficBot, TrafficRoadNetwork, type TrafficBot } from './TrafficBots.ts';
 import { formatNumber, onLangChange, t } from '@/i18n';
 import { ThreeMap } from '@/world3d/map/ThreeMap';
 import { EVACUATION_COST, FuelTank, FUEL_PRICE, REPAIR_PRICE } from './Fuel.ts';
@@ -75,7 +75,8 @@ import { fuelStationsLayer } from '@/rendering/FuelStationsLayer';
 import { isVintageTrain, trainsLayer } from '@/rendering/TrainsLayer';
 import { RailNetwork, TrainTraffic } from './Trains.ts';
 import { canCable, Hauler, type HaulHost } from './Hauler.ts';
-import { Heist, policePace, type HeistHost } from './crime/Heist.ts';
+import { Heist, type HeistHost } from './crime/Heist.ts';
+import { MissionBotDriver, type BotDriverHost } from './traffic/MissionBots.ts';
 import { JobPin, makeMapLabel, makeOffscreenIndicator, newMarker, paintMissionIndicator, setPinRange, type MapMarker } from './hud/mapPins.ts';
 import { hubAt, hubsFromFeatures, kilometres, nearestHub, ticketPrice, type Hub, type HubKind } from './Travel.ts';
 import { bearingTo, BOUNTY_RANGE_KM, loadBounty, makeBounty, saveBounty, type Bounty } from './Bounty.ts';
@@ -137,8 +138,6 @@ import {
 const wrapDegrees = (deg: number) => ((deg + 180) % 360 + 360) % 360 - 180;
 /** where the camera (zoom, tilt, turn) is kept between reloads */
 const CAMERA_STORE = 'race.camera';
-/** a racer looks this far (m) straight toward the flag: clear of houses and water → it cuts across */
-const RACE_LOOK_M = 400;
 /** a tow, a ticket, a respawn: the ground this far (m) round the arrival must be in first */
 const ARRIVAL_M = 400;
 /** hit a wall faster than this (km/h) and coins jump out of it (3; 5 from 150, 10 from 200) */
@@ -369,6 +368,8 @@ export class GameEngine {
   /** the nitro bar under the speedometer: 0…1 left, whether it is burning now, and
    *  `spent`: run dry with Space still down — it waits for Space to be let go */
   private nitro = { level: 1, active: false, spent: false };
+  /** the mission bots at the wheel (see MissionBotDriver) */
+  private botDriver = new MissionBotDriver(this.botDriverHost());
   /** bank jobs, hijacks and the police after us (see Heist) */
   private crime = new Heist(this.heistHost());
   /** the Howler's and the Batmobile's cable (see Hauler) */
@@ -437,12 +438,6 @@ export class GameEngine {
   private dealerships = new Map<string, Station>();
   /** banks from the POI layer; a robbed one stays shut a while (see Heist) */
   private banks = new Map<string, Station>();
-  /** each chasing bot's last look at its target: is the way clear of houses (checked every 300 ms) */
-  private botSight = new Map<string, { at: number; clear: boolean }>();
-  /** hunters that got stuck: no cutting across until then (ms) */
-  private botNoCut = new Map<string, number>();
-  /** where each hunter last made headway (for spotting a stuck one) */
-  private botProgress = new Map<string, { at: number; position: Position }>();
   /** parking lots from the POI layer */
   private parkingLots = new Map<string, [number, number]>();
   /** Police stations, prisons, courts, hospitals — arrest drop-off points. */
@@ -924,6 +919,23 @@ export class GameEngine {
     } else n.level = Math.min(1, n.level + dt / NITRO_REFILL_S);
   }
 
+  /** The mission bots' window on the game. */
+  private botDriverHost(): BotDriverHost {
+    const game = this;
+    return {
+      get trafficBots() { return game.trafficBots; },
+      get vehicle() { return game.vehicle; },
+      get altitude() { return game.altitude; },
+      get mode() { return game.mode; },
+      get combatLayer() { return game.combatLayer; },
+      get trafficNetwork() { return game.trafficNetwork; },
+      get collisions() { return game.collisions; },
+      get water() { return game.water; },
+      get map() { return game.map; },
+      onBridgeDeck: (at, altitude) => game.onBridgeDeck(at, altitude),
+    };
+  }
+
   /** A chase's window on the game. */
   private heistHost(): HeistHost {
     const game = this;
@@ -1365,7 +1377,7 @@ export class GameEngine {
     this.trafficBots = [];
     this.hunterGuns.clear();
     this.crime.policeFar.clear();
-    this.botSight.clear();
+    this.botDriver.forget();
     this.raceStartAt = 0;
     this.combatLayer?.setTargets([]);
     this.ensureTrafficMarkers();
@@ -2651,71 +2663,6 @@ export class GameEngine {
     return true;
   }
 
-  /**
-   * Where a bot may cut straight to, off the roads: a hunter (police, arena, the wanted car)
-   * at its prey, a racer at the flag — when it is within 350 m and no house stands between.
-   * At us it leads the shot a little (where we will be in half a second).
-   */
-  private botShortcut(bot: { id: string; mood: string; goal: Position | null; huntId: string | null; position: Position }, now: number): Position | null {
-    const racing = this.mode === 'race' && Boolean(bot.goal);
-    if (bot.mood !== 'hunt' && !racing) return null;
-    let target = bot.goal;
-    if (bot.mood === 'hunt' && bot.huntId === 'player') {
-      const v = this.vehicle.speed * 0.5;
-      target = offsetPosition(this.vehicle.position, Math.sin(this.vehicle.heading) * v, Math.cos(this.vehicle.heading) * v) as Position;
-    }
-    if (!target) return null;
-    // a racer heads cross-country toward the flag whenever the next RACE_LOOK_M straight
-    // that way are clear (like we can: a stream line is no obstacle, only houses and real
-    // water); a hunter only cuts in on the last 350 m
-    const far = metersBetween(bot.position, target);
-    if (racing && bot.mood !== 'hunt' && far > RACE_LOOK_M) {
-      const k = RACE_LOOK_M / far;
-      target = [bot.position[0] + (target[0] - bot.position[0]) * k, bot.position[1] + (target[1] - bot.position[1]) * k];
-    } else if (far > 350) return null;
-    // stuck lately (a river bank, a fence): keep to the roads for a while
-    if ((this.botNoCut.get(bot.id) ?? 0) > now) return null;
-    let sight = this.botSight.get(bot.id);
-    // a blocked view is looked at again only after 1.5 s: flipping between cutting and the
-    // roads re-plans the route each time (a Dijkstra), which costs frames
-    if (!sight || now - sight.at > (sight.clear ? 300 : 1500)) {
-      sight = { at: now, clear: !this.collisions.sightBlocked(bot.position, target) && !this.waterBetween(bot.position, target) };
-      this.botSight.set(bot.id, sight);
-    }
-    return sight.clear ? target : null;
-  }
-
-  /** Water anywhere on the straight line (bridges count as dry): no cutting across a river. */
-  private waterBetween(from: Position, to: Position) {
-    const steps = Math.max(1, Math.ceil(metersBetween(from, to) / 12));
-    for (let i = 1; i <= steps; i++) {
-      const k = i / steps;
-      if (this.water.covers([from[0] + (to[0] - from[0]) * k, from[1] + (to[1] - from[1]) * k], true)) return true;
-    }
-    return false;
-  }
-
-  /**
-   * A hunter that has hardly moved for 2.5 s (not while it is on top of us) is stuck:
-   * no cutting across for 6 s, and a fresh road route round the obstacle.
-   */
-  private unstickHunter(bot: TrafficBot, now: number) {
-    const seen = this.botProgress.get(bot.id);
-    const close = metersBetween(bot.position, this.vehicle.position) < 15;
-    if (!seen || close || metersBetween(seen.position, bot.position) > 4) {
-      this.botProgress.set(bot.id, { at: now, position: [...bot.position] as Position });
-      return;
-    }
-    if (now - seen.at < 2500) return;
-    this.botNoCut.set(bot.id, now + 6000);
-    bot.cutting = false;
-    bot.route = [];
-    bot.routeIndex = 1;
-    bot.repathAt = 0;
-    bot.routeSeed = (bot.routeSeed * 48271 + 1) % 2147483647;
-    this.botProgress.set(bot.id, { at: now, position: [...bot.position] as Position });
-  }
-
   /** Closest police station, prison, courthouse or hospital to the wreck. */
   /** The closest police station, court or prison (of those already loaded, if any). */
   private nearestCivic(): { station: Station; kind: CivicKind; distance: number } | null {
@@ -2901,7 +2848,7 @@ export class GameEngine {
         bot.route = [];
         bot.routeIndex = 1;
         bot.repathAt = now + (Math.abs(bot.routeSeed) % 160);
-        this.botSight.delete(bot.id);
+        this.botDriver.forget(bot.id);
       }
       return;
     }
@@ -5479,74 +5426,10 @@ export class GameEngine {
             }
           }
         }
-        const peers = [
-          { id: 'player', position: this.vehicle.position as [number, number], alive: true },
-          ...this.trafficBots.map(bot => ({
-            id: bot.id,
-            position: bot.position,
-            alive: !this.combatLayer || this.combatLayer.isTargetAlive(bot.id),
-          })),
-        ];
-        for (const bot of this.trafficBots) {
-          if (gridded || bot.id === this.hauler.haul?.id) continue;
-          // impound car waits still on the pin until hooked
-          if (bot.id === TOW_CAR_ID && this.impoundActive && this.hauler.haul?.id !== TOW_CAR_ID) continue;
-          // ambulance crash wreck stays planted — exploring would Dijkstra across London and hitch
-          if (isAmbulanceWreckId(bot.id)) continue;
-          if (this.combatLayer && !this.combatLayer.isTargetAlive(bot.id)) continue;
-          const previous: [number, number] = [...bot.position];
-          const oldHeading = bot.heading;
-          const police = bot.id.startsWith('police');
-          const pace = police ? policePace(bot) : {
-            ...vehicleConfig,
-            acceleration: bot.car.acceleration,
-            maxSpeed: bot.car.maxSpeed,
-          };
-          // the police and racers really drive at their car's pace (the town pace was ~55–70 km/h)
-          const racer = this.mode === 'race' && bot.id.startsWith('race-');
-          advanceTrafficBot(bot, 1 / 60, this.trafficNetwork, pace, police ? peers.slice(0, 1) : peers, [], this.botShortcut(bot, now), police || racer ? pace.maxSpeed : null);
-          if (bot.mood === 'hunt' || racer) this.unstickHunter(bot, now);
-          const building = this.collisions.resolve(previous, bot.position, bot.heading);
-          if (building.stopped || building.slid) {
-            bot.controller.position = building.position;
-            bot.retryFrames += building.stopped ? 6 : 2;
-            const side = (bot.id.charCodeAt(bot.id.length - 1) + bot.retryFrames) % 2 ? 1 : -1;
-            if (building.stopped) {
-              // Back out of the corner instead of parking against the wall.
-              bot.controller.heading = oldHeading + side * (0.55 + (bot.retryFrames % 7) * 0.05);
-              bot.controller.speed = -2.6;
-            } else {
-              bot.controller.speed *= 0.96;
-              if (Math.abs(bot.controller.speed) < 1.2) {
-                bot.controller.heading = oldHeading + side * 0.35;
-                bot.controller.speed = Math.max(bot.controller.speed, 1.5);
-              }
-            }
-            if (bot.retryFrames > 18 && bot.routeIndex < bot.route.length - 1) {
-              bot.routeIndex++;
-              bot.retryFrames = 0;
-            } else if (bot.retryFrames > 40) {
-              bot.route = [];
-              bot.routeIndex = 1;
-              bot.routeSeed = (bot.routeSeed * 48271 + 1) % 2147483647;
-              bot.retryFrames = 0;
-              bot.controller.heading += side * 0.9;
-            }
-          } else {
-            const botAlt = this.map.groundAt(previous) ?? this.altitude;
-            const elev = this.onBridgeDeck(previous, botAlt);
-            if (this.water.covers(previous, elev)) {
-              const hit = this.water.resolve(previous, bot.position, bot.heading, 1, elev);
-              bot.controller.position = hit.position;
-              if (hit.stopped) bot.controller.speed = 0;
-              bot.retryFrames = Math.max(0, bot.retryFrames - 2);
-            } else {
-              bot.retryFrames = Math.max(0, bot.retryFrames - 3);
-            }
-          }
-          bot.position = [...bot.controller.position];
-          bot.heading = bot.controller.heading;
-        }
+        // impound car waits still on the pin until hooked; a crash wreck stays planted
+        this.botDriver.step(now, (bot) => gridded || bot.id === this.hauler.haul?.id
+          || (bot.id === TOW_CAR_ID && this.impoundActive && this.hauler.haul?.id !== TOW_CAR_ID)
+          || isAmbulanceWreckId(bot.id));
         this.trainBlock(this.vehicle, this.altitude);
         for (const bot of this.trafficBots) {
           if (this.trainBlock(bot.controller, this.map.groundAt(bot.position) ?? this.altitude)) bot.position = [...bot.controller.position];
