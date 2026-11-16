@@ -35,6 +35,61 @@ export const seasonWeights = { value: new THREE.Vector4(0, 1, 0, 0) };
 /** 0..1 lying snow allowed here (latitude band); host blends it with the season. */
 export const snowCover = { value: 0 };
 
+/**
+ * Leaf texture for crowns and hedges (public/textures/foliage.webp, scripts/foliage-texture.mjs):
+ * one grey channel of light and shade round 0.5; the plant's own colour tints it. Off (0)
+ * until it has loaded, so crowns don't go dark for a moment.
+ */
+const leafUniforms = { uLeaves: { value: null as THREE.Texture | null }, uLeavesOn: { value: 0 } };
+function leaves() {
+  if (!leafUniforms.uLeaves.value && typeof window !== 'undefined') {
+    const texture = new THREE.TextureLoader().load('/textures/foliage.webp', () => { leafUniforms.uLeavesOn.value = 1; });
+    texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+    texture.colorSpace = THREE.NoColorSpace;
+    texture.anisotropy = 4;
+    leafUniforms.uLeaves.value = texture;
+  }
+  return leafUniforms;
+}
+
+/** GLSL (vertex): the point and normal in the plant's own frame, in metres, for the leaves. */
+const LEAF_VERTEX = /* glsl */ `
+  varying vec3 vLeafPos;
+  varying vec3 vLeafN;
+  void leafFrame(vec3 local, vec3 localNormal, mat4 inst) {
+    vec3 scale = vec3(length(inst[0].xyz), length(inst[1].xyz), length(inst[2].xyz));
+    // each plant its own patch of the texture
+    float h = fract(sin(dot(inst[3].xz, vec2(12.9898, 78.233))) * 43758.5453);
+    vLeafPos = local * scale + vec3(h * 17.0, h * 5.0, h * 31.0);
+    vLeafN = localNormal;
+  }
+`;
+
+/**
+ * GLSL (fragment): leaf light and shade, projected from three sides in the plant's frame
+ * (it stays on the plant: on world positions it slid at every rebase), a tile every 1.6 m,
+ * fading out with distance (far leaves would only shimmer); and warmer / cooler patches.
+ */
+const LEAF_FRAGMENT = /* glsl */ `
+  uniform sampler2D uLeaves;
+  uniform float uLeavesOn;
+  varying vec3 vLeafPos;
+  varying vec3 vLeafN;
+  vec3 leafy(vec3 color, float dist) {
+    vec3 w = abs(normalize(vLeafN));
+    w = w * w * w * w;
+    w /= (w.x + w.y + w.z + 1e-4);
+    vec3 p = vLeafPos / 1.6;
+    float leaf = 0.5;
+    if (uLeavesOn > 0.5) leaf = texture2D(uLeaves, p.zy).r * w.x + texture2D(uLeaves, p.xz).r * w.y + texture2D(uLeaves, p.xy).r * w.z;
+    float near = 1.0 - smoothstep(35.0, 120.0, dist);
+    color *= 1.0 + (leaf - 0.5) * 1.15 * near;
+    // some leaves warmer, some cooler: one crown is never one colour
+    float patchy = sin(vLeafPos.x * 1.3 + vLeafPos.y * 0.9) * sin(vLeafPos.z * 1.1 - vLeafPos.y * 1.4);
+    return color * (1.0 + patchy * vec3(0.1, 0.04, -0.08));
+  }
+`;
+
 /** Uniforms with fog effectively off, for hosts without a world (MapLibre mode). */
 export function standaloneUniforms(): SimpleLitUniforms {
   return {
@@ -74,6 +129,7 @@ export function simpleLit(color: THREE.ColorRepresentation, uniforms: SimpleLitU
       uSeason: seasonWeights,
       // world BaseUniforms may already carry uSkin; keep a default for standalone hosts
       uSkin: 'uSkin' in uniforms ? (uniforms as { uSkin: { value: number } }).uSkin : { value: 0 },
+      ...(options.foliage ? leaves() : {}),
     },
     vertexShader: /* glsl */ `
       uniform float uExag;
@@ -87,6 +143,7 @@ export function simpleLit(color: THREE.ColorRepresentation, uniforms: SimpleLitU
       #ifdef FOLIAGE
         attribute float aShade;
         varying float vShade;
+        ${LEAF_VERTEX}
       #endif
       varying float vLocalY;
       #ifdef GLOW_PARTS
@@ -124,6 +181,11 @@ export function simpleLit(color: THREE.ColorRepresentation, uniforms: SimpleLitU
         #endif
         #ifdef FOLIAGE
           vShade = aShade;
+          #ifdef USE_INSTANCING
+            leafFrame(local, normal, instanceMatrix);
+          #else
+            leafFrame(local, normal, mat4(1.0));
+          #endif
           #ifdef USE_INSTANCING
             // gentle wind: the crown top sways, the base stays put; phase from position
             vec2 phase = instanceMatrix[3].xz * 0.37;
@@ -186,6 +248,7 @@ export function simpleLit(color: THREE.ColorRepresentation, uniforms: SimpleLitU
       uniform vec4 uSeason;
       #ifdef FOLIAGE
         varying float vShade;
+        ${LEAF_FRAGMENT}
       #endif
       varying float vLocalY;
       #ifdef GLOW_PARTS
@@ -211,8 +274,7 @@ export function simpleLit(color: THREE.ColorRepresentation, uniforms: SimpleLitU
           vec3 light = uAmbient * (0.8 + 0.11 * n.y) + uSunColor * 0.68 * wrap * wrap + headlight(vWorld, n);
           vec3 color = uColor * tint * light;
           color *= mix(0.74, 1.08, vShade);
-          float dapple = sin(vWorld.x * 2.1 + vWorld.y * 0.7) * sin(vWorld.z * 2.3 - vWorld.y * 1.3) * sin(vWorld.y * 2.7 + vWorld.x * 0.9);
-          color *= 1.0 + 0.09 * dapple;
+          color = leafy(color, distance(vWorld, uCameraPos));
           vec3 toEye = normalize(uCameraPos - vWorld);
           float rim = pow(1.0 - max(dot(n, toEye), 0.0), 2.0);
           color += uColor * tint * vec3(0.18, 0.22, 0.1) * rim;
@@ -251,7 +313,7 @@ export function simpleLit(color: THREE.ColorRepresentation, uniforms: SimpleLitU
  */
 export function floraLit(uniforms: SimpleLitUniforms) {
   return new THREE.ShaderMaterial({
-    uniforms: { ...uniforms, uTime: worldTime, uSeason: seasonWeights, uSnow: snowCover },
+    uniforms: { ...uniforms, uTime: worldTime, uSeason: seasonWeights, uSnow: snowCover, ...leaves() },
     vertexShader: /* glsl */ `
       uniform float uExag;
       uniform float uTime;
@@ -267,6 +329,7 @@ export function floraLit(uniforms: SimpleLitUniforms) {
       varying vec3 vColor;
       varying float vLeaf;
       varying float vShade;
+      ${LEAF_VERTEX}
       void main() {
         float hash = dot(instanceMatrix[3].xz, vec2(0.1031, 0.11369)); hash = fract(hash * (hash + 33.33));
         float habit = iTraits.x;
@@ -295,6 +358,7 @@ export function floraLit(uniforms: SimpleLitUniforms) {
         vec3 local = position;
         // leaves pull in to the stem at their own height; at zero they vanish
         if (aPart > 0.5) local.xz *= leafy;
+        leafFrame(local, normal, instanceMatrix);
         vec4 p = instanceMatrix * vec4(local, 1.0);
         mat3 im = mat3(instanceMatrix);
         vec3 n = im * (normal / vec3(dot(im[0], im[0]), dot(im[1], im[1]), dot(im[2], im[2])));
@@ -328,6 +392,7 @@ export function floraLit(uniforms: SimpleLitUniforms) {
       varying vec3 vColor;
       varying float vLeaf;
       varying float vShade;
+      ${LEAF_FRAGMENT}
       vec3 headBeam(vec3 world, vec3 n, vec3 lamp) {
         vec3 d = world - lamp;
         float dist = length(d);
@@ -354,8 +419,7 @@ export function floraLit(uniforms: SimpleLitUniforms) {
           float wrap = dot(n, uSun) * 0.5 + 0.5;
           vec3 light = uAmbient * (0.8 + 0.11 * n.y) + uSunColor * 0.68 * wrap * wrap + headlight(vWorld, n);
           color = vColor * light * mix(0.72, 1.08, vShade);
-          float dapple = sin(vWorld.x * 2.1 + vWorld.y * 0.7) * sin(vWorld.z * 2.3 - vWorld.y * 1.3) * sin(vWorld.y * 2.7 + vWorld.x * 0.9);
-          color *= 1.0 + 0.09 * dapple;
+          color = leafy(color, distance(vWorld, uCameraPos));
           float rim = pow(1.0 - max(dot(n, normalize(uCameraPos - vWorld)), 0.0), 2.0);
           color += vColor * vec3(0.18, 0.22, 0.1) * rim;
         } else {
