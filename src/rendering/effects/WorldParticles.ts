@@ -307,7 +307,9 @@ export class WorldParticles {
         life: rand(40, 65), size0: 0.15, size1: 0.07, drag: 10, gravity: 0, stretch: 0.07,
       }, now);
     }
-    for (let i = 0; i < 2; i++) this.spark(here, at, dir, 0.45, rand(8, 14), now, 160);
+    // a stray spark or two at random angles (a tidy cone of them looked fake)
+    const strays = Math.random() < 0.35 ? 2 : 1;
+    for (let i = 0; i < strays; i++) this.spark(here, at, dir, 1.4, rand(5, 16), now, rand(90, 200));
   }
 
   /** A glowing bullet streak flying from the muzzle to the hit point. */
