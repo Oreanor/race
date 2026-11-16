@@ -139,6 +139,8 @@ type Live = {
   water?: WaterSeams;
   /** 0..1 ease-in: drawn as fog until fully present (set per mesh just before draw) */
   fade: number;
+  /** the map-only (lite) tile this full one replaces: drawn until this one is fully up, then let go */
+  retire?: Live;
 };
 
 /** A tree, lamp, shelter or statue knocked over; stands up again once out of sight. */
@@ -228,7 +230,7 @@ function rayAabb(ax: number, ay: number, az: number, bx: number, by: number, bz:
   return t0;
 }
 
-type Pending = { id: number; key: string; tile: TileId };
+type Pending = { id: number; key: string; tile: TileId; lite: boolean };
 
 export type WorldTileStats = { loaded: number; inFlight: number; buildings: number; residentMB: number; avgFetchMs: number; avgBuildMs: number };
 
@@ -542,7 +544,12 @@ export class WorldTiles {
         : (burst || mapBurst) ? Math.max(o.maxInFlight, mapBurst ? 4 : 8)
           : o.maxInFlight;
     for (const plan of wanted) {
-      if (this.tiles.has(plan.key) || this.pending.has(plan.key)) continue;
+      // the map's rectangle gets map-only (lite) tiles: no furniture, no bridge solve, several
+      // times quicker; round the car (and wherever it is being taken) a full one, which
+      // replaces a lite tile already there
+      const full = !screen || this.ringKeys.has(plan.key);
+      const have = this.tiles.get(plan.key);
+      if ((have && !(have.data?.lite && full)) || this.pending.has(plan.key)) continue;
       const failed = this.failures.get(plan.key);
       if (failed && now < failed.at) continue;
       if (this.pending.size >= flightCap) break;
@@ -552,7 +559,7 @@ export class WorldTiles {
         for (const k of this.pending.keys()) if (!this.ringKeys.has(k)) far++;
         if (far >= Math.max(2, flightCap - 2)) continue;
       }
-      this.request(plan.key, plan.tile);
+      this.request(plan.key, plan.tile, !full);
     }
     this.pump();
     let backlog = 0;
@@ -583,6 +590,12 @@ export class WorldTiles {
       for (const live of this.tiles.values()) {
         while (live.waiting.length && budget > 0 && performance.now() < uploadDeadline) { live.waiting.shift()!(); budget--; }
         if (budget <= 0) break;
+      }
+    }
+    for (const [key, live] of this.tiles) {
+      if (live.retire && !live.waiting.length && !live.deferred.length) {
+        this.unload(key, live.retire);
+        live.retire = undefined;
       }
     }
     // ease newly installed tiles in (unload still drops immediately â€” memory, not cosmetics)
@@ -656,7 +669,7 @@ export class WorldTiles {
    * not wait behind a queue dealt out before it appeared — each free worker takes the most
    * wanted ready job (the plan's order: in view first).
    */
-  private ready: { id: number; key: string; tile: TileId; vectorUrl: string; demUrl: string | null; demNeighbours: (string | null)[] | null; vectors: Record<string, ArrayBuffer>; demBytes: Record<string, ArrayBuffer | null> }[] = [];
+  private ready: { id: number; key: string; tile: TileId; lite: boolean; vectorUrl: string; demUrl: string | null; demNeighbours: (string | null)[] | null; vectors: Record<string, ArrayBuffer>; demBytes: Record<string, ArrayBuffer | null> }[] = [];
 
   private pump() {
     if (this.disposed || !this.ready?.length) return;
@@ -672,16 +685,16 @@ export class WorldTiles {
       const r = this.ready.shift()!;
       this.jobs.set(r.id, { key: r.key, worker });
       this.load[worker]++;
-      this.post(worker, r.id, r.key, r.tile, r.vectorUrl, r.demUrl, r.demNeighbours, r.vectors, r.demBytes);
+      this.post(worker, r.id, r.key, r.tile, r.lite, r.vectorUrl, r.demUrl, r.demNeighbours, r.vectors, r.demBytes);
     }
   }
 
-  private request(key: string, tile: TileId) {
+  private request(key: string, tile: TileId, lite = false) {
     if (!this.workers.some((_, i) => this.workerReady[i])) return;
     const id = this.nextId++;
     // no worker yet (-1): it gets one when its bytes are in and a worker is free (pump)
     this.jobs.set(id, { key, worker: -1 });
-    this.pending.set(key, { id, key, tile });
+    this.pending.set(key, { id, key, tile, lite });
     const size = 2 ** tile.z;
     const around = [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]].map(([dx, dy]) => {
       const y = tile.y + dy;
@@ -690,7 +703,8 @@ export class WorldTiles {
     const vectorUrl = this.url(this.template!, tile);
     const demUrl = this.options.demTemplate ? this.url(this.options.demTemplate, tile) : null;
     const demNeighbours = this.options.demTemplate ? around.map((t) => (t ? this.url(this.options.demTemplate!, t) : null)) : null;
-    const vectorUrls = [vectorUrl, ...around.flatMap((t) => (t ? [this.url(this.template!, t)] : []))];
+    // a lite tile plans no bridges: it needs no neighbours' roads
+    const vectorUrls = [vectorUrl, ...(lite ? [] : around.flatMap((t) => (t ? [this.url(this.template!, t)] : [])))];
     const demUrls = [demUrl, ...(demNeighbours ?? [])].filter((u): u is string => !!u);
     // the bytes first (one fetch per url for the page), then the job; a neighbour that
     // fails is left to the worker, the tile's own failure fails the job as before
@@ -702,12 +716,12 @@ export class WorldTiles {
     void gathered.then(() => {
       // dropped (cancelled or the tile left the plan) while its bytes came: nothing to build
       if (this.disposed || this.pending.get(key)?.id !== id || !this.jobs.has(id)) return;
-      this.ready.push({ id, key, tile, vectorUrl, demUrl, demNeighbours, vectors, demBytes });
+      this.ready.push({ id, key, tile, lite, vectorUrl, demUrl, demNeighbours, vectors, demBytes });
       this.pump();
     });
   }
 
-  private post(worker: number, id: number, key: string, tile: TileId, vectorUrl: string, demUrl: string | null, demNeighbours: (string | null)[] | null, vectors: Record<string, ArrayBuffer>, demBytes: Record<string, ArrayBuffer | null>) {
+  private post(worker: number, id: number, key: string, tile: TileId, lite: boolean, vectorUrl: string, demUrl: string | null, demNeighbours: (string | null)[] | null, vectors: Record<string, ArrayBuffer>, demBytes: Record<string, ArrayBuffer | null>) {
     try {
     const transfer = [...Object.values(vectors), ...Object.values(demBytes).filter((b): b is ArrayBuffer => !!b)];
     this.workers[worker].postMessage({
@@ -717,7 +731,7 @@ export class WorldTiles {
       demUrl,
       demNeighbours,
       vectors, demBytes,
-      options: { chunks: 4, inset: 0, grid: this.options.grid, region: this.options.region },
+      options: { chunks: 4, inset: 0, grid: this.options.grid, region: this.options.region, lite },
     }, transfer);
     } catch (error) {
       this.restartWorker(worker, String(error));
@@ -761,7 +775,16 @@ export class WorldTiles {
     this.fetchTimes.push(message.fetchMs ?? 0);
     this.buildTimes.push(message.buildMs ?? 0);
     if (this.fetchTimes.length > 30) { this.fetchTimes.shift(); this.buildTimes.shift(); }
+    // a full tile over a lite one: the lite stays drawn until the full is all up (the same
+    // ground, roads and buildings: drawn twice, nothing shows), so nothing blinks out
+    const old = this.tiles.get(job.key);
+    if (old) {
+      this.tiles.delete(job.key);
+      if (old.retire) { this.unload(job.key, old.retire); old.retire = undefined; }
+    }
     this.install(job.key, message.data);
+    const live = this.tiles.get(job.key);
+    if (old && live) { live.retire = old; live.fade = 1; }
   }
 
   private install(key: string, data: WorldTileData) {
@@ -951,6 +974,7 @@ export class WorldTiles {
   }
 
   private unload(key: string, live: Live) {
+    if (live.retire) { const old = live.retire; live.retire = undefined; this.unload(key, old); }
     for (const [id, f] of this.fallen) if (f.live === live) this.fallen.delete(id);
     for (const [id, g] of this.shattered) if (g.live === live) this.shattered.delete(id);
     this.root.remove(live.group);
@@ -958,7 +982,7 @@ export class WorldTiles {
     live.deferred.length = 0;
     live.buildings.length = 0;
     for (const d of live.disposables) d.dispose();
-    this.tiles.delete(key);
+    if (this.tiles.get(key) === live) this.tiles.delete(key);
     this.revision++;
     // the neighbours' water goes back to its own level along this edge
     for (const n of this.neighbours(live)) if (n) this.seamWater(n);
@@ -1970,7 +1994,10 @@ export class WorldTiles {
 
   loadedAround(focus: LngLat, radius: number) {
     const wanted = tilesAround(focus, radius, this.options.zoom);
-    return wanted.length > 0 && wanted.every((t) => this.tiles.has(t.key) && !this.tiles.get(t.key)!.waiting.length);
+    return wanted.length > 0 && wanted.every((t) => {
+      const live = this.tiles.get(t.key);
+      return !!live && !live.data?.lite && !live.waiting.length;
+    });
   }
 
   /** Includes hidden meshes still waiting for their first GPU upload. */

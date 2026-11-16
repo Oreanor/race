@@ -56,6 +56,28 @@ function segmentDistance(p: Position, a: Position, b: Position) {
   const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx * dx + dy * dy || 1)));
   return Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy);
 }
+/**
+ * Areas in square cells by their (padded) bounds: a point tests the areas of its cell, not
+ * every area of the tile (each tree candidate walked all the obstacles: a fifth of a tile).
+ */
+function areaGrid(areas: Area[], pad: number, cell = 64) {
+  const cells = new Map<string, Area[]>();
+  for (const area of areas) {
+    const [a, b, c, d] = area.bounds;
+    const x0 = Math.floor((a - pad) / cell), x1 = Math.floor((c + pad) / cell), y0 = Math.floor((b - pad) / cell), y1 = Math.floor((d + pad) / cell);
+    if ((x1 - x0 + 1) * (y1 - y0 + 1) > 4096) { for (const list of [cells.get('*') ?? []]) { list.push(area); cells.set('*', list); } continue; }
+    for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) {
+      const key = x + ',' + y, list = cells.get(key);
+      if (list) list.push(area); else cells.set(key, [area]);
+    }
+  }
+  const huge = cells.get('*') ?? [];
+  return (p: Position) => {
+    const list = cells.get(Math.floor(p[0] / cell) + ',' + Math.floor(p[1] / cell));
+    return huge.length ? [...(list ?? []), ...huge] : list ?? [];
+  };
+}
+
 function near(area: Area, p: Position, margin: number) {
   const [a,b,c,d] = area.bounds;
   return p[0] >= a-margin && p[0] <= c+margin && p[1] >= b-margin && p[1] <= d+margin;
@@ -174,6 +196,9 @@ export function* planVegetation(input: VegetationInput): Generator<null, Plant[]
   const plants: Plant[] = [];
   const seen = new Set<string>();
   const thick = greens.filter(area => DENSE.test(area.kind));
+  // obstacles and woods by cell (padded by the largest plant radius used below)
+  const obstaclesAt = areaGrid(obstacles, 4);
+  const thickAt = areaGrid(thick, 0);
   const bands: { areas: Area[]; spacing: number; reach: number; keep: number; tag: string; inset: number; min: number }[] = [
     { areas: thick, spacing: TREE_SPACING, reach: 700 * reachScale, keep: TREE_KEEP, tag: 'b', inset: 0, min: 0 },
     { areas: greens.filter(area => /^(scrub|shrubbery|flowerbed)$/.test(area.kind)), spacing: 8.5, reach: 430 * reachScale, keep: 0.72, tag: 's', inset: 1.4, min: 0 },
@@ -192,12 +217,12 @@ export function* planVegetation(input: VegetationInput): Generator<null, Plant[]
           if (Math.hypot(p[0] - focus[0], p[1] - focus[1]) > band.reach) continue;
           if (!near(area, p, 0) || !contains(area, p)) continue;
           if (plantRandom(gx, gy) > band.keep * PLANT_DENSITY) continue;
-          if (band.tag !== 'b' && thick.some(other => near(other, p, 0) && contains(other, p))) continue;
+          if (band.tag !== 'b' && thickAt(p).some(other => near(other, p, 0) && contains(other, p))) continue;
           if (Math.hypot(p[0] - focus[0], p[1] - focus[1]) < band.min) continue;
           const bush = band.tag === 's' || plantRandom(gx, gy, 47) < (band.tag === 'b' ? 0.28 : 0.34);
           if (band.tag !== 'b' && edgeNear(area, p, band.inset)) continue;
           const radius = bush ? 1.6 : 2.4;
-          if (obstacles.some(block => near(block, p, radius) && (contains(block, p) || edgeNear(block, p, radius)))) continue;
+          if (obstaclesAt(p).some(block => near(block, p, radius) && (contains(block, p) || edgeNear(block, p, radius)))) continue;
           if (onRoad(roads, p)) continue;
           seen.add(key);
           plants.push({ key, position: [input.origin[0] + p[0] / (M * cos), input.origin[1] + p[1] / M], x: p[0], z: -p[1], seed: plantRandom(gx, gy, 71), bush, variant: Math.floor(plantRandom(gx, gy, 97) * 3) });
@@ -230,7 +255,7 @@ export function* planVegetation(input: VegetationInput): Generator<null, Plant[]
           if (plantRandom(gx, gy, 113) >= PLANT_DENSITY) continue;
           const bush = plantRandom(gx, gy, 47) < 0.2;
           const radius = bush ? 2 : 3.5;
-          if (obstacles.some(block => near(block, p, radius) && (contains(block, p) || edgeNear(block, p, radius)))) continue;
+          if (obstaclesAt(p).some(block => near(block, p, radius) && (contains(block, p) || edgeNear(block, p, radius)))) continue;
           seen.add(key);
           const seed = plantRandom(gx, gy, 71);
           plants.push({

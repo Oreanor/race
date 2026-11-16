@@ -51,6 +51,8 @@ export type WorldTileData = {
   /** Exact upward-facing road triangles, shared by rendering and drive queries. */
   roadSurface: RoadSurfaceData;
   roads: MeshData;
+  /** built for the map only (see WorldBuildOptions.lite): replaced by a full tile near the car */
+  lite?: boolean;
   /** the railway beds on the ground: one textured strip a track (shoulder, ballast, sleepers, rails) */
   rails: MeshData;
   /** streams, canals, ditches: ribbons drawn with the water material */
@@ -78,6 +80,13 @@ export type WorldBuildOptions = {
    * sides. Without them each tile plans alone (and patches its edges).
    */
   neighbours?: { dx: number; dy: number; buffer: ArrayBuffer; dem?: Float32Array | null }[];
+  /**
+   * A tile for the map only: ground, water, roads, buildings and plants, but no street
+   * furniture and no bridge solve (from above a bridge reads as a road over the river) and
+   * no neighbours' roads — several times quicker. The full tile replaces it once it comes
+   * within reach of the car.
+   */
+  lite?: boolean;
 };
 
 /**
@@ -1033,7 +1042,7 @@ function neighbourWays(neighbours: { dx: number; dy: number; vt: VectorTile }[],
   return out;
 }
 
-function roadMesh(vt: VectorTile, span: number, grid: number, at: Surfaces, bridges: number[], surface: number[], pitchLines: number[] = [], lawns: number[] = [], neighbours: { dx: number; dy: number; vt: VectorTile }[] = [], bed?: RoadBuilder): MeshData {
+function roadMesh(vt: VectorTile, span: number, grid: number, at: Surfaces, bridges: number[], surface: number[], pitchLines: number[] = [], lawns: number[] = [], neighbours: { dx: number; dy: number; vt: VectorTile }[] = [], bed?: RoadBuilder, lite = false): MeshData {
   const towerSpots = new Set<string>();
   const { driveAt, groundAt: bedAt } = at;
   const builder = new RoadBuilder(driveAt, span / grid, grid);
@@ -1055,7 +1064,8 @@ function roadMesh(vt: VectorTile, span: number, grid: number, at: Surfaces, brid
     for (const way of ways.values()) for (const line of way.lines) for (let n = 1; n + 1 < line.length; n++) through.add(line[n].x + ',' + line[n].y);
     // bridges, overpasses and their ramps, worked out once for rails and both road passes
     const extra = neighbours.length ? neighbourWays(neighbours, layer.extent) : undefined;
-    const plan = planBridges(ways, layer.extent, span, at, extra);
+    // a map-only tile draws every road on the ground: no deck to solve
+    const plan = lite ? new Map<number, Planned>() : planBridges(ways, layer.extent, span, at, extra);
     // a neighbour's deck that reaches our edge: not drawn here (its tile draws it), but the
     // car on our side of the edge drives on it
     if (extra) for (const [id, planned] of plan) {
@@ -1398,7 +1408,8 @@ export function buildWorldTile(buffer: ArrayBuffer, tile: TileId, options: World
   const bridgeList: number[] = [];
   const surfaceList: number[] = [];
   // statues, fountains, bus shelters, pitch lines and goals
-  const furniture = streetFurniture(vt, span, metersScale);
+  // a map-only tile has no benches, shelters or pitch lines (nobody stands next to them)
+  const furniture = options.lite ? { monuments: [], fountains: [], shelters: [], goals: [], lines: [] } as unknown as ReturnType<typeof streetFurniture> : streetFurniture(vt, span, metersScale);
   const features: Record<string, GeoFeature[]> = {};
   for (const name of GAMEPLAY_LAYERS) {
     const layer = vt.layers[name];
@@ -1412,7 +1423,7 @@ export function buildWorldTile(buffer: ArrayBuffer, tile: TileId, options: World
   // the tiles around: their roads go into the bridge plan (an unreadable one is left out)
   // the railway beds go into their own small textured mesh (a texture instead of sleepers and rails)
   const railBed = new RoadBuilder(driveAt, span / options.grid, options.grid, true);
-  const roads = roadMesh(vt, span, options.grid, { driveAt, groundAt, waterAt, toMerc: 1 / metersScale }, bridgeList, surfaceList, furniture.lines, hedgeLawns(streets.plants, 1 / metersScale), around, railBed);
+  const roads = roadMesh(vt, span, options.grid, { driveAt, groundAt, waterAt, toMerc: 1 / metersScale }, bridgeList, surfaceList, furniture.lines, hedgeLawns(streets.plants, 1 / metersScale), around, railBed, options.lite === true);
   const rails = meshOf(railBed);
   // streams sit on the water surface — following the carved bed made torn blue ribbons
   const streamAt = (x: number, z: number) => {
@@ -1435,6 +1446,7 @@ export function buildWorldTile(buffer: ArrayBuffer, tile: TileId, options: World
     bridges,
     roadSurface,
     roads,
+    lite: options.lite === true,
     rails,
     streams,
     buildings: buildTile(vt, tile, {

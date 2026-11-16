@@ -123,7 +123,8 @@ scope.onmessage = async (event: MessageEvent<Request>) => {
     }
     // the eight tiles around: their roads go into the bridge plan, so a bridge over the
     // edge has the same heights on both sides (one that fails to load is left out)
-    const neighbours = message.vectorTemplate
+    // a map-only tile plans no bridges: no neighbours' roads to load
+    const neighbours = message.vectorTemplate && !message.options.lite
       ? (await Promise.all([-1, 0, 1].flatMap((dy) => [-1, 0, 1].map(async (dx) => {
         if (!dx && !dy) return null;
         const tile = { z: message.tile.z, x: message.tile.x + dx, y: message.tile.y + dy };
