@@ -1060,12 +1060,13 @@ export default function Game() {
         </Dialog>
       )}
 
-      {transfer && driving && (
+      {/* the short wait for the arrival's ground goes unannounced; only a failure asks */}
+      {transfer === 'failed' && driving && (
         <Dialog title={t('transfer.title')} actions={transfer === 'failed' ? <>
           <button type="button" className="ui-btn" autoFocus onClick={() => engine.current?.retryTransfer()}>{t('transfer.retry')}</button>
           <button type="button" className="ui-btn is-ghost" onClick={() => engine.current?.cancelTransfer()}>{t('tow.cancel')}</button>
         </> : undefined}>
-          <p className="ui-text" role="status">{t(transfer === 'loading' ? 'transfer.loading' : 'transfer.failed')}</p>
+          <p className="ui-text" role="status">{t('transfer.failed')}</p>
         </Dialog>
       )}
 

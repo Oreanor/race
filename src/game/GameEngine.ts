@@ -163,6 +163,8 @@ const CAMERA_STORE = 'race.camera';
 const RACE_LOOK_M = 400;
 /** on the run: how often a patrol in the traffic may join the chase (ms) */
 const POLICE_JOIN_MS = 20_000;
+/** a tow, a ticket, a respawn: the ground this far (m) round the arrival must be in first */
+const ARRIVAL_M = 400;
 /** the odds of a patrol joining at each POLICE_JOIN_MS check */
 const POLICE_JOIN_CHANCE = 0.25;
 /** no patrol joins once the nearest police car is this far behind (m): we are getting away */
@@ -2025,21 +2027,22 @@ export class GameEngine {
   private placeCarAt(position: Position, after?: () => void) {
     if (this.transfer.pending) return;
     const commit = () => { this.commitCarPlacement(position); after?.(); };
-    // A settled ring includes road/terrain meshes, buildings and completed GPU
-    // uploads. Keep the old scene visible until all of it is ready.
-    if (this.map.areTilesLoadedAround(position, this.map.loadRadius)) { commit(); return; }
+    // Only the ground under the arrival has to be in (its tile and the ones touching ARRIVAL_M
+    // round it, built and uploaded): the rest streams in as on any drive. Waiting for the whole
+    // 2.8 km ring took tens of seconds behind a "preparing" dialog.
+    if (this.map.areTilesLoadedAround(position, ARRIVAL_M)) { commit(); return; }
     this.transfer.begin(position, commit, performance.now());
     this.vehicle.speed = 0;
     this.vehicle.throttle = 0;
     this.keys.clear();
     this.stopGun();
-    this.map.setStreamDestination(position);
+    this.map.setStreamDestination(position, ARRIVAL_M);
     this.onTransfer('loading');
   }
 
   retryTransfer() {
     this.transfer.retry(performance.now());
-    if (this.transfer.pending) this.map.setStreamDestination(this.transfer.pending.at);
+    if (this.transfer.pending) this.map.setStreamDestination(this.transfer.pending.at, ARRIVAL_M);
     this.onTransfer(this.transfer.state);
   }
 
@@ -2053,7 +2056,7 @@ export class GameEngine {
     const pending = this.transfer.pending;
     if (!pending || this.transfer.state !== 'loading') return;
     const before = this.transfer.state;
-    this.transfer.tick(now, this.map.areTilesLoadedAround(pending.at, this.map.loadRadius));
+    this.transfer.tick(now, this.map.areTilesLoadedAround(pending.at, ARRIVAL_M));
     if (this.transfer.state !== before) {
       this.map.setStreamDestination(null);
       this.onTransfer(this.transfer.state);
