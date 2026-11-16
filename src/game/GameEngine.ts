@@ -67,7 +67,7 @@ import { HIT_DAMAGE, PLAYER_HP } from '@/net/protocol';
 import { createTrafficBot, TrafficRoadNetwork, type TrafficBot } from './TrafficBots.ts';
 import { formatNumber, onLangChange, t } from '@/i18n';
 import { ThreeMap } from '@/world3d/map/ThreeMap';
-import { EVACUATION_COST, FuelTank, FUEL_PRICE, REPAIR_PRICE } from './Fuel.ts';
+import { EVACUATION_COST, FuelTank } from './Fuel.ts';
 import { atStation, banksFromFeatures, busStopsFromFeatures, courtsFromFeatures, dealershipsFromFeatures, hospitalsFromFeatures, landmarksFromFeatures, nearestStation, policeFromFeatures, prisonsFromFeatures, repairShopsFromFeatures, SERVICE_REACH, stationsFromFeatures, type CivicKind, type Landmark, type Station } from './poi.ts';
 import { metersBetween, offsetMeters } from './meters.ts';
 import { defaultMapLabelFilters, type MapLabelFilters, type MapLabelKind } from './mapLabels.ts';
@@ -77,13 +77,13 @@ import { RailNetwork, TrainTraffic } from './Trains.ts';
 import { canCable, Hauler, type HaulHost } from './Hauler.ts';
 import { Heist, type HeistHost } from './crime/Heist.ts';
 import { MissionBotDriver, type BotDriverHost } from './traffic/MissionBots.ts';
+import { Shops, type ShopsHost } from './economy/Shops.ts';
 import { JobPin, makeMapLabel, makeOffscreenIndicator, newMarker, paintMissionIndicator, setPinRange, type MapMarker } from './hud/mapPins.ts';
 import { hubAt, hubsFromFeatures, kilometres, nearestHub, ticketPrice, type Hub, type HubKind } from './Travel.ts';
 import { bearingTo, BOUNTY_RANGE_KM, loadBounty, makeBounty, saveBounty, type Bounty } from './Bounty.ts';
 import type { GameSave } from './save.ts';
 import { BOX_REACH_M, COLLECT_BOXES, COLLECT_REWARD, deliveryReward, DELIVERY_MAX_M, DELIVERY_MIN_M, DELIVERY_REACH_M, randomItem, scatterBoxes, type DeliveryItem, type Errand } from './Errands.ts';
 import type {
-  BankOffer,
   BountyOffer,
   DealerOffer,
   EventOffer,
@@ -93,7 +93,6 @@ import type {
   MissionKind,
   PlayerCarry,
   RideOffer as RideOfferType,
-  ServiceOffer,
   Settings,
   TravelOffer,
 } from './offers.ts';
@@ -118,8 +117,6 @@ import {
   HAULER_ID,
   IMPOUND_ARRIVE_M,
   IMPOUND_REWARD,
-  LOAN_LIMIT,
-  LOAN_RATE,
   METERS_PER_DEGREE,
   MISSION_COLORS,
   MISSION_PICKUP_M,
@@ -368,6 +365,8 @@ export class GameEngine {
   /** the nitro bar under the speedometer: 0…1 left, whether it is burning now, and
    *  `spent`: run dry with Space still down — it waits for Space to be let go */
   private nitro = { level: 1, active: false, spent: false };
+  /** the fuel station, the car service and the bank: their dialogs and the loan (see Shops) */
+  readonly shops = new Shops(this.shopsHost());
   /** the mission bots at the wheel (see MissionBotDriver) */
   private botDriver = new MissionBotDriver(this.botDriverHost());
   /** bank jobs, hijacks and the police after us (see Heist) */
@@ -428,8 +427,6 @@ export class GameEngine {
   /** ports, airports and railway stations: reaching one offers a ticket to any city */
   onTravelOffer: (offer: TravelOffer | null) => void = () => {};
   private hubs = new Map<string, Hub>();
-  /** fuel station or car service dialogs (shown on arrival, re-armed after leaving) */
-  onServiceOffer: (offer: ServiceOffer | null) => void = () => {};
   /** car dealership dialog (Tab when on the lot, or arriving slowly) */
   onDealerOffer: (offer: DealerOffer | null) => void = () => {};
   /** after a purchase: React keeps the menu car index in sync */
@@ -448,11 +445,6 @@ export class GameEngine {
   private offeredService: string | null = null;
   /** cars we own: bought ones pile up here, none is sold back */
   private garage = new Set<string>();
-  /** owed to the bank; the bank dialog is open */
-  private loanDebt = 0;
-  private bankOpen = false;
-  onBankOffer: (offer: BankOffer | null) => void = () => {};
-  private serviceOpen: ServiceOffer['kind'] | null = null;
   private dealerOpen = false;
   /** key M: camera rises straight up for a ~2 × 2 km view from above (0 chase … 1 overview) */
   private overview = 0;
@@ -919,6 +911,21 @@ export class GameEngine {
     } else n.level = Math.min(1, n.level + dt / NITRO_REFILL_S);
   }
 
+  /** The counters' window on the game: the car, its tank and health, the purse. */
+  private shopsHost(): ShopsHost {
+    const game = this;
+    return {
+      get vehicle() { return game.vehicle; },
+      get keys() { return game.keys; },
+      get fuel() { return game.fuel; },
+      get playerHp() { return game.playerHp; },
+      set playerHp(hp) { game.playerHp = hp; },
+      get playerMaxHp() { return game.playerMaxHp; },
+      get playerMoney() { return game.playerMoney; },
+      set playerMoney(money) { game.playerMoney = money; },
+    };
+  }
+
   /** The mission bots' window on the game. */
   private botDriverHost(): BotDriverHost {
     const game = this;
@@ -1093,7 +1100,7 @@ export class GameEngine {
   /** Open the showroom when standing on a dealership lot (Tab, or slow arrival). */
   private tryOpenDealer() {
     if (!this.runReady) return false;
-    if (!this.driving || this.mode !== 'roam' || this.dealerOpen || this.serviceOpen || this.travelOpen || this.fuelOut) return false;
+    if (!this.driving || this.mode !== 'roam' || this.dealerOpen || this.shops.serviceOpen || this.travelOpen || this.fuelOut) return false;
     const lot = atStation(this.vehicle.position, [...this.dealerships.values()], SERVICE_REACH.dealer);
     if (!lot) return false;
     this.offeredService = lot.id;
@@ -1266,7 +1273,7 @@ export class GameEngine {
       // Intro: empty garage + STARTING_CASH (prod). GIFT_CARS only in next.devs.
       // The menu car is bought when setDriving(true) — not on boot spawn.
       this.fuel.level = this.fuel.spec.tank * (carry?.fuel ?? 1);
-      this.loanDebt = Math.max(0, Math.round(carry?.loan ?? 0));
+      this.shops.loanDebt = Math.max(0, Math.round(carry?.loan ?? 0));
       this.garage = new Set((carry?.garage ?? []).filter((id) => carsConfig.some((car) => car.id === id)));
       for (const id of GIFT_CARS) {
         if (carsConfig.some((car) => car.id === id)) this.garage.add(id);
@@ -1307,7 +1314,7 @@ export class GameEngine {
       heading: this.vehicle.heading,
       place: { name: place.name, country: place.country, coords: [...place.coords] as [number, number] },
       collected,
-      loan: this.loanDebt,
+      loan: this.shops.loanDebt,
       garage: [...this.garage],
     };
   }
@@ -1361,7 +1368,7 @@ export class GameEngine {
     this.playerMoney = 0;
     this.carry = null;
     this.collectedPickups.clear();
-    this.loanDebt = 0;
+    this.shops.loanDebt = 0;
     this.garage.clear();
     this.pickups.clear();
     this.combatLayer?.setPickups([]);
@@ -3309,7 +3316,7 @@ export class GameEngine {
         && !this.bountyOfferShown
         && !this.eventOffer
         && !this.travelOpen
-        && !this.serviceOpen
+        && !this.shops.serviceOpen
         && !this.dealerOpen
         && !this.fuelOut
         && now > this.bountyApproachCooldown
@@ -3321,7 +3328,7 @@ export class GameEngine {
       return;
     }
     if (!this.bounty) {
-      const busy = this.mode !== 'roam' || this.errand || this.bountyPending || this.eventOffer || this.travelOpen || this.serviceOpen || this.dealerOpen || this.fuelOut || this.fire.active || this.impoundActive || this.taxi.active || this.busTour.active;
+      const busy = this.mode !== 'roam' || this.errand || this.bountyPending || this.eventOffer || this.travelOpen || this.shops.serviceOpen || this.dealerOpen || this.fuelOut || this.fire.active || this.impoundActive || this.taxi.active || this.busTour.active;
       if (busy || now < this.bountyOfferAt) return;
       const seed = Math.round(here[0] * 1e5) ^ Math.round(here[1] * 1e5) ^ (now | 0);
       const avoid = this.missions.map(mission => mission.position);
@@ -3449,7 +3456,7 @@ export class GameEngine {
       position: this.vehicle.position,
       heading: this.vehicle.heading,
       mode: this.mode,
-      busy: Boolean(this.eventOffer || this.travelOpen || this.serviceOpen || this.dealerOpen || this.fuelOut),
+      busy: Boolean(this.eventOffer || this.travelOpen || this.shops.serviceOpen || this.dealerOpen || this.fuelOut),
       bountyFight: this.bountyFight,
       errand: Boolean(this.errand),
       onMission: this.onMission(),
@@ -3496,7 +3503,7 @@ export class GameEngine {
       position: this.vehicle.position,
       heading: this.vehicle.heading,
       mode: this.mode,
-      busy: Boolean(this.eventOffer || this.travelOpen || this.serviceOpen || this.dealerOpen || this.fuelOut || this.taxi.pending || this.busTour.pending),
+      busy: Boolean(this.eventOffer || this.travelOpen || this.shops.serviceOpen || this.dealerOpen || this.fuelOut || this.taxi.pending || this.busTour.pending),
       bountyFight: this.bountyFight,
       errand: Boolean(this.errand),
       onMission: this.onMission(),
@@ -3544,7 +3551,7 @@ export class GameEngine {
       position: this.vehicle.position,
       heading: this.vehicle.heading,
       mode: this.mode,
-      busy: Boolean(this.eventOffer || this.travelOpen || this.serviceOpen || this.dealerOpen || this.fuelOut || this.taxi.pending || this.busTour.pending || this.ambulance.pending),
+      busy: Boolean(this.eventOffer || this.travelOpen || this.shops.serviceOpen || this.dealerOpen || this.fuelOut || this.taxi.pending || this.busTour.pending || this.ambulance.pending),
       bountyFight: this.bountyFight,
       errand: Boolean(this.errand),
       onMission: this.onMission(),
@@ -3686,7 +3693,7 @@ export class GameEngine {
     return {
       position: this.vehicle.position,
       mode: this.mode,
-      busy: Boolean(this.eventOffer || this.travelOpen || this.serviceOpen || this.dealerOpen || this.fuelOut || this.busTour.active || this.busTour.pickup || this.busTour.pending || this.taxi.pending),
+      busy: Boolean(this.eventOffer || this.travelOpen || this.shops.serviceOpen || this.dealerOpen || this.fuelOut || this.busTour.active || this.busTour.pickup || this.busTour.pending || this.taxi.pending),
       stops: [...this.busStops.values()],
       say: (text, toast) => this.say(text, toast),
       addMoney: (amount) => { this.playerMoney += amount; },
@@ -3704,7 +3711,7 @@ export class GameEngine {
       position: this.vehicle.position,
       heading: this.vehicle.heading,
       mode: this.mode,
-      busy: Boolean(this.eventOffer || this.travelOpen || this.serviceOpen || this.dealerOpen || this.fuelOut || this.taxi.pending || this.busTour.pending),
+      busy: Boolean(this.eventOffer || this.travelOpen || this.shops.serviceOpen || this.dealerOpen || this.fuelOut || this.taxi.pending || this.busTour.pending),
       bountyFight: this.bountyFight,
       errand: Boolean(this.errand),
       onMission: this.onMission(),
@@ -3778,7 +3785,7 @@ export class GameEngine {
       return;
     }
     if (this.mode !== 'roam' || this.bountyFight || this.errand || this.onMission()) return;
-    const busy = this.eventOffer || this.travelOpen || this.serviceOpen || this.dealerOpen || this.fuelOut;
+    const busy = this.eventOffer || this.travelOpen || this.shops.serviceOpen || this.dealerOpen || this.fuelOut;
     if (busy || now < this.impoundOfferAt) return;
     const seed = Math.round(here[0] * 1e5) ^ Math.round(here[1] * 1e5) ^ (now | 0);
     const avoid = this.missions.map((mission) => mission.position);
@@ -4394,7 +4401,7 @@ export class GameEngine {
     this.playerMoney -= price;
     this.travelOpen = false;
     this.onTravelOffer(null);
-    return { money: this.playerMoney, fuel: this.fuel.ratio, loan: this.loanDebt, garage: [...this.garage] };
+    return { money: this.playerMoney, fuel: this.fuel.ratio, loan: this.shops.loanDebt, garage: [...this.garage] };
   }
 
   private updateFuel(_dt: number) {
@@ -4409,90 +4416,17 @@ export class GameEngine {
     const here = station ?? shop ?? dealer ?? bank;
     if (!here) this.offeredService = null;
     // not before the saved run (purse, garage, health) is in: a dialog would show it empty
-    else if (this.runReady && here.id !== this.offeredService && Math.abs(this.vehicle.speed) < 7 && !this.serviceOpen && !this.dealerOpen && !this.bankOpen && !this.travelOpen && !this.fuelOut && this.mode === 'roam') {
+    else if (this.runReady && here.id !== this.offeredService && Math.abs(this.vehicle.speed) < 7 && !this.shops.serviceOpen && !this.dealerOpen && !this.shops.bankOpen && !this.travelOpen && !this.fuelOut && this.mode === 'roam') {
       this.offeredService = here.id;
       if (dealer && here.id === dealer.id) this.tryOpenDealer();
-      else if (bank && here.id === bank.id) this.openBank();
-      else this.openService(station ? 'fuel' : 'repair');
+      else if (bank && here.id === bank.id) this.shops.openBank();
+      else this.shops.openService(station ? 'fuel' : 'repair');
     }
     if (this.fuel.empty && Math.abs(this.vehicle.speed) < 0.3 && !this.fuelOut && !station) {
       this.fuelOut = true;
       this.keys.clear();
       this.onFuelOut(true);
     }
-  }
-
-  private serviceState(kind: ServiceOffer['kind']): ServiceOffer {
-    return kind === 'fuel'
-      ? { kind, level: this.fuel.level, tank: this.fuel.spec.tank, money: Math.floor(this.playerMoney), price: FUEL_PRICE }
-      : { kind, hp: this.playerHp, maxHp: this.playerMaxHp, money: Math.floor(this.playerMoney), price: REPAIR_PRICE };
-  }
-
-  private openService(kind: ServiceOffer['kind']) {
-    this.serviceOpen = kind;
-    this.keys.clear();
-    this.vehicle.speed = 0;
-    this.onServiceOffer(this.serviceState(kind));
-  }
-
-  /** Buy `want` litres at the station (default: fill up), never past the tank or the purse. */
-  buyFuel(want = Infinity) {
-    if (this.serviceOpen !== 'fuel') return;
-    const room = this.fuel.spec.tank - this.fuel.level;
-    const litres = Math.max(0, Math.min(room, want, Math.floor(this.playerMoney / FUEL_PRICE)));
-    this.fuel.level += litres;
-    this.playerMoney -= litres * FUEL_PRICE;
-    this.onServiceOffer(this.serviceState('fuel'));
-  }
-
-  /** Repair the car (as far as the coins allow) at the service. */
-  repairCar() {
-    if (this.serviceOpen !== 'repair') return;
-    const missing = this.playerMaxHp - this.playerHp;
-    const points = Math.max(0, Math.min(missing, Math.floor(this.playerMoney / REPAIR_PRICE)));
-    this.playerHp += points;
-    this.playerMoney -= Math.ceil(points * REPAIR_PRICE);
-    this.onServiceOffer(this.serviceState('repair'));
-  }
-
-  leaveService() {
-    this.serviceOpen = null;
-    this.onServiceOffer(null);
-  }
-
-  private bankState(): BankOffer {
-    return { money: Math.floor(this.playerMoney), debt: this.loanDebt, limit: LOAN_LIMIT, rate: LOAN_RATE };
-  }
-
-  private openBank() {
-    this.bankOpen = true;
-    this.keys.clear();
-    this.vehicle.speed = 0;
-    this.onBankOffer(this.bankState());
-  }
-
-  /** Borrow up to LOAN_LIMIT; owe it plus LOAN_RATE. Only when nothing is owed yet. */
-  borrow(amount: number) {
-    if (!this.bankOpen || this.loanDebt > 0) return;
-    const sum = Math.max(0, Math.min(LOAN_LIMIT, Math.round(amount)));
-    if (!sum) return;
-    this.playerMoney += sum;
-    this.loanDebt = Math.round(sum * (1 + LOAN_RATE));
-    this.onBankOffer(this.bankState());
-  }
-
-  /** Pay the loan back — all of it, or what the wallet holds. */
-  repayLoan() {
-    if (!this.bankOpen || this.loanDebt <= 0) return;
-    const pay = Math.min(Math.floor(this.playerMoney), this.loanDebt);
-    this.playerMoney -= pay;
-    this.loanDebt -= pay;
-    this.onBankOffer(this.bankState());
-  }
-
-  leaveBank() {
-    this.bankOpen = false;
-    this.onBankOffer(null);
   }
 
   /** Tow truck (empty tank, or stuck — E): to the nearest known station, tank filled, for EVACUATION_COST coins. */

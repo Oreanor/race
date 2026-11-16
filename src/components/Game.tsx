@@ -523,8 +523,8 @@ export default function Game() {
         }
       };
       game.onTravelOffer = (offer) => setTravelOffer(offer);
-      game.onServiceOffer = (offer) => setServiceOffer(offer);
-      game.onBankOffer = (offer) => setBankOffer(offer);
+      game.shops.onServiceOffer = (offer) => setServiceOffer(offer);
+      game.shops.onBankOffer = (offer) => setBankOffer(offer);
       game.onDealerOffer = (offer) => setDealerOffer(offer);
       game.onCarBought = (bought) => {
         // `car` indexes the price-sorted carousel (introCars), not the config order
@@ -1108,17 +1108,17 @@ export default function Game() {
       {serviceOffer && driving && !fuelOut && (
         <ServiceDialog
           offer={serviceOffer}
-          onBuy={(litres) => (serviceOffer.kind === 'fuel' ? engine.current?.buyFuel(litres) : engine.current?.repairCar())}
-          onLeave={() => engine.current?.leaveService()}
+          onBuy={(litres) => (serviceOffer.kind === 'fuel' ? engine.current?.shops.buyFuel(litres) : engine.current?.shops.repairCar())}
+          onLeave={() => engine.current?.shops.leaveService()}
         />
       )}
 
       {bankOffer && driving && !fuelOut && (
         <BankDialog
           offer={bankOffer}
-          onBorrow={(amount) => engine.current?.borrow(amount)}
-          onRepay={() => engine.current?.repayLoan()}
-          onLeave={() => engine.current?.leaveBank()}
+          onBorrow={(amount) => engine.current?.shops.borrow(amount)}
+          onRepay={() => engine.current?.shops.repayLoan()}
+          onLeave={() => engine.current?.shops.leaveBank()}
         />
       )}
 
