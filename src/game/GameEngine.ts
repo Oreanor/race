@@ -188,6 +188,9 @@ function savedCamera(): { distance: number; pitch: number; orbit: number } | nul
   }
 }
 const NO_FUEL_KEYS = new Set(['KeyW', 'Space']);
+/** nitro: a full bar burns in this long (s), and refills from empty in this long (s) */
+const NITRO_BURN_S = 10;
+const NITRO_REFILL_S = 20;
 
 
 /** One line of the "who is online" list. Distance in meters from our car. */
@@ -376,6 +379,8 @@ export class GameEngine {
     ambulance: new JobPin('ambulance-map-marker', 'ambulance'),
     bus: new JobPin('bus-map-marker', 'bus'),
   };
+  /** the nitro bar under the speedometer: 0…1 left, and whether it is burning now */
+  private nitro = { level: 1, active: false };
   /** the Howler's and the Batmobile's cable (see Hauler) */
   private hauler = new Hauler(this.haulHost());
   /** us on the map (M): a dot with an arrow along our heading */
@@ -733,7 +738,8 @@ export class GameEngine {
       }
       if (!this.driving || this.paused) return;
       if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'ShiftLeft', 'ShiftRight', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyR', 'Tab', 'KeyM', 'KeyJ', 'KeyE'].includes(e.code)) e.preventDefault();
-      if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'ShiftLeft', 'ShiftRight', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) this.keys.add(e.code);
+      if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft', 'ShiftRight', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) this.keys.add(e.code);
+      if (e.code === 'Space' && !e.repeat) this.fireNitro();
       if (e.code === 'KeyR') this.resetCamera();
       if (e.code === 'Tab' && !e.repeat) {
         if (this.tryOpenDealer()) { /* showroom takes Tab on the lot */ }
@@ -919,6 +925,26 @@ export class GameEngine {
   private isHauler(id = this.car.id) { return id === HAULER_ID; }
   /** Howler + Batmobile: throw / yank / release the cable. */
   private canCable(id = this.car.id) { return canCable(id); }
+
+  /** The nitro bar, for the HUD. */
+  nitroState(): Readonly<{ level: number; active: boolean }> {
+    return this.nitro;
+  }
+
+  /** Space: the nitro burns what is left in the bar, all of it (no stopping half way). */
+  private fireNitro() {
+    if (!this.driving || this.paused || this.nitro.active || this.nitro.level < 0.02 || this.fuel.empty) return;
+    this.nitro.active = true;
+  }
+
+  /** Burning: the bar empties in NITRO_BURN_S; then it refills by itself in NITRO_REFILL_S. */
+  private tickNitro(dt: number) {
+    const n = this.nitro;
+    if (n.active) {
+      n.level = Math.max(0, n.level - dt / NITRO_BURN_S);
+      if (n.level <= 0 || this.fuel.empty) n.active = false;
+    } else n.level = Math.min(1, n.level + dt / NITRO_REFILL_S);
+  }
 
   /** The cable's window on the game: our car, the world, the cars it can take. */
   private haulHost(): HaulHost {
@@ -5620,7 +5646,8 @@ export class GameEngine {
         const previous: [number, number] = [...this.vehicle.position];
         const oldHeading = this.vehicle.heading;
         // An empty tank: no throttle, no boost; the car rolls out.
-        const held = this.keys;
+        this.tickNitro(1 / 60);
+        const held = this.nitro.active ? new Set([...this.keys, 'Space']) : this.keys;
         const driveKeys = this.fuel.empty ? new Set([...held].filter(key => !NO_FUEL_KEYS.has(key))) : held;
         const travelled = this.vehicle.distance;
         this.vehicle.step(1 / 60, driveKeys, { ...vehicleConfig, acceleration: this.car.acceleration, maxSpeed: this.car.maxSpeed });
@@ -6045,7 +6072,7 @@ export class GameEngine {
       revs: this.vehicle.revs,
       speed: this.vehicle.speed,
       throttle: this.keys.has('KeyW'),
-      boost: this.keys.has('Space') && !this.fuel.empty,
+      boost: this.nitro.active && !this.fuel.empty,
       slip: this.vehicle.slip,
       litres: this.car.engine,
       position: this.vehicle.position as [number, number],

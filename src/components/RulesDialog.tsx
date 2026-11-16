@@ -46,7 +46,7 @@ function copy(lang: Lang): Copy {
         <>Особые машины получают свою работу: такси, автобус, скорая, пожарная, эвакуатор, полиция — см. таблицу ниже.</>,
       ] },
       { title: 'Места на карте', items: [
-        <><b>Заправка</b>: топливо по {FUEL_PRICE} монете за литр, бак тратится по реальному расходу машины, буст (Space) жжёт больше. Кончилось — эвакуатор (<b>E</b>) довезёт до ближайшей заправки и зальёт бак за {P(EVACUATION_COST)}.</>,
+        <><b>Заправка</b>: топливо по {FUEL_PRICE} монете за литр, бак тратится по реальному расходу машины, нитро (Space) жжёт больше. Кончилось — эвакуатор (<b>E</b>) довезёт до ближайшей заправки и зальёт бак за {P(EVACUATION_COST)}.</>,
         <><b>Автосервис</b>: ремонт — {REPAIR_PRICE} монета за единицу прочности, можно чинить частично.</>,
         <><b>Автосалон</b>: купить новую машину или пересесть на любую из гаража. <b>C</b> — следующая машина из гаража прямо на ходу.</>,
         <><b>Банк</b>: кредит до {P(LOAN_LIMIT)} под {pct}% без срока, один за раз. А можно и ограбить: стрелять по банку 3 секунды — пачки по {P(CASH_BUNDLE)}, и за вами полиция. Оторваться от каждой машины на 2 км — деньги ваши; поймают — штраф 18–25 тыс. плюс украденное.</>,
@@ -55,6 +55,7 @@ function copy(lang: Lang): Copy {
       ] },
       { title: 'Ещё', items: [
         <><b>H</b> — угнать припаркованную машину рядом: полиция в погоню, оторвётесь — машина уйдёт на чёрный рынок за полцены.</>,
+        <><b>Space</b> — нитро: тратит полоску под спидометром (полная — 10 секунд), потом она сама набирается за 20 секунд; можно жечь и неполную.</>,
         <><b>J</b> — поставить трамплин, <b>T</b> — время суток (Shift+T — сезон), <b>Y</b> — стиль архитектуры, <b>M</b> — карта, клик ставит цель.</>,
         <>Онлайн вы ездите в одном мире с другими игроками; <b>Enter</b> — чат. Трафик мирный, но если по нему стрелять или таранить, он может разозлиться.</>,
         <>Деньги, гараж и прогресс сохраняются. «Начать заново» в настройках стирает всё.</>,
@@ -87,7 +88,7 @@ function copy(lang: Lang): Copy {
         <>Os carros especiais têm o seu trabalho: táxi, autocarro, ambulância, bombeiros, reboque, polícia — veja a tabela.</>,
       ] },
       { title: 'Lugares no mapa', items: [
-        <><b>Posto de combustível</b>: {FUEL_PRICE} moeda por litro, o consumo é o real do carro, o turbo (Space) gasta mais. Sem combustível — o reboque (<b>E</b>) leva-o ao posto mais próximo e enche o depósito por {P(EVACUATION_COST)}.</>,
+        <><b>Posto de combustível</b>: {FUEL_PRICE} moeda por litro, o consumo é o real do carro, o nitro (Space) gasta mais. Sem combustível — o reboque (<b>E</b>) leva-o ao posto mais próximo e enche o depósito por {P(EVACUATION_COST)}.</>,
         <><b>Oficina</b>: reparação a {REPAIR_PRICE} moeda por ponto, também parcial.</>,
         <><b>Stand</b>: comprar um carro ou trocar para outro da garagem. <b>C</b> — o próximo carro da garagem a andar.</>,
         <><b>Banco</b>: empréstimo até {P(LOAN_LIMIT)} a {pct}%, sem prazo, um de cada vez. Ou assalte-o: dispare 3 segundos — maços de {P(CASH_BUNDLE)} e a polícia atrás. Fuja 2 km de cada carro e o dinheiro é seu; apanhado — multa de 18–25 mil mais o roubado.</>,
@@ -96,6 +97,7 @@ function copy(lang: Lang): Copy {
       ] },
       { title: 'Mais', items: [
         <><b>H</b> — roubar um carro estacionado ao lado: a polícia persegue; fuja e o carro vai para o mercado negro por metade do preço.</>,
+        <><b>Space</b> — nitro: gasta a barra sob o velocímetro (cheia — 10 segundos), depois enche sozinha em 20 segundos; pode usar o que houver.</>,
         <><b>J</b> — rampa, <b>T</b> — hora do dia (Shift+T — estação), <b>Y</b> — estilo de arquitetura, <b>M</b> — mapa, clique para marcar o destino.</>,
         <>Online conduz no mesmo mundo que outros jogadores; <b>Enter</b> — chat. O trânsito é calmo, mas se disparar ou bater nele pode zangar-se.</>,
         <>Dinheiro, garagem e progresso ficam guardados. «Recomeçar» nas definições apaga tudo.</>,
@@ -128,7 +130,7 @@ function copy(lang: Lang): Copy {
         <>Special cars get their own jobs: taxi, bus, ambulance, fire truck, tow truck, police — see the table.</>,
       ] },
       { title: 'Places on the map', items: [
-        <><b>Fuel station</b>: {FUEL_PRICE} coin per litre; the tank drains at the car's real consumption, the boost (Space) burns more. Run dry — the tow truck (<b>E</b>) takes you to the nearest station and fills up for {P(EVACUATION_COST)}.</>,
+        <><b>Fuel station</b>: {FUEL_PRICE} coin per litre; the tank drains at the car's real consumption, the nitro (Space) burns more. Run dry — the tow truck (<b>E</b>) takes you to the nearest station and fills up for {P(EVACUATION_COST)}.</>,
         <><b>Car service</b>: repairs at {REPAIR_PRICE} coin per point, partial repairs too.</>,
         <><b>Dealership</b>: buy a new car or switch to any car in your garage. <b>C</b> — the next garage car on the go.</>,
         <><b>Bank</b>: a loan up to {P(LOAN_LIMIT)} at {pct}%, no term, one at a time. Or rob it: fire at it for 3 seconds — bundles of {P(CASH_BUNDLE)} and the police on you. Get 2 km ahead of each car and the cash is yours; caught — a fine of 18–25k plus the loot.</>,
@@ -137,6 +139,7 @@ function copy(lang: Lang): Copy {
       ] },
       { title: 'More', items: [
         <><b>H</b> — hijack a parked car beside you: the police give chase; lose them and it goes to the black market for half its price.</>,
+        <><b>Space</b> — nitro: burns the bar under the speedometer (a full one lasts 10 seconds), then it refills by itself in 20 seconds; you can burn whatever is in it.</>,
         <><b>J</b> — a ramp, <b>T</b> — time of day (Shift+T — season), <b>Y</b> — architecture style, <b>M</b> — the map, click to pin a target.</>,
         <>Online you share the world with other players; <b>Enter</b> — chat. Traffic is calm, but shoot or ram it and it may turn on you.</>,
         <>Money, garage and progress are saved. «Start over» in the settings wipes it all.</>,

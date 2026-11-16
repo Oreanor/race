@@ -189,6 +189,7 @@ export default function Game() {
   const nameRef = useRef(shownName);
   nameRef.current = shownName;
   const speedRef = useRef<HTMLElement>(null);
+  const nitroRef = useRef<HTMLDivElement>(null);
   const fpsRef = useRef<HTMLElement>(null);
   const placeRef = useRef<HTMLElement>(null);
   const districtRef = useRef<HTMLElement>(null);
@@ -438,6 +439,13 @@ export default function Game() {
           const shown = Math.round(Math.abs(s));
           if (speedRef.current) {
             speedRef.current.textContent = String(shown).padStart(2, '0');
+          }
+          // the nitro bar under the speedometer
+          if (nitroRef.current && game) {
+            const nitro = game.nitroState();
+            nitroRef.current.style.setProperty('--nitro', nitro.level.toFixed(3));
+            nitroRef.current.classList.toggle('is-on', nitro.active);
+            nitroRef.current.classList.toggle('is-full', !nitro.active && nitro.level >= 1);
           }
           if (fpsRef.current) fpsRef.current.textContent = (frames || '—') + ' FPS';
           // local date and time where the car is, a few times a second at most
@@ -1015,6 +1023,7 @@ export default function Game() {
           <div className="speed-hud" aria-label={t('hud.speed')}>
             <strong ref={speedRef}>00</strong>
             <span>{t('hud.kmh')}</span>
+            <div className="nitro-bar" ref={nitroRef} aria-hidden="true"><i /></div>
           </div>
           {statusToast && <div className="mission-toast" role="status">{statusToast}</div>}
         </>
