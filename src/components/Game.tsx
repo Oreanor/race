@@ -79,6 +79,7 @@ function cityNote(city: City) {
 import CarCarousel from './CarCarousel';
 import FuelGauge from './FuelGauge';
 import KeysHelp from './KeysHelp';
+import RulesDialog from './RulesDialog';
 import TravelDialog from './TravelDialog';
 import ServiceDialog from './ServiceDialog';
 import BankDialog from './BankDialog';
@@ -284,6 +285,7 @@ export default function Game() {
   const [towAsk, setTowAsk] = useState(false);
   // K, or the settings entry: the list of keys
   const [keysOpen, setKeysOpen] = useState(false);
+  const [rulesOpen, setRulesOpen] = useState(false);
   const closeKeys = useCallback(() => setKeysOpen(false), []);
   const [travelOffer, setTravelOffer] = useState<TravelOffer | null>(null);
   const [serviceOffer, setServiceOffer] = useState<ServiceOffer | null>(null);
@@ -850,6 +852,7 @@ export default function Game() {
       <ServerStatus />
       <div className="ui-form-buttons">
         <button type="button" className="ui-btn is-ghost" onClick={() => { setSettingsOpen(false); setKeysOpen(true); }}>{t('keys.open')} · K</button>
+        <button type="button" className="ui-btn is-ghost" onClick={() => { setSettingsOpen(false); setRulesOpen(true); }}>{t('rules.open')}</button>
         <button type="button" className="ui-btn is-ghost" onClick={() => setRestartConfirm(true)}>{t('settings.restart')}</button>
       </div>
     </div>
@@ -1031,6 +1034,7 @@ export default function Game() {
       )}
 
       {keysOpen && <KeysHelp onClose={closeKeys} />}
+      {rulesOpen && <RulesDialog onClose={() => setRulesOpen(false)} />}
 
       {exitConfirm && (
         <Dialog

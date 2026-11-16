@@ -257,6 +257,19 @@
 .ui-backdrop{position:absolute;inset:0;z-index:70;display:flex;align-items:center;justify-content:center;padding:16px;background:#eef3f566;backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);animation:ui-fade .14s ease-out}
 .ui-dialog{width:min(380px,100%);max-height:calc(100dvh - 32px);overflow:auto;display:flex;flex-direction:column;gap:12px;padding:20px;border-radius:var(--ui-radius);background:var(--ui-bg);color:var(--ui-ink);box-shadow:var(--ui-shadow);font-family:var(--ui-font);animation:ui-rise .16s ease-out}
 .ui-dialog.is-wide{width:min(460px,100%)}
+/* how to play: a long read with the car table */
+.ui-dialog.rules{width:min(820px,100%)}
+.rules-body{display:flex;flex-direction:column;gap:14px;font-size:14px;line-height:1.5}
+.rules-body .rules-lead{margin:0}
+.rules-body h3{margin:0 0 6px;font-size:15px;font-weight:750}
+.rules-body ul{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:5px;color:var(--ui-muted)}
+.rules-body b{color:var(--ui-ink)}
+.rules-table{overflow-x:auto;margin:0 -4px}
+.rules-table table{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
+.rules-table th,.rules-table td{padding:5px 6px;text-align:right;white-space:nowrap;border-bottom:1px solid color-mix(in srgb,var(--ui-ink) 10%,transparent)}
+.rules-table th{font-weight:700;color:var(--ui-muted);position:sticky;top:0;background:var(--ui-bg)}
+.rules-table th:first-child,.rules-table td.rules-car{text-align:left;font-weight:650}
+.rules-table th:last-child,.rules-table td.rules-special{text-align:left;white-space:normal;min-width:180px;color:var(--ui-muted)}
 .ui-dialog.is-alert .ui-title{color:var(--ui-alert)}
 .ui-title{margin:0;font-size:20px;line-height:1.2;font-weight:650;letter-spacing:-.2px}
 .ui-text{margin:0;font-size:14px;line-height:1.45;color:var(--ui-muted)}
