@@ -130,7 +130,7 @@ test('engine starts fly-in on the visible frame and resumes after pause without 
   const stopAfterView = new Error('frame captured');
   const source = { center: [-8.8, 40.15], zoom: 15, pitch: 0, bearing: 0, elevation: 70 };
   let captured;
-  const engine = Object.assign(Object.create(GameEngine.prototype), {
+  const engine = Object.assign(Object.create(GameEngine.prototype), { feed: {},
     disposed: false, ready: true, last: 0, driving: true, paused: false,
     approachFrom: source, approachElapsed: 0, approachMs: 2200,
     vehicle: { position: [-8.8, 40.15], heading: 0 }, altitude: 25,
@@ -236,7 +236,7 @@ test('transfer readiness waits for destination uploads and their GPU fence, inde
 test('a paused tow commits the loaded camera, car and payment together', () => {
   const origin = [-8.8, 40.15], destination = [-8.7, 40.15];
   let ready = false, center = origin, paid = false, streamAt = null;
-  const engine = Object.assign(Object.create(GameEngine.prototype), {
+  const engine = Object.assign(Object.create(GameEngine.prototype), { feed: {},
     transfer: new PreparedTransfer(),
     vehicle: { position: origin, heading: 0, speed: 0, throttle: 0 },
     settings: { terrain: true }, keys: new Set(), renderVehicle: { reset() {} },

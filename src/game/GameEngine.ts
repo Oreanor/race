@@ -55,8 +55,6 @@ import type { ChatLine, NetNotice } from '@/net/NetClient';
 import { distanceToTile } from '@/world3d/tiles/tilePlan';
 import { mercatorX, mercatorY, tileCorner, tileSpan } from '@/world3d/mercator';
 
-/** tiles this close to the car feed gameplay (the world's feature radius, plus slack) */
-const NEAR_TILE_METERS = 2600;
 import { NetPlayers, PLAYER_MARKER_COLOR, type OnlinePlayer } from './net/NetPlayers.ts';
 import { SharedTraffic } from './net/SharedTraffic.ts';
 import { HealthMeters, type Meter } from './hud/HealthMeters.ts';
@@ -79,6 +77,7 @@ import { MissionBotDriver, type BotDriverHost } from './traffic/MissionBots.ts';
 import { Shops, type ShopsHost } from './economy/Shops.ts';
 import { Dealership, type DealershipHost } from './economy/Dealership.ts';
 import { Ramp, type RampHost } from './Ramp.ts';
+import { WorldFeed } from './world/WorldFeed.ts';
 import { Ground } from './Ground.ts';
 import { Spawn } from './world/Spawn.ts';
 import { Combat } from './Combat.ts';
@@ -215,13 +214,10 @@ export class GameEngine {
   dragging = false;
   host: HTMLElement;
   mapShown = false;
-  private bootAt = 0;
-  private groundHits = 0;
-  private settleFrames = 0;
+  bootAt = 0;
+  groundHits = 0;
   /** boot camera already parked on chase pose to finish GPU uploads before "ready" */
-  private bootChaseWarmed = false;
-  /** keep isotropic/fast uploads until this time (ms), then endStreamBurst */
-  private bootBurstUntil = 0;
+  bootChaseWarmed = false;
   /** Active animation time; pauses and hidden tabs do not advance it. */
   private approachElapsed = 0;
   /** Full intro→chase flight, including its gentle start and stop. */
@@ -238,19 +234,14 @@ export class GameEngine {
   fps = 0;
   private fpsFrames = 0;
   private fpsStamp = 0;
-  private worldWork: Generator<null, void> | null = null;
-  private featureReadFailures = new Set<string>();
+  featureReadFailures = new Set<string>();
   cachedWater: MapFeature[] = [];
   cachedRoads: MapFeature[] = [];
-  private cachedLanduse: MapFeature[] = [];
-  private tilesIngested = false;
-  /** tiles whose roads/water/poi are already in the gameplay caches / traffic graph */
-  private ingestedTiles = new Set<string>();
-  /** near-car tiles that arrived since the last ingest pass */
-  pendingIngest = new Set<string>();
+  cachedLanduse: MapFeature[] = [];
+  tilesIngested = false;
   /** last full features() scoop — rare prune, not every tile upload */
   private fullScoopAt = 0;
-  private focusTime = 0;
+  focusTime = 0;
   private overlayTime = 0;
   wheelSampleTime = 0;
   private aimScreen: [number, number] | null = null;
@@ -288,6 +279,8 @@ export class GameEngine {
   readonly spawn: Spawn = new Spawn(this);
   /** Our car against the ground: the wheels planted on the terrain (height, pitch, roll), flying (see Ground) */
   readonly ground: Ground = new Ground(this);
+  /** The world coming in: new tiles' roads, water, buildings and places taken into the game a (see WorldFeed) */
+  readonly feed: WorldFeed = new WorldFeed(this);
   /** the game as its parts see it (see context) */
   private ctx = this.context();
   /** the nitro bar under the speedometer */
@@ -317,7 +310,7 @@ export class GameEngine {
   /** a new language: every map label and marker title says it again */
   private offLang = onLangChange(() => this.relabel());
   /** trains and trams on the real tracks */
-  private rails = new RailNetwork();
+  rails = new RailNetwork();
   trainTraffic = new TrainTraffic(this.rails);
   trainLayer: ReturnType<typeof trainsLayer> | null = null;
   eventCooldown = 0;
@@ -350,7 +343,7 @@ export class GameEngine {
   /** cars we own: bought ones pile up here, none is sold back */
   private garage = new Set<string>();
   /** key M: camera rises straight up for a ~2 × 2 km view from above (0 chase … 1 overview) */
-  private overview = 0;
+  overview = 0;
   private overviewTarget = 0;
   /** once overview is open: pan/zoom freely; blend back from here when closing */
   private overviewFree = false;
@@ -505,9 +498,9 @@ export class GameEngine {
     this.map.on('tile', event => {
       // gameplay data (roads, water, stations…) is read around the car: a tile arriving far
       // away (the map view streams many) is no reason to read it all again
-      if (typeof event.tile !== 'string' || !this.nearCar(event.tile)) return;
+      if (typeof event.tile !== 'string' || !this.feed.nearCar(event.tile)) return;
       // queue just this tile — full features() scoop on every upload was the hitch after M toggles
-      if (!this.ingestedTiles.has(event.tile)) this.pendingIngest.add(event.tile);
+      if (!this.feed.ingestedTiles.has(event.tile)) this.feed.pendingIngest.add(event.tile);
       this.collisionDirty = true;
     });
     this.map.on('error', () => this.say(t('status.mapError')));
@@ -1300,7 +1293,7 @@ export class GameEngine {
   }
 
   private commitCarPlacement(position: Position) {
-    this.worldWork = null;
+    this.feed.worldWork = null;
     // Destination data may be far outside the old gameplay caches.
     this.cachedWater = this.map.features('water', position) as MapFeature[];
     this.cachedRoads = this.map.features('transportation', position) as MapFeature[];
@@ -1659,107 +1652,12 @@ export class GameEngine {
     this.mapShown = true;
     // The ring is prepared while hidden. Visible frames use the normal upload budget.
     this.map.endStreamBurst();
-    this.bootBurstUntil = 0;
+    this.feed.bootBurstUntil = 0;
     this.showIntroMap();
     this.host.style.transition = 'opacity .7s ease';
     this.host.style.opacity = '1';
     this.onBoot(true);
     this.say(t('status.ready'));
-  }
-
-  private tickStreamBurst(now = performance.now()) {
-    if (!this.bootBurstUntil || now < this.bootBurstUntil) return;
-    this.bootBurstUntil = 0;
-    this.map.endStreamBurst();
-  }
-
-  private settleBoot() {
-    if (this.mapShown || !this.ready) return;
-    const waited = performance.now() - this.bootAt;
-    if (!this.spawn.spawnResolved) {
-      this.say(t('status.placing'));
-      if (waited > 12000) {
-        // Last resort: any nearby road segment, even if solids are still thin.
-        const start = this.spawn.findFreeRoad(this.vehicle.position, 800)
-          ?? roadStart(this.map, this.vehicle.position, () => false, 800);
-        if (start) this.spawn.placeDefaultOnRoad(start, true);
-        else {
-          this.spawn.spawnResolved = true;
-          this.spawn.defaultSpawn = { position: [...this.vehicle.position], heading: this.vehicle.heading };
-          // the run's purse and garage too: without them the intro offers a car the engine
-          // then will not start ("not enough money"), the page left waiting for nothing
-          this.setTargetVehicles(this.spawn.defaultSpawn.position, this.spawn.defaultSpawn.heading);
-          this.spawn.placeSpawnMarker(this.spawn.defaultSpawn.position);
-        }
-      }
-      return;
-    }
-    if (this.settings.terrain) {
-      if (!this.map.hasGround()) {
-        this.say(t('status.terrain'));
-        return;
-      }
-      const ground = this.map.groundAt(this.vehicle.position);
-      if (ground == null) {
-        this.groundHits = 0;
-        this.say(t('status.terrain'));
-        if (waited < 10000) return;
-      } else {
-        const stable = this.ground.lastGround != null && Math.abs(ground - this.ground.lastGround) < 0.35;
-        this.groundHits = stable ? this.groundHits + 1 : 0;
-        this.ground.lastGround = ground;
-        this.altitude = ground;
-        if (this.groundHits < 10 && waited < 10000) {
-          this.say(t('status.terrain'));
-          return;
-        }
-      }
-    } else {
-      this.altitude = 0;
-    }
-    // Chase zoom/pitch, centred on the car (still invisible): burst loads the full
-    // loadRadius ring — looking left/right on start must not hitch on cold tiles.
-    if (!this.bootChaseWarmed) {
-      this.map.beginStreamBurst();
-      const bearing = this.vehicle.heading * 180 / Math.PI;
-      const zoom = zoomForDistance(this.distance, this.vehicle.position[1]);
-      this.map.jumpTo({
-        center: [...this.vehicle.position] as [number, number],
-        zoom,
-        pitch: cameraConfig.pitch,
-        bearing,
-        elevation: this.altitude,
-      });
-      this.bootChaseWarmed = true;
-      this.settleFrames = 0;
-      this.say(t('status.streets'));
-      return;
-    }
-    // Full isotropic loadRadius ring must be fetched + uploaded before "ready"
-    const ring = this.map.loadRadius;
-    const warmCap = 55000;
-    if (!this.map.areTilesLoaded(ring) && waited < warmCap) {
-      this.say(t('status.streets'));
-      return;
-    }
-    if (!this.map.areTilesLoadedAround(this.vehicle.position as [number, number], ring) && waited < warmCap) {
-      this.say(t('status.streets'));
-      return;
-    }
-    if (!this.syncedAt) {
-      this.collisionDirty = true;
-      this.say(t('status.block'));
-      if (waited < 14000) return;
-    }
-    if (this.collisionDirty || this.worldWork) {
-      this.say(t('status.blocks'));
-      return;
-    }
-    if (this.settleFrames < 24) {
-      this.settleFrames++;
-      return;
-    }
-    this.revealMap();
   }
 
   setPaused(value: boolean) {
@@ -1860,7 +1758,7 @@ export class GameEngine {
       // animate from the actual visible view instead of skipping its first half.
       this.map.endStreamBurst();
       this.map.setStreamCalm(true);
-      this.bootBurstUntil = 0;
+      this.feed.bootBurstUntil = 0;
       const center = this.map.getCenter();
       this.approachFrom = { center: [center.lng, center.lat], zoom: this.map.getZoom(), pitch: this.map.getPitch(), bearing: this.map.getBearing(), elevation: this.map.getCenterElevation() };
       this.approachElapsed = 0;
@@ -1886,7 +1784,7 @@ export class GameEngine {
         bearing: this.bearing,
         elevation: this.altitude,
       });
-      this.bootBurstUntil = 0;
+      this.feed.bootBurstUntil = 0;
     }
     // no fly-in this time (already driving, or straight into the chase cam): the page must
     // not wait for one
@@ -1902,20 +1800,6 @@ export class GameEngine {
     this.fps = Math.round(this.fpsFrames * 1000 / span);
     this.fpsFrames = 0;
     this.fpsStamp = now;
-  }
-
-  readSourceLayer(layer: string) {
-    try {
-      const features = this.map.features(layer) as MapFeature[];
-      this.featureReadFailures.delete(layer);
-      return features;
-    } catch (error) {
-      if (!this.featureReadFailures.has(layer)) {
-        this.featureReadFailures.add(layer);
-        console.error(`Failed to read map source layer "${layer}"`, error);
-      }
-      return [] as MapFeature[];
-    }
   }
 
   /**
@@ -1941,48 +1825,14 @@ export class GameEngine {
     yield* this.collectWorldThree(refreshTiles);
   }
 
-  /** Pull one resident tile into gameplay caches / traffic / rails / POIs. */
-  private absorbTile(key: string) {
-    // features are ready at onTile; GPU waiting queue is unrelated
-    if (this.ingestedTiles.has(key) || !this.map.world.hasTile(key)) return;
-    const world = this.map.world;
-    const water = world.featuresOf(key, 'water') as MapFeature[];
-    const roads = world.featuresOf(key, 'transportation') as MapFeature[];
-    const landuse = world.featuresOf(key, 'landuse') as MapFeature[];
-    const poi = world.featuresOf(key, 'poi') as MapFeature[];
-    if (water.length) this.cachedWater.push(...water);
-    if (roads.length) {
-      this.cachedRoads.push(...roads);
-      this.rails.addFeatures(roads);
-      this.trafficNetwork.addFeatures(roads);
-    }
-    if (landuse.length) this.cachedLanduse.push(...landuse);
-    if (poi.length) this.places.collectStations(poi);
-    this.ingestedTiles.add(key);
-  }
-
-  /** After a full scoop: mark every tile in feature range so we don't re-absorb it. */
-  private rememberIngested(focus: [number, number]) {
-    this.ingestedTiles.clear();
-    const mx = mercatorX(focus[0]), my = mercatorY(focus[1]);
-    const scale = Math.cos(focus[1] * Math.PI / 180);
-    const reach = this.map.world.options.featureRadius;
-    for (const key of this.map.world.tileKeys()) {
-      const [z, x, y] = key.split('/').map(Number);
-      if (![z, x, y].every(Number.isFinite)) continue;
-      if (distanceToTile(mx, my, { z, x, y }, scale) > reach) continue;
-      this.ingestedTiles.add(key);
-    }
-  }
-
   /** Roads, water, green areas and stations for collisions and gameplay. */
   private *collectGround(refreshTiles: boolean, focus: [number, number]): Generator<null, void> {
     this.trafficNetwork.prune(focus, 6000);
     yield null;
     if (refreshTiles) {
       const now = performance.now();
-      const batch = [...this.pendingIngest];
-      this.pendingIngest.clear();
+      const batch = [...this.feed.pendingIngest];
+      this.feed.pendingIngest.clear();
       // Full features() only on boot / rare prune / cache bloat — not on every dirty bit.
       const forceFull = !this.tilesIngested
         || now - this.fullScoopAt > 60000
@@ -1990,9 +1840,9 @@ export class GameEngine {
         || this.cachedWater.length > 4000;
 
       if (forceFull) {
-        this.cachedWater = this.readSourceLayer('water');
+        this.cachedWater = this.feed.readSourceLayer('water');
         yield null;
-        this.cachedRoads = this.readSourceLayer('transportation');
+        this.cachedRoads = this.feed.readSourceLayer('transportation');
         this.rails.addFeatures(this.cachedRoads);
         this.rails.prune(focus, 6000);
         this.trafficNetwork.addFeatures(this.cachedRoads);
@@ -2000,18 +1850,18 @@ export class GameEngine {
         this.trafficNetwork.flushRebuild();
         yield null;
         this.coins.syncRoadPickups();
-        this.cachedLanduse = this.readSourceLayer('landuse');
+        this.cachedLanduse = this.feed.readSourceLayer('landuse');
         this.places.collectStations();
         this.places.paintFuelStations();
         this.places.labelServices();
         this.travel.refreshMarkers();
         this.fullScoopAt = now;
-        this.rememberIngested(focus);
+        this.feed.rememberIngested(focus);
         yield null;
       } else if (batch.length) {
         let n = 0;
         for (const key of batch) {
-          this.absorbTile(key);
+          this.feed.absorbTile(key);
           if (++n % 3 === 0) yield null;
         }
         this.rails.prune(focus, 6000);
@@ -2034,52 +1884,6 @@ export class GameEngine {
     this.water.collect(this.vehicle.position, this.cachedWater, this.cachedRoads);
     yield null;
 
-  }
-
-  /** Is this tile ("z/x/y") within reach of the gameplay data around the car? */
-  private nearCar(key: string) {
-    const [z, x, y] = key.split('/').map(Number);
-    if (![z, x, y].every(Number.isFinite)) return true;
-    const [lng, lat] = this.vehicle.position;
-    return distanceToTile(mercatorX(lng), mercatorY(lat), { z, x, y }, Math.cos(lat * Math.PI / 180)) <= NEAR_TILE_METERS;
-  }
-
-  private pumpWorld(now: number) {
-    const movedLimit = this.driving ? 90 : 40;
-    const origin = this.syncedAt;
-    const cos = Math.cos(this.vehicle.position[1] * Math.PI / 180);
-    const center = this.map.getCenter();
-    const checkPoint: [number, number] = this.driving ? this.vehicle.position : [center.lng, center.lat];
-    const moved = origin ? Math.hypot((checkPoint[0] - origin[0]) * METERS_PER_DEGREE * cos, (checkPoint[1] - origin[1]) * METERS_PER_DEGREE) : Infinity;
-    const needsCoverage = !this.water.near(this.vehicle.position);
-    // Pending tile ingest is cheap — run soon. Full scoop stays rare/slow.
-    const pending = this.pendingIngest.size > 0;
-    const tileDebounce = pending
-      ? (this.overview > 0.2 ? 700 : 350)
-      : this.overview > 0.2 ? 2800
-        : this.driving ? 1600
-          : (this.mapShown ? 1800 : 250);
-    const refreshTiles = (!this.tilesIngested || this.collisionDirty || pending) && now - this.collisionTime >= tileDebounce;
-    const needFocus = needsCoverage || moved >= movedLimit;
-
-    if (!this.worldWork && this.mapLoaded) {
-      if (refreshTiles) {
-        this.collisionTime = now;
-        this.collisionDirty = false;
-        this.focusTime = now;
-        this.worldWork = this.collectWorldSteps(true);
-      } else if (needFocus && now - this.focusTime >= 160) {
-        this.focusTime = now;
-        this.worldWork = this.collectWorldSteps(false);
-      }
-    }
-
-    if (!this.worldWork) return;
-    // background reading gets a slice of the frame; the map view (M) keeps it small
-    const deadline = performance.now() + (this.driving || this.overview > 0 ? 2.2 : 8);
-    while (this.worldWork && performance.now() < deadline) {
-      if (this.worldWork.next().done) this.worldWork = null;
-    }
   }
 
   private updateApproach(dt: number) {
@@ -2110,7 +1914,7 @@ export class GameEngine {
       this.onApproach(false);
       this.map.setStreamCalm(false);
       this.map.beginStreamBurst();
-      this.bootBurstUntil = performance.now() + 2000;
+      this.feed.bootBurstUntil = performance.now() + 2000;
     }
   }
 
@@ -2125,7 +1929,7 @@ export class GameEngine {
     if (!this.ready) return;
     this.tickTransfer(now);
     // fly-in: no world scoops / traffic / physics — those were the 17 fps хрясть
-    if (!this.approachFrom) this.pumpWorld(now);
+    if (!this.approachFrom) this.feed.pumpWorld(now);
     if (this.driving && !this.paused && !document.hidden && this.approachFrom) {
       this.updateApproach(dt);
     } else if (this.driving && !this.paused && !this.transfer.pending && !document.hidden) {
@@ -2371,8 +2175,8 @@ export class GameEngine {
         this.onFuel({ level: this.fuel.level, tank: this.fuel.spec.tank, rpm: this.vehicle.revs, refuelling: this.refuelling, station: near ? near.distance : null, money: Math.floor(this.playerMoney), hub: hubHud });
       }
     }
-    if (!this.mapShown) this.settleBoot();
-    if (!this.approachFrom) this.tickStreamBurst(now);
+    if (!this.mapShown) this.feed.settleBoot();
+    if (!this.approachFrom) this.feed.tickStreamBurst(now);
     this.map.triggerRepaint();
     } finally {
       if (this.map.perfMonitor) this.map.reportUpdateCpu(performance.now() - cpuStart);
@@ -2444,7 +2248,7 @@ export class GameEngine {
     this.audio.dispose();
     this.setMapViewUi(false);
     this.players.dispose();
-    this.worldWork = null;
+    this.feed.worldWork = null;
     cancelAnimationFrame(this.frame);
     this.spawn.spawnMarker?.remove();
     for (const marker of this.board.missionMarkers.values()) marker.remove();

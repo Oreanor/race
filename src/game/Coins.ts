@@ -18,7 +18,7 @@ const FIELD_GRIDS: [number, number][] = [[1, 5], [1, 7], [1, 8], [1, 10], [1, 10
 export type ActivePickup = { position: [number, number]; color: string; kind: 'coin' | 'cash'; drop?: { from: [number, number]; at: number; up?: number } };
 
 /** What this part reads and drives in the game. */
-export type CoinsGame = Pick<GameEngine, 'audio' | 'board' | 'cachedWater' | 'car' | 'collectedFrom' | 'collisions' | 'combatLayer' | 'crime' | 'driving' | 'map' | 'mode' | 'pendingIngest' | 'playerMoney' | 'say' | 'trafficBots' | 'trafficNetwork' | 'vehicle' | 'water'>;
+export type CoinsGame = Pick<GameEngine, 'audio' | 'board' | 'cachedWater' | 'car' | 'collectedFrom' | 'collisions' | 'combatLayer' | 'crime' | 'driving' | 'feed' | 'map' | 'mode' | 'playerMoney' | 'say' | 'trafficBots' | 'trafficNetwork' | 'vehicle' | 'water'>;
 
 /**
  * Coins and cash lying about: along the roads and on open fields, out of wrecks, walls and
@@ -250,7 +250,7 @@ export class Coins {
         if (spots === undefined) {
           // ground or water not in yet: look again later. A tile whose water is still
           // waiting to be read would pass the open sea off as a field.
-          if (this.game.map.groundAt(center) == null || this.game.pendingIngest.size > 0 || !this.game.water.near(here, 200)) continue;
+          if (this.game.map.groundAt(center) == null || this.game.feed.pendingIngest.size > 0 || !this.game.water.near(here, 200)) continue;
           const [cols, rows] = FIELD_GRIDS[Math.floor(hash(gx, gy, 3) * FIELD_GRIDS.length)];
           const turn = hash(gx, gy, 4) * Math.PI;
           spots = this.layFieldGrid(center, cols, rows, turn);

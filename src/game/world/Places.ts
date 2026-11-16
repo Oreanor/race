@@ -10,7 +10,7 @@ import { hubsFromFeatures } from '../Travel.ts';
 import type { GameEngine } from '../GameEngine.ts';
 
 /** What this part reads and drives in the game. */
-export type PlacesGame = Pick<GameEngine, 'collisions' | 'driving' | 'fuelLayer' | 'jobs' | 'map' | 'mapLabelsAt' | 'mapLabelsAtPos' | 'mapLoaded' | 'mapViewOpen' | 'readSourceLayer' | 'settings' | 'travel' | 'vehicle'>;
+export type PlacesGame = Pick<GameEngine, 'collisions' | 'driving' | 'feed' | 'fuelLayer' | 'jobs' | 'map' | 'mapLabelsAt' | 'mapLabelsAtPos' | 'mapLoaded' | 'mapViewOpen' | 'settings' | 'travel' | 'vehicle'>;
 
 /**
  * The places on the map from the real data: fuel stations, car services, dealerships, banks,
@@ -54,7 +54,7 @@ export class Places {
   }
 
   /** Real petrol stations from the POI layer; remembered as the player drives on. */
-  collectStations(pois = this.game.readSourceLayer('poi')) {
+  collectStations(pois = this.game.feed.readSourceLayer('poi')) {
     this.collectHubs(pois);
     for (const feature of pois) {
       const p = feature.properties ?? {};
@@ -246,6 +246,6 @@ export class Places {
 
   /** Ports, airports and railway stations from real data, with a map label each. */
   collectHubs(pois: MapFeature[]) {
-    this.game.travel.collect(hubsFromFeatures(this.game.readSourceLayer('aerodrome_label'), pois));
+    this.game.travel.collect(hubsFromFeatures(this.game.feed.readSourceLayer('aerodrome_label'), pois));
   }
 }
