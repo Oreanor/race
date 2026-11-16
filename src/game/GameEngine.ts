@@ -2010,17 +2010,33 @@ export class GameEngine {
     return false;
   }
 
-  /** The closest hospital or filling station to us. */
-  private nearestRescue(): { kind: 'hospital' | 'station'; position: Position } | null {
+  /** Is the ground round this arrival point already loaded (no wait to land there)? */
+  private arrivalReady(position: Position) {
+    return this.map.areTilesLoadedAround(position as [number, number], ARRIVAL_M);
+  }
+
+  /**
+   * The best of `places` to be brought to: the nearest one whose ground is already loaded,
+   * so a tow, a rescue or an arrest lands at once; only when none is, the nearest at all.
+   */
+  private nearestReady<T>(places: Iterable<T>, at: (place: T) => Position): T | null {
     const here = this.vehicle.position;
-    let best: { kind: 'hospital' | 'station'; position: Position; distance: number } | null = null;
-    const consider = (kind: 'hospital' | 'station', position: Position) => {
-      const distance = metersBetween(here, position);
-      if (!best || distance < best.distance) best = { kind, position, distance };
-    };
+    let ready: T | null = null, readyD = Infinity, any: T | null = null, anyD = Infinity;
+    for (const place of places) {
+      const d = metersBetween(here, at(place));
+      if (d < anyD) { any = place; anyD = d; }
+      if (d < readyD && this.arrivalReady(at(place))) { ready = place; readyD = d; }
+    }
+    return ready ?? any;
+  }
+
+  /** The closest hospital or filling station to us (of those already loaded, if any). */
+  private nearestRescue(): { kind: 'hospital' | 'station'; position: Position } | null {
+    const places: { kind: 'hospital' | 'station'; position: Position }[] = [];
+    const consider = (kind: 'hospital' | 'station', position: Position) => { places.push({ kind, position }); };
     for (const civic of this.civics.values()) if (civic.kind === 'hospital') consider('hospital', civic.position);
     for (const station of this.stations.values()) consider('station', station.place ?? station.position);
-    return best;
+    return this.nearestReady(places, (p) => p.position);
   }
 
   /** Our car, standing still on the road nearest `position` (or right on it). */
@@ -2949,13 +2965,10 @@ export class GameEngine {
   }
 
   /** Closest police station, prison, courthouse or hospital to the wreck. */
+  /** The closest police station, court or prison (of those already loaded, if any). */
   private nearestCivic(): { station: Station; kind: CivicKind; distance: number } | null {
-    let best: { station: Station; kind: CivicKind; distance: number } | null = null;
-    for (const station of this.civics.values()) {
-      const distance = metersBetween(this.vehicle.position, station.position);
-      if (!best || distance < best.distance) best = { station, kind: station.kind, distance };
-    }
-    return best;
+    const station = this.nearestReady(this.civics.values(), (s) => s.position);
+    return station ? { station, kind: station.kind, distance: metersBetween(this.vehicle.position, station.position) } : null;
   }
 
   /** Coins fly out (ten from a wreck, one from a tree) and roll a couple of metres before they lie still. */
@@ -5390,7 +5403,9 @@ export class GameEngine {
   /** Tow truck (empty tank, or stuck — E): to the nearest known station, tank filled, for EVACUATION_COST coins. */
   evacuate() {
     if (!this.driving || this.transfer.pending) return;
-    const near = nearestStation(this.vehicle.position, [...this.stations.values()]);
+    // the nearest station whose ground is already loaded (the tow arrives at once)
+    const nearStation = this.nearestReady(this.stations.values(), (s) => s.position);
+    const near = nearStation ? { station: nearStation } : null;
     const finish = () => {
       this.playerMoney = Math.max(0, this.playerMoney - EVACUATION_COST);
       // The tow includes a full tank, charged only after arrival is ready.
