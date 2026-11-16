@@ -5,7 +5,7 @@
 // place, mountain_peak, names…) can be decoded later for visualisation.
 
 import { PbfReader } from 'pbf';
-import { VectorTile } from '@mapbox/vector-tile';
+import { VectorTile, classifyRings } from '@mapbox/vector-tile';
 import { buildTile, transferables as buildingTransferables, type TileData } from './buildTile.ts';
 import type { BuildingAssembly } from './buildingAssembly.ts';
 import { buildGround, clipHalf, groundTransferables, type GroundData } from './groundVector.ts';
@@ -409,10 +409,40 @@ function meshOf(builder: RoadBuilder): MeshData {
 }
 
 /** Streams, canals, ditches: water ribbons (rivers come as water polygons). */
+/** Inside a water polygon (river, lake, sea; not a pool), in tile-span units. */
+function waterTest(vt: VectorTile, span: number): (x: number, z: number) => boolean {
+  const layer = vt.layers.water;
+  const polys: { rings: [number, number][][]; box: [number, number, number, number] }[] = [];
+  if (layer) {
+    const k = span / layer.extent;
+    for (let f = 0; f < layer.length; f++) {
+      const feature = layer.feature(f);
+      if (feature.type !== 3 || feature.properties.class === 'swimming_pool') continue;
+      for (const polygon of classifyRings(feature.loadGeometry())) {
+        const rings = polygon.map((ring) => ring.map((p) => [p.x * k, p.y * k] as [number, number])).filter((r) => r.length >= 3);
+        if (!rings.length) continue;
+        const box: [number, number, number, number] = [Infinity, Infinity, -Infinity, -Infinity];
+        for (const [x, z] of rings[0]) { box[0] = Math.min(box[0], x); box[1] = Math.min(box[1], z); box[2] = Math.max(box[2], x); box[3] = Math.max(box[3], z); }
+        polys.push({ rings, box });
+      }
+    }
+  }
+  return (x, z) => polys.some(({ rings, box }) => {
+    if (x < box[0] || x > box[2] || z < box[1] || z > box[3]) return false;
+    let hit = false;
+    for (const ring of rings) for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const a = ring[i], b = ring[j];
+      if ((a[1] > z) !== (b[1] > z) && x < (b[0] - a[0]) * (z - a[1]) / (b[1] - a[1]) + a[0]) hit = !hit;
+    }
+    return hit;
+  });
+}
+
 function streamMesh(vt: VectorTile, span: number, metersScale: number, groundAt: (x: number, z: number) => number, grid: number): MeshData {
   const builder = new RoadBuilder(groundAt, span / grid, grid);
   const ways = vt.layers.waterway;
   if (ways) {
+    const wet = waterTest(vt, span);
     const k = span / ways.extent;
     const toMerc = 1 / metersScale;
     const natural: [number, number, number] = [0, 0, 0]; // water kind 0: natural (not a pool)
@@ -425,9 +455,21 @@ function streamMesh(vt: VectorTile, span: number, metersScale: number, groundAt:
       for (const line of f.loadGeometry()) for (let j = 0; j + 1 < line.length; j++) {
         const c = clipSegment(line[j].x, line[j].y, line[j + 1].x, line[j + 1].y, ways.extent);
         if (!c) continue;
-        builder.segment(c[0] * k, c[1] * k, c[2] * k, c[3] * k, half, 0.04, natural);
+        const ax = c[0] * k, az = c[1] * k, bx = c[2] * k, bz = c[3] * k;
+        // a stream ends at the bank of the river or lake it runs into: its line goes on
+        // through the water, and drawn there it was a blue strip across the river
+        const pieces = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / (3 * toMerc)));
+        let from = -1;
+        for (let n = 0; n <= pieces; n++) {
+          const dry = n < pieces && !wet(ax + (bx - ax) * (n + 0.5) / pieces, az + (bz - az) * (n + 0.5) / pieces);
+          if (dry && from < 0) from = n;
+          if (!dry && from >= 0) {
+            builder.segment(ax + (bx - ax) * from / pieces, az + (bz - az) * from / pieces, ax + (bx - ax) * n / pieces, az + (bz - az) * n / pieces, half, 0.04, natural);
+            from = -1;
+          }
+        }
         // round joins so the bends have no notches
-        if (j > 0 && c[0] === line[j].x && c[1] === line[j].y) builder.disc(c[0] * k, c[1] * k, half, 0.04, natural, 8);
+        if (j > 0 && c[0] === line[j].x && c[1] === line[j].y && !wet(ax, az)) builder.disc(ax, az, half, 0.04, natural, 8);
       }
     }
   }
