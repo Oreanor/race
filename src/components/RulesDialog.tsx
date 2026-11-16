@@ -22,7 +22,7 @@ type Lang = 'en' | 'ru' | 'pt';
 type Copy = {
   intro: ReactNode[];
   sections: { title: string; items: ReactNode[] }[];
-  table: { title: string; car: string; price: string; top: string; accel: string; engine: string; range: string; special: string; note: string };
+  table: { title: string; car: string; price: string; top: string; accel: string; engine: string; special: string; note: string };
   special: Record<string, string>;
   guns: string;
 };
@@ -60,7 +60,7 @@ function copy(lang: Lang): Copy {
         <>Деньги, гараж и прогресс сохраняются. «Начать заново» в настройках стирает всё.</>,
       ] },
     ],
-    table: { title: 'Машины', car: 'Машина', price: 'Цена', top: 'Макс.', accel: '0–100', engine: 'Двиг.', range: 'Запас', special: 'Особенность', note: 'Скорость в км/ч, разгон в секундах, запас хода в км на полном баке.' },
+    table: { title: 'Машины', car: 'Машина', price: 'Цена', top: 'Макс.', accel: '0–100', engine: 'Двиг.', special: 'Особенность', note: 'Скорость в км/ч, разгон в секундах.' },
     special: {
       [HAULER_ID]: 'Эвакуатор: трос (ЛКМ) цепляет машины, задания «забрать на штрафстоянку» — +' + formatNumber(IMPOUND_REWARD),
       [FIRE_TRUCK_ID]: 'Брандспойт; тушить пожары — +' + FIRE_WINDOW_COIN + ' за окно',
@@ -101,7 +101,7 @@ function copy(lang: Lang): Copy {
         <>Dinheiro, garagem e progresso ficam guardados. «Recomeçar» nas definições apaga tudo.</>,
       ] },
     ],
-    table: { title: 'Carros', car: 'Carro', price: 'Preço', top: 'Máx.', accel: '0–100', engine: 'Motor', range: 'Autonomia', special: 'Especial', note: 'Velocidade em km/h, aceleração em segundos, autonomia em km com o depósito cheio.' },
+    table: { title: 'Carros', car: 'Carro', price: 'Preço', top: 'Máx.', accel: '0–100', engine: 'Motor', special: 'Especial', note: 'Velocidade em km/h, aceleração em segundos.' },
     special: {
       [HAULER_ID]: 'Reboque: cabo (LMB) prende carros, trabalhos de apreensão — +' + formatNumber(IMPOUND_REWARD),
       [FIRE_TRUCK_ID]: 'Mangueira; apagar incêndios — +' + FIRE_WINDOW_COIN + ' por janela',
@@ -142,7 +142,7 @@ function copy(lang: Lang): Copy {
         <>Money, garage and progress are saved. «Start over» in the settings wipes it all.</>,
       ] },
     ],
-    table: { title: 'Cars', car: 'Car', price: 'Price', top: 'Top', accel: '0–100', engine: 'Engine', range: 'Range', special: 'Special', note: 'Speed in km/h, 0–100 in seconds, range in km on a full tank.' },
+    table: { title: 'Cars', car: 'Car', price: 'Price', top: 'Top', accel: '0–100', engine: 'Engine', special: 'Special', note: 'Speed in km/h, 0–100 in seconds.' },
     special: {
       [HAULER_ID]: 'Tow truck: the cable (LMB) hooks cars; impound jobs — +' + formatNumber(IMPOUND_REWARD),
       [FIRE_TRUCK_ID]: 'Water hose; fire calls — +' + FIRE_WINDOW_COIN + ' per window',
@@ -193,7 +193,7 @@ export default function RulesDialog({ onClose }: { onClose: () => void }) {
             <div className="rules-table">
               <table>
                 <thead>
-                  <tr><th>{c.table.car}</th><th>{c.table.price}</th><th>{c.table.top}</th><th>{c.table.accel}</th><th>{c.table.engine}</th><th>{c.table.range}</th><th>{c.table.special}</th></tr>
+                  <tr><th>{c.table.car}</th><th>{c.table.price}</th><th>{c.table.top}</th><th>{c.table.accel}</th><th>{c.table.engine}</th><th>{c.table.special}</th></tr>
                 </thead>
                 <tbody>
                   {shelf.map((car) => (
@@ -203,7 +203,6 @@ export default function RulesDialog({ onClose }: { onClose: () => void }) {
                       <td>{formatNumber(Math.round(car.maxSpeed * 3.6))}</td>
                       <td>{formatNumber(Math.round(100 / 3.6 / car.acceleration * 10) / 10)}</td>
                       <td>{formatNumber(car.engine)} L</td>
-                      <td>{formatNumber(Math.round(car.fuel.tank / car.fuel.perKm))}</td>
                       <td className="rules-special">{specialOf(car, c)}</td>
                     </tr>
                   ))}
