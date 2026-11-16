@@ -532,7 +532,7 @@ export default function Game() {
         if (index >= 0) setCar(index);
       };
       game.wanted.onOffer = (offer) => setBountyOffer(offer);
-      game.onRideOffer = (offer) => setRideOffer(offer);
+      game.jobs.onRideOffer = (offer) => setRideOffer(offer);
       game.onEventOffer = (offer) => setEventOffer(offer);
       game.onEventResult = (result) => setEventResult(result);
       game.onTransfer = setTransfer;
@@ -1176,14 +1176,14 @@ export default function Game() {
                 : 'taxi.offer.title',
           )}
           actions={<>
-            <button type="button" className="ui-btn" autoFocus onClick={() => engine.current?.acceptRide()}>
+            <button type="button" className="ui-btn" autoFocus onClick={() => engine.current?.jobs.acceptRide()}>
               {t(
                 rideOffer.kind === 'bus' ? 'bus.take'
                   : rideOffer.kind === 'ambulance' ? 'ambulance.take'
                     : 'taxi.take',
               )}
             </button>
-            <button type="button" className="ui-btn is-ghost" onClick={() => engine.current?.declineRide()}>
+            <button type="button" className="ui-btn is-ghost" onClick={() => engine.current?.jobs.declineRide()}>
               {t(
                 rideOffer.kind === 'bus' ? 'bus.later'
                   : rideOffer.kind === 'ambulance' ? 'ambulance.later'

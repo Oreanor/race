@@ -79,6 +79,7 @@ import { MissionBotDriver, type BotDriverHost } from './traffic/MissionBots.ts';
 import { Shops, type ShopsHost } from './economy/Shops.ts';
 import { Dealership, type DealershipHost } from './economy/Dealership.ts';
 import { Ramp, type RampHost } from './Ramp.ts';
+import { Jobs } from './jobs/Jobs.ts';
 import { TravelDesk, type TravelHost } from './economy/TravelDesk.ts';
 import { CustomPins, type CustomPinsHost } from './hud/CustomPins.ts';
 import { Race, type RaceHost } from './events/Race.ts';
@@ -269,10 +270,10 @@ export class GameEngine {
   /** fell in the river: splash → sink → respawn on the nearest shore road */
   private plunge: { at: number; waterAlt: number } | null = null;
   private aimScreen: [number, number] | null = null;
-  private trafficBots: TrafficBot[] = [];
+  trafficBots: TrafficBot[] = [];
   /** reused by targetVehicles() so the chase tick doesn't allocate every frame */
   private targetScratch: TargetVehicle[] = [];
-  private trafficNetwork = new TrafficRoadNetwork();
+  trafficNetwork = new TrafficRoadNetwork();
   /** light traffic shared with the players around */
   private sharedTraffic!: SharedTraffic;
   private vehicleContactTimes = new Map<string, number>();
@@ -280,11 +281,11 @@ export class GameEngine {
   private trafficMarkers = new Map<string, { element: HTMLElement; arrow: HTMLElement; name: HTMLElement; distance: HTMLElement }>();
   /** health bars over the cars on screen */
   private healthMeters!: HealthMeters;
-  private mode: 'roam' | 'arena' | 'race' = 'roam';
+  mode: 'roam' | 'arena' | 'race' = 'roam';
   /** `n`: the mission's number in its kind, for its label in any language */
-  private missions: { id: string; kind: MissionKind; label: string; n: number; position: [number, number] }[] = [];
+  missions: { id: string; kind: MissionKind; label: string; n: number; position: [number, number] }[] = [];
   /** a delivery or box hunt under way */
-  private errand: Errand | null = null;
+  errand: Errand | null = null;
   /** a delivery prepared for the offer on screen */
   private offeredDelivery: { item: DeliveryItem; goal: Position; reward: number } | null = null;
   private errandMarkers = new Map<string, MapMarker>();
@@ -304,24 +305,7 @@ export class GameEngine {
   /** local pin where you drive to take a pending wanted job */
   // ---- multiplayer: other players in the same world (net/NetPlayers)
   private players!: NetPlayers;
-  /** fire call (fire truck only): marker → burning house → put out every window */
-  private fire = createFireCallState();
-  /** taxi fare (Chevy Taxi): marker → told the address → drop-off pays 100/km */
-  private taxi = createTaxiFareState();
-  /** ambulance: crash or burned house → hospital, 1000 per victim */
-  private ambulance = createAmbulanceCallState();
-  /** city bus: approach OSM bus stops → board/alight modal + coins */
-  private bus = createBusStopState();
-  private busStops = new Map<string, Station>();
-  /** bus tour: group → named hotel/museum */
-  private busTour = createBusTourState();
-  private landmarks = new Map<string, Landmark>();
-  /** Howler: marker → load a car → any police station for a premium */
-  private impoundPickup: [number, number] | null = null;
-  private impoundActive = false;
-  private impoundSpot: [number, number] | null = null;
-  private impoundOfferAt = performance.now() + 25000;
-  private impoundDeliveredAt = 0;
+  landmarks = new Map<string, Landmark>();
   /** our police car's lights (F) */
   /** our police lights (F): off by default */
   private beaconsOn = false;
@@ -334,14 +318,8 @@ export class GameEngine {
   private fieldAt = 0;
   private urbanLevel = 0;
   private urbanAt = 0;
-  /** the special cars' job pins on the map */
-  private jobPins = {
-    fire: new JobPin('fire-map-marker', 'fire'),
-    impound: new JobPin('impound-map-marker', 'impound'),
-    taxi: new JobPin('taxi-map-marker', 'taxi'),
-    ambulance: new JobPin('ambulance-map-marker', 'ambulance'),
-    bus: new JobPin('bus-map-marker', 'bus'),
-  };
+  /** The special cars' jobs: fire calls for the fire truck, fares for the taxi, crash and fire (see Jobs) */
+  readonly jobs = new Jobs(this);
   /** the game as its parts see it (see context) */
   private ctx = this.context();
   /** the nitro bar under the speedometer */
@@ -365,12 +343,11 @@ export class GameEngine {
   /** bank jobs, hijacks and the police after us (see Heist) */
   private crime = new Heist(this.ctx);
   /** the Howler's and the Batmobile's cable (see Hauler) */
-  private hauler = new Hauler(this.ctx);
+  hauler = new Hauler(this.ctx);
   /** us on the map (M): a dot with an arrow along our heading */
   private selfMarker: MapMarker | null = null;
   /** a new language: every map label and marker title says it again */
   private offLang = onLangChange(() => this.relabel());
-  onRideOffer: (offer: RideOfferType | null) => void = () => {};
   /** trains and trams on the real tracks */
   private rails = new RailNetwork();
   private trainTraffic = new TrainTraffic(this.rails);
@@ -413,7 +390,7 @@ export class GameEngine {
   /** parking lots from the POI layer */
   private parkingLots = new Map<string, [number, number]>();
   /** Police stations, prisons, courts, hospitals — arrest drop-off points. */
-  private civics = new Map<string, Station & { kind: CivicKind }>();
+  civics = new Map<string, Station & { kind: CivicKind }>();
   private serviceMarkers = new Map<string, MapMarker>();
   /** which POI/hub plaques are drawn (chip bar on the map) */
   private mapLabelFilters: MapLabelFilters = defaultMapLabelFilters();
@@ -490,7 +467,7 @@ export class GameEngine {
   get runStarted() { return this.runReady; }
   private pickupFocus: [number, number] | null = null;
   private pickupNetworkRevision = -1;
-  private playerMoney = 0;
+  playerMoney = 0;
   get booted() { return this.mapShown; }
   private aimingFire = false;
   /** LMB: drag to look around; hold still to aim/fire (no permanent reticle). */
@@ -637,7 +614,7 @@ export class GameEngine {
       };
       this.combatLayer.onTrainCoin = (point, altitude) => this.trainCoin(point, altitude);
       this.combatLayer.onShotCoins = (from, fromAlt, to, toAlt) => this.shotCollectCoins(from, fromAlt, to, toAlt);
-      this.combatLayer.onFireWindowOut = (left) => this.onFireWindowOut(left);
+      this.combatLayer.onFireWindowOut = (left) => this.jobs.onFireWindowOut(left);
       this.combatLayer.onShot = (kind) => this.audio.shot(kind);
       this.combatLayer.onTargetDestroyed = (id, position, reward = true) => {
         this.audio.explosion(position);
@@ -856,8 +833,8 @@ export class GameEngine {
 
   /** Police cruisers and the Batmobile — wanted hunts. */
   private canHuntBounty(id = this.car.id) { return BOUNTY_CAR_IDS.has(id); }
-  private isFireTruck(id = this.car.id) { return id === FIRE_TRUCK_ID; }
-  private isHauler(id = this.car.id) { return id === HAULER_ID; }
+  isFireTruck(id = this.car.id) { return id === FIRE_TRUCK_ID; }
+  isHauler(id = this.car.id) { return id === HAULER_ID; }
   /** Howler + Batmobile: throw / yank / release the cable. */
   private canCable(id = this.car.id) { return canCable(id); }
 
@@ -870,9 +847,6 @@ export class GameEngine {
   private tickNitro(dt: number) {
     this.nitro.tick(dt, this.keys.has('Space'), !this.fuel.empty);
   }
-
-
-
 
   /** The layer the edge arrows (off-frame goals) live in, made on first need. */
   private indicatorLayer() {
@@ -971,8 +945,8 @@ export class GameEngine {
       canHuntBounty: () => game.canHuntBounty(),
       dialogOpen: () => game.dialogOpen(),
       errandOn: () => Boolean(game.errand),
-      errandOrFire: () => Boolean(game.errand || game.fire.active),
-      jobOn: () => Boolean(game.errand || game.fire.active || game.impoundActive || game.taxi.active || game.busTour.active),
+      errandOrFire: () => Boolean(game.errand || game.jobs.fire.active),
+      jobOn: () => Boolean(game.errand || game.jobs.fire.active || game.jobs.impoundActive || game.jobs.taxi.active || game.jobs.busTour.active),
       get city() { return game.city; },
       get missions() { return game.missions; },
       pickBeaconSpot: (here, heading, seed, avoid, band) => game.pickBeaconSpot(here, heading, seed, avoid, band),
@@ -983,17 +957,15 @@ export class GameEngine {
   }
 
   /** Some dialog is up (an event offer, a ticket, a counter, the showroom, an empty tank). */
-  private dialogOpen() {
+  dialogOpen() {
     return Boolean(this.eventOffer || this.travel.open || this.shops.serviceOpen || this.dealer.open || this.fuelOut);
   }
 
-
-
-  private isTaxi(id = this.car.id) { return id === TAXI_ID; }
-  private isAmbulance(id = this.car.id) { return id === AMBULANCE_ID; }
+  isTaxi(id = this.car.id) { return id === TAXI_ID; }
+  isAmbulance(id = this.car.id) { return id === AMBULANCE_ID; }
   /** Parked mission props (crash wreck / tow wait) — not racers, no roster / HP / chase arrow. */
   private isPropBot(id: string) { return isAmbulanceWreckId(id) || id === TOW_CAR_ID; }
-  private isBus(id = this.car.id) { return id === BUS_ID; }
+  isBus(id = this.car.id) { return id === BUS_ID; }
   private carShoots(id = this.car.id) { return carShootsGuns(id); }
 
   /** Map mission kinds for the current car (no arena without guns). */
@@ -1030,29 +1002,29 @@ export class GameEngine {
 
   /** Role cars swap which special mission is on the map (police / fire / hauler / taxi). */
   private onSpecialVehicleChange(prev: string, next: string) {
-    if (this.isFireTruck(prev) && !this.isFireTruck(next)) this.suspendFire();
-    if (this.isHauler(prev) && !this.isHauler(next)) this.suspendImpound();
-    if (this.isTaxi(prev) && !this.isTaxi(next)) this.suspendTaxi();
-    if (this.isAmbulance(prev) && !this.isAmbulance(next)) this.suspendAmbulance();
-    if (this.isBus(prev) && !this.isBus(next)) this.suspendBusTour();
+    if (this.isFireTruck(prev) && !this.isFireTruck(next)) this.jobs.suspendFire();
+    if (this.isHauler(prev) && !this.isHauler(next)) this.jobs.suspendImpound();
+    if (this.isTaxi(prev) && !this.isTaxi(next)) this.jobs.suspendTaxi();
+    if (this.isAmbulance(prev) && !this.isAmbulance(next)) this.jobs.suspendAmbulance();
+    if (this.isBus(prev) && !this.isBus(next)) this.jobs.suspendBusTour();
     if (this.canHuntBounty(prev) && !this.canHuntBounty(next)) {
       // hide bounty offer UI; keep the saved hunt for when we're back in a cruiser
       if (this.wanted.offerShown) { this.wanted.offerShown = false; this.wanted.onOffer(null); }
     }
-    if (this.isFireTruck(next) && !this.fire.active && !this.fire.pickup) {
-      this.fire.offerAt = Math.min(this.fire.offerAt, performance.now() + 4000);
+    if (this.isFireTruck(next) && !this.jobs.fire.active && !this.jobs.fire.pickup) {
+      this.jobs.fire.offerAt = Math.min(this.jobs.fire.offerAt, performance.now() + 4000);
     }
-    if (this.isHauler(next) && !this.impoundActive && !this.impoundPickup) {
-      this.impoundOfferAt = Math.min(this.impoundOfferAt, performance.now() + 4000);
+    if (this.isHauler(next) && !this.jobs.impoundActive && !this.jobs.impoundPickup) {
+      this.jobs.impoundOfferAt = Math.min(this.jobs.impoundOfferAt, performance.now() + 4000);
     }
-    if (this.isTaxi(next) && !this.taxi.active && !this.taxi.pickup) {
-      this.taxi.offerAt = Math.min(this.taxi.offerAt, performance.now() + 4000);
+    if (this.isTaxi(next) && !this.jobs.taxi.active && !this.jobs.taxi.pickup) {
+      this.jobs.taxi.offerAt = Math.min(this.jobs.taxi.offerAt, performance.now() + 4000);
     }
-    if (this.isAmbulance(next) && !this.ambulance.active && !this.ambulance.pickup) {
-      this.ambulance.offerAt = Math.min(this.ambulance.offerAt, performance.now() + 4000);
+    if (this.isAmbulance(next) && !this.jobs.ambulance.active && !this.jobs.ambulance.pickup) {
+      this.jobs.ambulance.offerAt = Math.min(this.jobs.ambulance.offerAt, performance.now() + 4000);
     }
-    if (this.isBus(next) && !this.busTour.active && !this.busTour.pickup) {
-      this.busTour.offerAt = Math.min(this.busTour.offerAt, performance.now() + 4000);
+    if (this.isBus(next) && !this.jobs.busTour.active && !this.jobs.busTour.pickup) {
+      this.jobs.busTour.offerAt = Math.min(this.jobs.busTour.offerAt, performance.now() + 4000);
     }
     if (this.canHuntBounty(next) && !this.wanted.bounty && !this.wanted.pending) {
       this.wanted.offerAt = Math.min(this.wanted.offerAt, performance.now() + 4000);
@@ -1079,7 +1051,7 @@ export class GameEngine {
     this.map.setSkin(settings.skin);
     this.audio.setVolume(settings.volume);
     // mid-fire skin swap: snap flames onto the new window grid, keep ~the same burn %
-    if (skinChanged && this.fire.active) this.remeshFireForSkin();
+    if (skinChanged && this.jobs.fire.active) this.remeshFireForSkin();
     if (!this.mapLoaded) return;
     this.map.setRelief(settings.terrain);
     // fill-rate first: high ≤1.25, medium 1, low 0.85 (was 1 / 1.25 / ≤1.5)
@@ -1094,8 +1066,8 @@ export class GameEngine {
 
   /** After a skin change, rebuild burning panes on the façade rhythm that style draws. */
   private remeshFireForSkin() {
-    if (!this.fire.active || !this.fire.spot || !this.combatLayer) return;
-    const facades = this.map.fireFacadesNear(this.fire.spot, 80);
+    if (!this.jobs.fire.active || !this.jobs.fire.spot || !this.combatLayer) return;
+    const facades = this.map.fireFacadesNear(this.jobs.fire.spot, 80);
     if (!facades?.panes.length) return;
     const specs = facades.panes.map((p) => ({
       at: p.at as [number, number],
@@ -1103,16 +1075,16 @@ export class GameEngine {
       oe: p.oe,
       on: p.on,
     }));
-    const seed = Math.round(this.fire.spot[0] * 1e5) ^ Math.round(this.fire.spot[1] * 1e5) ^ (performance.now() | 0);
+    const seed = Math.round(this.jobs.fire.spot[0] * 1e5) ^ Math.round(this.jobs.fire.spot[1] * 1e5) ^ (performance.now() | 0);
     this.combatLayer.remeshFireHouse(specs, seed);
     const total = this.combatLayer.fireWindowsTotal();
-    if (total != null) this.fire.windowTotal = total;
+    if (total != null) this.jobs.fire.windowTotal = total;
     const left = this.combatLayer.fireWindowsLeft();
     if (left === 0) {
-      this.completeFire(this.fire.windowTotal);
+      this.jobs.completeFire(this.jobs.fire.windowTotal);
       return;
     }
-    this.fire.spot = facadeMarker(specs, this.fire.spot) as [number, number];
+    this.jobs.fire.spot = facadeMarker(specs, this.jobs.fire.spot) as [number, number];
     this.syncMissionVisuals(true);
   }
 
@@ -1250,8 +1222,8 @@ export class GameEngine {
   leaveToMenu() {
     this.hauler.release(null);
     if (this.errand) { this.clearErrand(); this.completeActiveMission(); }
-    if (this.taxi.pending || this.taxi.active) this.suspendTaxi();
-    if (this.busTour.pending || this.busTour.active) this.suspendBusTour();
+    if (this.jobs.taxi.pending || this.jobs.taxi.active) this.jobs.suspendTaxi();
+    if (this.jobs.busTour.pending || this.jobs.busTour.active) this.jobs.suspendBusTour();
     this.mode = 'roam';
     this.crime.heist = null;
     this.race.dropFinish();
@@ -1259,7 +1231,7 @@ export class GameEngine {
     this.eventOffer = null;
     this.onEventOffer(null);
     this.onEventResult(null);
-    this.onRideOffer(null);
+    this.jobs.onRideOffer(null);
     this.wanted.fight = false;
     this.fuelOut = false;
     this.onFuelOut(false);
@@ -1297,7 +1269,7 @@ export class GameEngine {
     this.ensureTrafficMarkers();
   }
 
-  private pickBeaconSpot(
+  pickBeaconSpot(
     position: [number, number],
     heading: number,
     seed: number,
@@ -1351,7 +1323,7 @@ export class GameEngine {
     return t(`mission.${kind}`, { n: this.missionSeq[kind] });
   }
 
-  private syncMissionVisuals(showWorld = this.mode === 'roam') {
+  syncMissionVisuals(showWorld = this.mode === 'roam') {
     // on a mission the others are out of sight (and out of reach) until it is over
     const free = showWorld && !this.onMission();
     const visible = free ? this.missions : [];
@@ -1386,32 +1358,32 @@ export class GameEngine {
       } else if (this.canHuntBounty() && this.wanted.bounty?.spot) {
         beacons.push({ id: 'bounty', kind: 'bounty', position: this.wanted.bounty.spot });
       }
-      if (this.isFireTruck() && this.fire.active && this.fire.spot) {
-        beacons.push({ id: 'fire', kind: 'fire', position: this.fire.spot });
-      } else if (this.isFireTruck() && this.fire.pickup && free) {
-        beacons.push({ id: 'fire-pickup', kind: 'fire', position: this.fire.pickup });
+      if (this.isFireTruck() && this.jobs.fire.active && this.jobs.fire.spot) {
+        beacons.push({ id: 'fire', kind: 'fire', position: this.jobs.fire.spot });
+      } else if (this.isFireTruck() && this.jobs.fire.pickup && free) {
+        beacons.push({ id: 'fire-pickup', kind: 'fire', position: this.jobs.fire.pickup });
       }
-      if (this.isHauler() && this.impoundActive) {
-        const drop = this.impoundDropPin();
+      if (this.isHauler() && this.jobs.impoundActive) {
+        const drop = this.jobs.impoundDropPin();
         if (drop) beacons.push({ id: 'impound-drop', kind: 'impound', position: drop });
-        else if (this.impoundSpot) beacons.push({ id: 'impound', kind: 'impound', position: this.impoundSpot });
-      } else if (this.isHauler() && this.impoundPickup && free) {
-        beacons.push({ id: 'impound-pickup', kind: 'impound', position: this.impoundPickup });
+        else if (this.jobs.impoundSpot) beacons.push({ id: 'impound', kind: 'impound', position: this.jobs.impoundSpot });
+      } else if (this.isHauler() && this.jobs.impoundPickup && free) {
+        beacons.push({ id: 'impound-pickup', kind: 'impound', position: this.jobs.impoundPickup });
       }
-      if (this.isTaxi() && this.taxi.active && this.taxi.goal) {
-        beacons.push({ id: 'taxi-goal', kind: 'taxi', position: this.taxi.goal, colors: ERRAND_BEACONS.taxi });
-      } else if (this.isTaxi() && this.taxi.pickup && free) {
-        beacons.push({ id: 'taxi-pickup', kind: 'taxi', position: this.taxi.pickup, colors: ERRAND_BEACONS.taxi });
+      if (this.isTaxi() && this.jobs.taxi.active && this.jobs.taxi.goal) {
+        beacons.push({ id: 'taxi-goal', kind: 'taxi', position: this.jobs.taxi.goal, colors: ERRAND_BEACONS.taxi });
+      } else if (this.isTaxi() && this.jobs.taxi.pickup && free) {
+        beacons.push({ id: 'taxi-pickup', kind: 'taxi', position: this.jobs.taxi.pickup, colors: ERRAND_BEACONS.taxi });
       }
-      if (this.isAmbulance() && this.ambulance.active && this.ambulance.goal) {
-        beacons.push({ id: 'ambulance-goal', kind: 'ambulance', position: this.ambulance.goal, colors: ERRAND_BEACONS.ambulance });
-      } else if (this.isAmbulance() && this.ambulance.pickup && free) {
-        beacons.push({ id: 'ambulance-pickup', kind: 'ambulance', position: this.ambulance.pickup, colors: ERRAND_BEACONS.ambulance });
+      if (this.isAmbulance() && this.jobs.ambulance.active && this.jobs.ambulance.goal) {
+        beacons.push({ id: 'ambulance-goal', kind: 'ambulance', position: this.jobs.ambulance.goal, colors: ERRAND_BEACONS.ambulance });
+      } else if (this.isAmbulance() && this.jobs.ambulance.pickup && free) {
+        beacons.push({ id: 'ambulance-pickup', kind: 'ambulance', position: this.jobs.ambulance.pickup, colors: ERRAND_BEACONS.ambulance });
       }
-      if (this.isBus() && this.busTour.active && this.busTour.goal) {
-        beacons.push({ id: 'bus-goal', kind: 'bus', position: this.busTour.goal, colors: ERRAND_BEACONS.bus });
-      } else if (this.isBus() && this.busTour.pickup && free) {
-        beacons.push({ id: 'bus-pickup', kind: 'bus', position: this.busTour.pickup, colors: ERRAND_BEACONS.bus });
+      if (this.isBus() && this.jobs.busTour.active && this.jobs.busTour.goal) {
+        beacons.push({ id: 'bus-goal', kind: 'bus', position: this.jobs.busTour.goal, colors: ERRAND_BEACONS.bus });
+      } else if (this.isBus() && this.jobs.busTour.pickup && free) {
+        beacons.push({ id: 'bus-pickup', kind: 'bus', position: this.jobs.busTour.pickup, colors: ERRAND_BEACONS.bus });
       }
     }
     if (this.driving) {
@@ -1471,52 +1443,52 @@ export class GameEngine {
       }
     }
     if (this.isFireTruck()) {
-      if (this.fire.active && this.fire.spot) {
-        goals.push({ id: 'role-fire', color: 'fire', label: t('fire.goal'), position: this.fire.spot, role: true });
-      } else if (this.fire.pickup && !this.onMission()) {
-        goals.push({ id: 'role-fire', color: 'fire', label: t('fire.goal'), position: this.fire.pickup, role: true });
+      if (this.jobs.fire.active && this.jobs.fire.spot) {
+        goals.push({ id: 'role-fire', color: 'fire', label: t('fire.goal'), position: this.jobs.fire.spot, role: true });
+      } else if (this.jobs.fire.pickup && !this.onMission()) {
+        goals.push({ id: 'role-fire', color: 'fire', label: t('fire.goal'), position: this.jobs.fire.pickup, role: true });
       }
     }
     if (this.isHauler()) {
-      if (this.impoundActive) {
-        const drop = this.impoundDropPin();
+      if (this.jobs.impoundActive) {
+        const drop = this.jobs.impoundDropPin();
         goals.push({
           id: 'role-impound',
           color: 'impound',
           label: drop ? t('impound.drop') : t('impound.goal'),
-          position: drop ?? this.impoundSpot,
+          position: drop ?? this.jobs.impoundSpot,
           role: true,
         });
-      } else if (this.impoundPickup && !this.onMission()) {
-        goals.push({ id: 'role-impound', color: 'impound', label: t('impound.goal'), position: this.impoundPickup, role: true });
+      } else if (this.jobs.impoundPickup && !this.onMission()) {
+        goals.push({ id: 'role-impound', color: 'impound', label: t('impound.goal'), position: this.jobs.impoundPickup, role: true });
       }
     }
     if (this.isTaxi()) {
-      if (this.taxi.active && this.taxi.goal) {
-        goals.push({ id: 'role-taxi', color: 'taxi', label: t('taxi.drop'), position: this.taxi.goal, role: true });
-      } else if (this.taxi.pickup && !this.onMission()) {
-        goals.push({ id: 'role-taxi', color: 'taxi', label: t('taxi.goal'), position: this.taxi.pickup, role: true });
+      if (this.jobs.taxi.active && this.jobs.taxi.goal) {
+        goals.push({ id: 'role-taxi', color: 'taxi', label: t('taxi.drop'), position: this.jobs.taxi.goal, role: true });
+      } else if (this.jobs.taxi.pickup && !this.onMission()) {
+        goals.push({ id: 'role-taxi', color: 'taxi', label: t('taxi.goal'), position: this.jobs.taxi.pickup, role: true });
       }
     }
     if (this.isAmbulance()) {
-      if (this.ambulance.active && this.ambulance.goal) {
-        goals.push({ id: 'role-ambulance', color: 'ambulance', label: t('ambulance.drop'), position: this.ambulance.goal, role: true });
-      } else if (this.ambulance.pickup && !this.onMission()) {
-        const label = this.ambulance.site === 'burn' ? t('ambulance.goal.burn') : t('ambulance.goal.crash');
-        goals.push({ id: 'role-ambulance', color: 'ambulance', label, position: this.ambulance.pickup, role: true });
+      if (this.jobs.ambulance.active && this.jobs.ambulance.goal) {
+        goals.push({ id: 'role-ambulance', color: 'ambulance', label: t('ambulance.drop'), position: this.jobs.ambulance.goal, role: true });
+      } else if (this.jobs.ambulance.pickup && !this.onMission()) {
+        const label = this.jobs.ambulance.site === 'burn' ? t('ambulance.goal.burn') : t('ambulance.goal.crash');
+        goals.push({ id: 'role-ambulance', color: 'ambulance', label, position: this.jobs.ambulance.pickup, role: true });
       }
     }
     if (this.isBus()) {
-      if (this.busTour.active && this.busTour.goal) {
+      if (this.jobs.busTour.active && this.jobs.busTour.goal) {
         goals.push({
           id: 'role-bus',
           color: 'bus',
-          label: this.busTour.place || t('bus.drop'),
-          position: this.busTour.goal,
+          label: this.jobs.busTour.place || t('bus.drop'),
+          position: this.jobs.busTour.goal,
           role: true,
         });
-      } else if (this.busTour.pickup && !this.onMission()) {
-        goals.push({ id: 'role-bus', color: 'bus', label: t('bus.tour'), position: this.busTour.pickup, role: true });
+      } else if (this.jobs.busTour.pickup && !this.onMission()) {
+        goals.push({ id: 'role-bus', color: 'bus', label: t('bus.tour'), position: this.jobs.busTour.pickup, role: true });
       }
     }
     return goals;
@@ -1639,7 +1611,7 @@ export class GameEngine {
     layer.setExtraTargets([...this.sharedTraffic.update(dt, now), ...tests]);
   }
 
-  private targetVehicles() {
+  targetVehicles() {
     // reuse objects — VehicleLayer only reads id/position/heading each frame
     const out = this.targetScratch;
     out.length = this.trafficBots.length;
@@ -1938,11 +1910,11 @@ export class GameEngine {
     }
     if (this.mode === 'arena') { this.endArena(false); return true; }
     if (this.mode === 'race') { this.race.forfeit(); return true; }
-    if (this.taxi.active) {
-      this.taxi.active = false;
-      this.taxi.goal = null;
-      this.taxi.meters = 0;
-      this.taxi.offerAt = performance.now() + 20000;
+    if (this.jobs.taxi.active) {
+      this.jobs.taxi.active = false;
+      this.jobs.taxi.goal = null;
+      this.jobs.taxi.meters = 0;
+      this.jobs.taxi.offerAt = performance.now() + 20000;
       this.syncMissionVisuals(true);
       return true;
     }
@@ -2552,11 +2524,11 @@ export class GameEngine {
     if (!this.driving) return;
     if (this.crime.heist) { this.crime.update(); return; }
     this.wanted.update();
-    this.updateFire();
-    this.updateImpound();
-    this.updateTaxi();
-    this.updateAmbulance();
-    this.updateBus();
+    this.jobs.updateFire();
+    this.jobs.updateImpound();
+    this.jobs.updateTaxi();
+    this.jobs.updateAmbulance();
+    this.jobs.updateBus();
     if (this.wanted.fight) {
       if (this.playerHp <= 0) this.wanted.end(false);
       else if (this.trafficBots.length && this.combatLayer && this.combatLayer.aliveTargetCount() === 0) this.wanted.end(true);
@@ -2594,17 +2566,17 @@ export class GameEngine {
   }
 
   /** On a mission of any kind (arena, race, chase, a hunt, an errand, a fire, an impound): nothing else is offered or shown. */
-  private onMission() {
+  onMission() {
     return this.mode !== 'roam'
       || Boolean(this.crime.heist)
       || this.wanted.fight
       || (Boolean(this.wanted.bounty) && this.canHuntBounty())
       || Boolean(this.errand)
-      || this.fire.active
-      || this.impoundActive
-      || this.taxi.active
-      || this.ambulance.active
-      || this.busTour.active;
+      || this.jobs.fire.active
+      || this.jobs.impoundActive
+      || this.jobs.taxi.active
+      || this.jobs.ambulance.active
+      || this.jobs.busTour.active;
   }
 
   /** What the marker's dialog says; a delivery picks its address and pay here. Null: no address to go to. */
@@ -2780,7 +2752,7 @@ export class GameEngine {
     this.syncErrandMarkers();
     this.wanted.marker?.remove();
     this.wanted.marker = null;
-    for (const pin of Object.values(this.jobPins)) pin.remove();
+    for (const pin of Object.values(this.jobs.jobPins)) pin.remove();
     this.race.removeMarkers();
     this.race.syncMarkers();
     if (this.focusIndicator) this.focusIndicator.element.setAttribute('aria-label', t('marker.target'));
@@ -2847,153 +2819,15 @@ export class GameEngine {
     this.placeTargetIndicator(marker, target, Number.POSITIVE_INFINITY);
   }
 
-  private fireWorld(): FireCallWorld {
-    const avoid = this.missions.map((mission) => mission.position);
-    if (this.wanted.pickup) avoid.push(this.wanted.pickup);
-    return {
-      position: this.vehicle.position,
-      heading: this.vehicle.heading,
-      mode: this.mode,
-      busy: Boolean(this.dialogOpen()),
-      bountyFight: this.wanted.fight,
-      errand: Boolean(this.errand),
-      onMission: this.onMission(),
-      avoid,
-      fireFacadesNear: (at, radius) => this.map.fireFacadesNear(at, radius),
-      pickBeaconSpot: (here, heading, seed, spots) => this.pickBeaconSpot(here, heading, seed, spots),
-      setFireHouse: (site) => this.combatLayer?.setFireHouse(site),
-      syncMissionVisuals: (show) => this.syncMissionVisuals(show),
-      say: (text, toast) => this.say(text, toast),
-      addMoney: (amount) => { this.playerMoney += amount; },
-      onResult: (cash, windows) => this.onEventResult({ kind: 'fire', won: true, cash, name: String(windows) }),
-    };
-  }
-
-  /** Fire truck: a house is already burning when the call appears — drive over and hose the windows. */
-  private updateFire() {
-    if (!this.isFireTruck()) return;
-    updateFireCall(this.fire, this.fireWorld());
-  }
-
-  private startFire() {
-    startFireCall(this.fire, this.fireWorld());
-  }
-
-  private onFireWindowOut(left: number) {
-    noteFireWindowOut(this.fire, this.fireWorld(), left);
-  }
-
-  private completeFire(windows: number) {
-    completeFireCall(this.fire, this.fireWorld(), windows);
-  }
-
-  /** Leave a fire call when swapping off the truck (progress is lost). */
-  private suspendFire() {
-    suspendFireCall(this.fire, this.fireWorld());
-  }
-
-  private taxiWorld(): TaxiFareWorld {
-    const avoid = this.missions.map((mission) => mission.position);
-    if (this.wanted.pickup) avoid.push(this.wanted.pickup);
-    if (this.fire.pickup) avoid.push(this.fire.pickup);
-    if (this.impoundPickup) avoid.push(this.impoundPickup);
-    return {
-      position: this.vehicle.position,
-      heading: this.vehicle.heading,
-      mode: this.mode,
-      busy: Boolean(this.dialogOpen() || this.taxi.pending || this.busTour.pending),
-      bountyFight: this.wanted.fight,
-      errand: Boolean(this.errand),
-      onMission: this.onMission(),
-      avoid,
-      pickBeaconSpot: (here, heading, seed, spots) => this.pickBeaconSpot(here, heading, seed, spots),
-      pickDropoff: (from, minM, maxM, seed) =>
-        this.trafficNetwork.randomAway(from, new Set(), minM, maxM, seed)?.position ?? null,
-      syncMissionVisuals: (show) => this.syncMissionVisuals(show),
-      say: (text, toast) => this.say(text, toast),
-      addMoney: (amount) => { this.playerMoney += amount; },
-      onOffer: (offer) => this.onRideOffer(offer),
-      onResult: (cash, km) => this.onEventResult({ kind: 'taxi', won: true, cash, name: String(km) }),
-    };
-  }
-
-  private updateTaxi() {
-    if (!this.isTaxi()) return;
-    updateTaxiFare(this.taxi, this.taxiWorld());
-  }
-
-  /** Leave a fare when swapping off the taxi (progress is lost). */
-  private suspendTaxi() {
-    suspendTaxiFare(this.taxi, this.taxiWorld());
-  }
-
-  acceptRide() {
-    if (this.taxi.pending) acceptTaxiFare(this.taxi, this.taxiWorld());
-    else if (this.ambulance.pending) acceptAmbulanceCall(this.ambulance, this.ambulanceWorld());
-    else if (this.busTour.pending) acceptBusTour(this.busTour, this.busTourWorld());
-  }
-
-  declineRide() {
-    if (this.taxi.pending) declineTaxiFare(this.taxi, this.taxiWorld());
-    else if (this.ambulance.pending) declineAmbulanceCall(this.ambulance, this.ambulanceWorld());
-    else if (this.busTour.pending) declineBusTour(this.busTour, this.busTourWorld());
-  }
-
-  private ambulanceWorld(): AmbulanceCallWorld {
-    const avoid = this.missions.map((mission) => mission.position);
-    if (this.wanted.pickup) avoid.push(this.wanted.pickup);
-    if (this.fire.pickup) avoid.push(this.fire.pickup);
-    if (this.impoundPickup) avoid.push(this.impoundPickup);
-    if (this.taxi.pickup) avoid.push(this.taxi.pickup);
-    return {
-      position: this.vehicle.position,
-      heading: this.vehicle.heading,
-      mode: this.mode,
-      busy: Boolean(this.dialogOpen() || this.taxi.pending || this.busTour.pending || this.ambulance.pending),
-      bountyFight: this.wanted.fight,
-      errand: Boolean(this.errand),
-      onMission: this.onMission(),
-      avoid,
-      pickBeaconSpot: (here, heading, seed, spots) => this.pickBeaconSpot(here, heading, seed, spots),
-      nearestHospital: (from) => {
-        // Victim calls need a hospital within 10 km. Prefer a 2–8 km drive when
-        // one exists; otherwise the nearest inside 10 km (even if closer).
-        const PREFER_MIN = 2000;
-        const PREFER_MAX = 8000;
-        const REACH = 10000;
-        const list = [...this.civics.values()].filter((s) => s.kind === 'hospital');
-        if (!list.length) return null;
-        let band: Position | null = null;
-        let bandD = Infinity;
-        let near: Position | null = null;
-        let nearD = Infinity;
-        for (const s of list) {
-          const at = (s.place ?? s.position) as Position;
-          const d = metersBetween(from, at);
-          if (d > REACH) continue;
-          if (d < nearD) { nearD = d; near = at; }
-          if (d >= PREFER_MIN && d <= PREFER_MAX && d < bandD) { bandD = d; band = at; }
-        }
-        return band ?? near;
-      },
-      setScene: (kind, at) => this.setAmbulanceScene(kind, at),
-      syncMissionVisuals: (show) => this.syncMissionVisuals(show),
-      say: (text, toast) => this.say(text, toast),
-      addMoney: (amount) => { this.playerMoney += amount; },
-      onOffer: (offer) => this.onRideOffer(offer),
-      onResult: (cash, victims) => this.onEventResult({ kind: 'ambulance', won: true, cash, name: String(victims) }),
-    };
-  }
-
   /**
    * `burn` — house windows on fire only (separate call type).
    * `crash` — 1–2 wrecks: roadside (often overturned), or nosed into a house with the
    * car on fire (house itself is not burning). Clear with null.
    */
-  private setAmbulanceScene(kind: AmbulanceSite | null, at: Position | null): { site: AmbulanceSite; cars: number } | null {
+  setAmbulanceScene(kind: AmbulanceSite | null, at: Position | null): { site: AmbulanceSite; cars: number } | null {
     this.trafficBots = this.trafficBots.filter((b) => !isAmbulanceWreckId(b.id));
     // clear smolder unless the fire truck owns a live call
-    if (!this.fire.active) this.combatLayer?.setFireHouse(null);
+    if (!this.jobs.fire.active) this.combatLayer?.setFireHouse(null);
     if (!kind || !at) {
       this.combatLayer?.setTargets(this.targetVehicles());
       return null;
@@ -3001,7 +2835,7 @@ export class GameEngine {
     if (kind === 'burn') {
       // cap pane scan — London blocks otherwise build thousands of windows in one hitch
       const facades = this.map.fireFacadesNear(at, 55, 24);
-      if (facades?.panes.length && !this.fire.active) {
+      if (facades?.panes.length && !this.jobs.fire.active) {
         const n = Math.min(facades.panes.length, 4 + (Math.abs(Math.round(at[0] * 1e4)) % 5));
         const panes = facades.panes.slice(0, n).map((p) => ({
           at: p.at as [number, number],
@@ -3063,202 +2897,6 @@ export class GameEngine {
     return { site: 'crash', cars };
   }
 
-  private updateAmbulance() {
-    if (!this.isAmbulance()) return;
-    // keep crash wrecks planted (same as the impound wait car)
-    if (this.ambulance.pickup && this.ambulance.cars > 0) {
-      for (const wreck of this.trafficBots) {
-        if (!isAmbulanceWreckId(wreck.id)) continue;
-        wreck.controller.speed = 0;
-        wreck.route = [];
-        wreck.goal = null;
-        // leave each wreck on its own planted spot (controller.position)
-        wreck.position = [...wreck.controller.position] as Position;
-      }
-    }
-    // hospital drop only when nearly stopped
-    if (this.ambulance.active && this.ambulance.goal
-      && metersBetween(this.vehicle.position, this.ambulance.goal) <= AMBULANCE_HOSPITAL_M
-      && Math.abs(this.vehicle.speed) > 7) return;
-    updateAmbulanceCall(this.ambulance, this.ambulanceWorld());
-  }
-
-  private suspendAmbulance() {
-    suspendAmbulanceCall(this.ambulance, this.ambulanceWorld());
-  }
-
-  private busWorld(): BusStopWorld {
-    return {
-      position: this.vehicle.position,
-      mode: this.mode,
-      busy: Boolean(this.dialogOpen() || this.busTour.active || this.busTour.pickup || this.busTour.pending || this.taxi.pending),
-      stops: [...this.busStops.values()],
-      say: (text, toast) => this.say(text, toast),
-      addMoney: (amount) => { this.playerMoney += amount; },
-      onResult: (cash, action, passengers) => this.onEventResult({ kind: 'bus', won: true, cash, name: `${action}:${passengers}` }),
-    };
-  }
-
-  private busTourWorld(): BusTourWorld {
-    const avoid = this.missions.map((mission) => mission.position);
-    if (this.wanted.pickup) avoid.push(this.wanted.pickup);
-    if (this.fire.pickup) avoid.push(this.fire.pickup);
-    if (this.impoundPickup) avoid.push(this.impoundPickup);
-    if (this.taxi.pickup) avoid.push(this.taxi.pickup);
-    return {
-      position: this.vehicle.position,
-      heading: this.vehicle.heading,
-      mode: this.mode,
-      busy: Boolean(this.dialogOpen() || this.taxi.pending || this.busTour.pending),
-      bountyFight: this.wanted.fight,
-      errand: Boolean(this.errand),
-      onMission: this.onMission(),
-      avoid,
-      landmarks: [...this.landmarks.values()],
-      pickBeaconSpot: (here, heading, seed, spots) => this.pickBeaconSpot(here, heading, seed, spots),
-      syncMissionVisuals: (show) => this.syncMissionVisuals(show),
-      say: (text, toast) => this.say(text, toast),
-      addMoney: (amount) => { this.playerMoney += amount; },
-      onOffer: (offer) => this.onRideOffer(offer),
-      onResult: (cash, passengers, kind, place) =>
-        this.onEventResult({ kind: 'bus', won: true, cash, name: `tour:${kind}:${passengers}:${place}` }),
-    };
-  }
-
-  private updateBus() {
-    if (!this.isBus()) {
-      this.bus.at = null;
-      return;
-    }
-    updateBusTour(this.busTour, this.busTourWorld());
-    updateBusStops(this.bus, this.busWorld());
-  }
-
-  private suspendBusTour() {
-    suspendBusTour(this.busTour, this.busTourWorld());
-  }
-
-  /** Nearest police station pin while hauling the impound car (any station counts). */
-  private impoundDropPin(): [number, number] | null {
-    if (!this.carryingImpound()) return null;
-    const list = [...this.civics.values()].filter((s) => s.kind === 'police');
-    const near = nearestStation(this.vehicle.position, list);
-    return near ? [...near.station.position] as [number, number] : null;
-  }
-
-  private carryingImpound() {
-    const haul = this.hauler.haul;
-    // only the car on the bed counts — empty visits to police do nothing
-    return Boolean(this.impoundActive && haul && haul.id === TOW_CAR_ID && haul.phase === 'carry');
-  }
-
-  /** Howler: marker → load the car → deliver to any police station for a premium. */
-  private updateImpound() {
-    if (!this.isHauler()) return;
-    const now = performance.now();
-    const here = this.vehicle.position;
-    if (this.impoundActive) {
-      // car wrecked / gone: cancel and try again later
-      if (!this.trafficBots.some((b) => b.id === TOW_CAR_ID) && this.hauler.haul?.id !== TOW_CAR_ID) {
-        this.failImpound();
-        return;
-      }
-      // keep the waiting car planted until the hook takes it
-      const bot = this.trafficBots.find((b) => b.id === TOW_CAR_ID);
-      if (bot && this.hauler.haul?.id !== TOW_CAR_ID && this.impoundSpot) {
-        bot.controller.speed = 0;
-        bot.controller.position = [...this.impoundSpot] as Position;
-        bot.position = [...this.impoundSpot] as Position;
-      }
-      // only when the car is on the bed (or hooked/pulling) — empty visits to police do nothing
-      if (this.carryingImpound() && now > this.impoundDeliveredAt) {
-        const police = atStation(here, [...this.civics.values()].filter((s) => s.kind === 'police'), SERVICE_REACH.civic);
-        if (police && Math.abs(this.vehicle.speed) < 7) this.completeImpound();
-      }
-      return;
-    }
-    if (this.impoundPickup) {
-      if (this.mode === 'roam' && !this.wanted.fight && !this.errand && !this.fire.active
-        && metersBetween(here, this.impoundPickup) <= IMPOUND_ARRIVE_M) this.startImpound();
-      return;
-    }
-    if (this.mode !== 'roam' || this.wanted.fight || this.errand || this.onMission()) return;
-    const busy = this.dialogOpen();
-    if (busy || now < this.impoundOfferAt) return;
-    const seed = Math.round(here[0] * 1e5) ^ Math.round(here[1] * 1e5) ^ (now | 0);
-    const avoid = this.missions.map((mission) => mission.position);
-    if (this.wanted.pickup) avoid.push(this.wanted.pickup);
-    if (this.fire.pickup) avoid.push(this.fire.pickup);
-    if (this.taxi.pickup) avoid.push(this.taxi.pickup);
-    this.impoundPickup = this.pickBeaconSpot(here as [number, number], this.vehicle.heading, seed ^ 0x70a1, avoid);
-    this.syncMissionVisuals(true);
-    this.say(t('mission.new', { label: t('impound.goal') }), true);
-  }
-
-  private startImpound() {
-    if (!this.impoundPickup || this.impoundActive) return;
-    this.impoundActive = true;
-    this.impoundSpot = this.impoundPickup;
-    this.impoundPickup = null;
-    const heading = this.vehicle.heading;
-    const seed = Math.round(this.impoundSpot[0] * 1e5) ^ Math.round(this.impoundSpot[1] * 1e5);
-    const choices = carsConfig.filter((car) => car.id !== HAULER_ID && car.id !== FIRE_TRUCK_ID && car.id !== BUS_ID && !POLICE_IDS.has(car.id));
-    const car = choices[Math.abs(seed) % choices.length] ?? carsConfig[0];
-    // plant a still car exactly on the pin (createTrafficBot would wander off)
-    const bot = createTrafficBot(TOW_CAR_ID, t('impound.driver'), car, this.trafficNetwork, this.impoundSpot, heading, new Set(), 'explore', seed, { min: 0, max: 40 });
-    bot.controller.position = [...this.impoundSpot] as Position;
-    bot.controller.heading = heading;
-    bot.controller.speed = 0;
-    bot.position = [...this.impoundSpot] as Position;
-    bot.heading = heading;
-    bot.route = [];
-    bot.goal = null;
-    this.trafficBots = [...this.trafficBots.filter((b) => b.id !== TOW_CAR_ID), bot];
-    this.combatLayer?.setTargets(this.targetVehicles());
-    this.syncMissionVisuals(true);
-    this.say(t('impound.start', { car: car.name, reward: formatNumber(IMPOUND_REWARD) }), true);
-  }
-
-  private completeImpound() {
-    if (!this.impoundActive) return;
-    this.impoundActive = false;
-    this.impoundSpot = null;
-    this.impoundDeliveredAt = performance.now() + 2000;
-    // take the car off the bed and scrap it at the station
-    if (this.hauler.haul?.id === TOW_CAR_ID) this.hauler.lose();
-    else {
-      this.trafficBots = this.trafficBots.filter((b) => b.id !== TOW_CAR_ID);
-      this.combatLayer?.setTargets(this.targetVehicles());
-    }
-    this.playerMoney += IMPOUND_REWARD;
-    this.impoundOfferAt = performance.now() + 50000;
-    this.syncMissionVisuals(true);
-    this.onEventResult({ kind: 'impound', won: true, cash: IMPOUND_REWARD });
-  }
-
-  private failImpound() {
-    this.impoundActive = false;
-    this.impoundSpot = null;
-    this.trafficBots = this.trafficBots.filter((b) => b.id !== TOW_CAR_ID);
-    this.combatLayer?.setTargets(this.targetVehicles());
-    this.impoundOfferAt = performance.now() + 20000;
-    this.syncMissionVisuals(true);
-    this.say(t('impound.lost'), true);
-  }
-
-  private suspendImpound() {
-    if (this.impoundActive) {
-      if (this.hauler.haul?.id === TOW_CAR_ID) this.hauler.lose();
-      this.impoundActive = false;
-      this.impoundSpot = null;
-      this.trafficBots = this.trafficBots.filter((b) => b.id !== TOW_CAR_ID);
-      this.combatLayer?.setTargets(this.targetVehicles());
-      this.impoundOfferAt = performance.now() + 12000;
-      this.say(t('impound.aborted'), true);
-    }
-    this.syncMissionVisuals(true);
-  }
-
   /** Trains run in the menu and while driving; born and retired out of sight. */
   private updateTrains(dt: number) {
     if (!this.trainLayer || !this.mapShown) return;
@@ -3275,52 +2913,14 @@ export class GameEngine {
   }
 
   /** Map label for the fire call; HUD tip comes from the focus cycle. */
-  /** Whether a special car's job pin is up: in that car, driving, nothing bigger on. */
-  private jobPinShown(inCar: boolean) {
-    return inCar && this.driving && !this.errand && !this.wanted.fight;
-  }
-
-  private updateFireMarkers() {
-    const pin = this.fire.active ? this.fire.spot : this.fire.pickup;
-    this.jobPins.fire.show(this.map, this.jobPinShown(this.isFireTruck()) ? pin : null, this.fire.active ? t('fire.marker.active') : t('fire.marker'));
-  }
-
-  /** Map label for the Howler impound job; HUD tip comes from the focus cycle. */
-  private updateImpoundMarkers() {
-    const drop = this.impoundDropPin();
-    const pin = this.impoundActive ? (drop ?? this.impoundSpot) : this.impoundPickup;
-    const title = drop ? t('impound.marker.drop') : this.impoundActive ? t('impound.marker.car') : t('impound.marker');
-    this.jobPins.impound.show(this.map, this.jobPinShown(this.isHauler()) ? pin : null, title);
-  }
-
-  /** Map label for the taxi fare; HUD tip comes from the focus cycle. */
-  private updateTaxiMarkers() {
-    const pin = this.taxi.active ? this.taxi.goal : this.taxi.pickup;
-    this.jobPins.taxi.show(this.map, this.jobPinShown(this.isTaxi()) ? pin : null, this.taxi.active ? t('taxi.marker.drop') : t('taxi.marker'));
-  }
-
-  /** Map label for the ambulance call; HUD tip comes from the focus cycle. */
-  private updateAmbulanceMarkers() {
-    const pin = this.ambulance.active ? this.ambulance.goal : this.ambulance.pickup;
-    const title = this.ambulance.active
-      ? t('ambulance.marker.drop')
-      : this.ambulance.site === 'burn' ? t('ambulance.marker.burn') : t('ambulance.marker.crash');
-    this.jobPins.ambulance.show(this.map, this.jobPinShown(this.isAmbulance()) ? pin : null, title);
-  }
-
-  /** Map label for the bus tour; HUD tip comes from the focus cycle. */
-  private updateBusTourMarkers() {
-    const pin = this.busTour.active ? this.busTour.goal : this.busTour.pickup;
-    this.jobPins.bus.show(this.map, this.jobPinShown(this.isBus()) ? pin : null, this.busTour.active ? (this.busTour.place || t('bus.drop')) : t('bus.marker'));
-  }
 
   private updateEventMarkers() {
     this.wanted.syncMarkers();
-    this.updateFireMarkers();
-    this.updateImpoundMarkers();
-    this.updateTaxiMarkers();
-    this.updateAmbulanceMarkers();
-    this.updateBusTourMarkers();
+    this.jobs.updateFireMarkers();
+    this.jobs.updateImpoundMarkers();
+    this.jobs.updateTaxiMarkers();
+    this.jobs.updateAmbulanceMarkers();
+    this.jobs.updateBusTourMarkers();
     const roaming = this.driving && this.mode === 'roam';
     const goals = this.focusGoals();
     // a new role mission on this car joins Tab and becomes the focused tip
@@ -3400,11 +3000,11 @@ export class GameEngine {
     }
     this.setMapPinRange(this.wanted.marker, this.wanted.pickup ?? this.wanted.bounty?.spot ?? null, pinRange && this.canHuntBounty());
     const jobRange = pinRange && !this.mapInspecting();
-    this.jobPins.fire.range(this.vehicle.position, jobRange && this.isFireTruck());
-    this.jobPins.impound.range(this.vehicle.position, jobRange && this.isHauler());
-    this.jobPins.taxi.range(this.vehicle.position, jobRange && this.isTaxi());
-    this.jobPins.ambulance.range(this.vehicle.position, jobRange && this.isAmbulance());
-    this.jobPins.bus.range(this.vehicle.position, jobRange && this.isBus());
+    this.jobs.jobPins.fire.range(this.vehicle.position, jobRange && this.isFireTruck());
+    this.jobs.jobPins.impound.range(this.vehicle.position, jobRange && this.isHauler());
+    this.jobs.jobPins.taxi.range(this.vehicle.position, jobRange && this.isTaxi());
+    this.jobs.jobPins.ambulance.range(this.vehicle.position, jobRange && this.isAmbulance());
+    this.jobs.jobPins.bus.range(this.vehicle.position, jobRange && this.isBus());
     for (const pin of errandPins) {
       this.setMapPinRange(this.errandMarkers.get(pin.id), pin.position, pinRange);
     }
@@ -3576,13 +3176,13 @@ export class GameEngine {
     addCivic('court', courtsFromFeatures(pois));
     addCivic('hospital', hospitalsFromFeatures(pois));
     for (const stop of busStopsFromFeatures(pois)) {
-      if (this.busStops.has(stop.id)) continue;
-      if ([...this.busStops.values()].some(known => metersBetween(known.place ?? known.position, stop.position) < 25)) continue;
-      this.busStops.set(stop.id, this.placeService(stop));
+      if (this.jobs.busStops.has(stop.id)) continue;
+      if ([...this.jobs.busStops.values()].some(known => metersBetween(known.place ?? known.position, stop.position) < 25)) continue;
+      this.jobs.busStops.set(stop.id, this.placeService(stop));
     }
-    if (this.busStops.size > 400) {
-      const keep = [...this.busStops.values()].sort((a, b) => metersBetween(a.position, this.vehicle.position) - metersBetween(b.position, this.vehicle.position)).slice(0, 400);
-      this.busStops = new Map(keep.map(stop => [stop.id, stop]));
+    if (this.jobs.busStops.size > 400) {
+      const keep = [...this.jobs.busStops.values()].sort((a, b) => metersBetween(a.position, this.vehicle.position) - metersBetween(b.position, this.vehicle.position)).slice(0, 400);
+      this.jobs.busStops = new Map(keep.map(stop => [stop.id, stop]));
     }
     for (const spot of landmarksFromFeatures(pois)) {
       if (this.landmarks.has(spot.id)) continue;
@@ -4553,7 +4153,7 @@ export class GameEngine {
         }
         // impound car waits still on the pin until hooked; a crash wreck stays planted
         this.botDriver.step(now, (bot) => gridded || bot.id === this.hauler.haul?.id
-          || (bot.id === TOW_CAR_ID && this.impoundActive && this.hauler.haul?.id !== TOW_CAR_ID)
+          || (bot.id === TOW_CAR_ID && this.jobs.impoundActive && this.hauler.haul?.id !== TOW_CAR_ID)
           || isAmbulanceWreckId(bot.id));
         this.trainBlock(this.vehicle, this.altitude);
         for (const bot of this.trafficBots) {
@@ -4861,7 +4461,7 @@ export class GameEngine {
     this.pins.clear();
     this.race.removeMarkers();
     this.wanted.marker?.remove();
-    for (const pin of Object.values(this.jobPins)) pin.remove();
+    for (const pin of Object.values(this.jobs.jobPins)) pin.remove();
     this.combatLayer?.setFireHouse(null);
     this.trafficBots = this.trafficBots.filter((b) => !isAmbulanceWreckId(b.id));
     this.eventIndicatorLayer?.remove();
