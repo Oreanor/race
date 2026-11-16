@@ -81,6 +81,7 @@ import { Shops, type ShopsHost } from './economy/Shops.ts';
 import { Dealership, type DealershipHost } from './economy/Dealership.ts';
 import { Ramp, type RampHost } from './Ramp.ts';
 import { TravelDesk, type TravelHost } from './economy/TravelDesk.ts';
+import { CustomPins, type CustomPinsHost } from './hud/CustomPins.ts';
 import { Nitro } from './Nitro.ts';
 import { JobPin, makeMapLabel, makeOffscreenIndicator, newMarker, paintMissionIndicator, setPinRange, type MapMarker } from './hud/mapPins.ts';
 import { hubsFromFeatures, kilometres, nearestHub } from './Travel.ts';
@@ -102,7 +103,6 @@ import {
   ARENA_FEE,
   ARENA_PRIZE,
   CASH_BUNDLE,
-  CUSTOM_PIN_COLORS,
   ERRAND_BEACONS,
   AMBULANCE_HOSPITAL_M,
   AMBULANCE_ID,
@@ -359,6 +359,8 @@ export class GameEngine {
   };
   /** the nitro bar under the speedometer */
   private nitro = new Nitro();
+  /** the player's own pins on the M map (see CustomPins) */
+  private pins = new CustomPins(this.pinsHost());
   /** ports, airports and railway stations: a ticket to any city (see TravelDesk) */
   readonly travel = new TravelDesk(this.travelHost());
   /** J: the ramp we put down (see Ramp) */
@@ -394,15 +396,6 @@ export class GameEngine {
   private focusIndicator: { element: HTMLElement; arrow: HTMLElement; title: HTMLElement; distance: HTMLElement } | null = null;
   private missionTypeIndicators = new Map<MissionKind, NonNullable<GameEngine['focusIndicator']>>();
   private raceGoalIndicator: { element: HTMLElement; arrow: HTMLElement; title: HTMLElement; distance: HTMLElement } | null = null;
-  /** Player pins on the M-map (up to 3), each tracked like a mission target. */
-  private customPins: Array<{
-    id: string;
-    position: [number, number];
-    color: (typeof CUSTOM_PIN_COLORS)[number];
-    marker: MapMarker;
-    indicator: { element: HTMLElement; arrow: HTMLElement; title: HTMLElement; distance: HTMLElement };
-  }> = [];
-  private customPinSeq = 0;
   onEventOffer: (offer: EventOffer | null) => void = () => {};
   onEventResult: (result: EventResult | null) => void = () => {};
   /** fuel gauge data, ~10 times a second */
@@ -673,7 +666,7 @@ export class GameEngine {
       this.map.on('click', (e) => {
         const lngLat = e.lngLat as { lng: number; lat: number };
         if (!this.driving && this.mapShown) this.setSpawnFromClick(lngLat);
-        else if (this.mapInspecting()) this.placeCustomPin([lngLat.lng, lngLat.lat]);
+        else if (this.mapInspecting()) this.pins.place([lngLat.lng, lngLat.lat]);
       });
     });
     const listen = (target: EventTarget, event: string, fn: EventListener, options?: AddEventListenerOptions) => {
@@ -891,6 +884,17 @@ export class GameEngine {
     this.nitro.tick(dt, this.keys.has('Space'), !this.fuel.empty);
   }
 
+  /** The player pins' window on the game. */
+  private pinsHost(): CustomPinsHost {
+    const game = this;
+    return {
+      get map() { return game.map; },
+      inspecting: () => game.mapInspecting(),
+      indicatorLayer: () => game.indicatorLayer(),
+      changed: () => game.syncMissionVisuals(),
+    };
+  }
+
   /** The ticket desk's window on the game. */
   private travelHost(): TravelHost {
     const game = this;
@@ -923,6 +927,16 @@ export class GameEngine {
       get vehicle() { return game.vehicle; },
       get car() { return game.car; },
     };
+  }
+
+  /** The layer the edge arrows (off-frame goals) live in, made on first need. */
+  private indicatorLayer() {
+    if (!this.eventIndicatorLayer) {
+      this.eventIndicatorLayer = document.createElement('div');
+      this.eventIndicatorLayer.className = 'mission-indicators';
+      this.host.appendChild(this.eventIndicatorLayer);
+    }
+    return this.eventIndicatorLayer;
   }
 
   /** Some dialog is up (an event offer, a ticket, a counter, the showroom, an empty tank). */
@@ -1493,7 +1507,7 @@ export class GameEngine {
       }
     }
     if (this.driving) {
-      for (const pin of this.customPins) {
+      for (const pin of this.pins.list) {
         beacons.push({
           id: pin.id,
           position: pin.position,
@@ -2983,11 +2997,7 @@ export class GameEngine {
       tip.element.remove();
       this.errandIndicators.delete(id);
     }
-    if (wanted.size && !this.eventIndicatorLayer) {
-      this.eventIndicatorLayer = document.createElement('div');
-      this.eventIndicatorLayer.className = 'mission-indicators';
-      this.host.appendChild(this.eventIndicatorLayer);
-    }
+    if (wanted.size) this.indicatorLayer();
     for (const [id, spec] of wanted) {
       if (!this.errandMarkers.has(id)) {
         this.errandMarkers.set(id, newMarker({
@@ -2998,7 +3008,7 @@ export class GameEngine {
       if (!this.errandIndicators.has(id) && this.eventIndicatorLayer) {
         const tip = makeOffscreenIndicator('focus', spec.text);
         paintMissionIndicator(tip.element, spec.kind);
-        this.eventIndicatorLayer.appendChild(tip.element);
+        this.indicatorLayer().appendChild(tip.element);
         this.errandIndicators.set(id, tip);
       }
     }
@@ -3066,12 +3076,7 @@ export class GameEngine {
     this.ensureRaceGoalMarker();
     if (this.focusIndicator) this.focusIndicator.element.setAttribute('aria-label', t('marker.target'));
     this.selfMarker?.getElement().setAttribute('aria-label', t('you'));
-    for (const pin of this.customPins) {
-      const text = t('marker.pin');
-      const span = pin.marker.getElement()?.querySelector('.map-pin-label');
-      if (span) span.textContent = text;
-      pin.marker.getElement()?.setAttribute('aria-label', text);
-    }
+    this.pins.relabel();
     this.syncMissionVisuals();
     this.updateEventMarkers();
   }
@@ -3081,113 +3086,8 @@ export class GameEngine {
     setPinRange(marker, this.vehicle.position, target, show && !this.mapInspecting());
   }
 
-  private nextCustomPinColor() {
-    const used = new Set(this.customPins.map(pin => pin.color.main));
-    return CUSTOM_PIN_COLORS.find(color => !used.has(color.main)) ?? null;
-  }
-
-  private placeCustomPin(position: [number, number]) {
-    if (this.customPins.length >= CUSTOM_PIN_COLORS.length) return;
-    const color = this.nextCustomPinColor();
-    if (!color) return;
-    if (!this.eventIndicatorLayer) {
-      this.eventIndicatorLayer = document.createElement('div');
-      this.eventIndicatorLayer.className = 'mission-indicators';
-      this.host.appendChild(this.eventIndicatorLayer);
-    }
-    const id = `pin-${++this.customPinSeq}`;
-    const label = t('marker.pin');
-    const element = makeMapLabel('custom-map-marker', label, label, { main: color.main, soft: color.soft });
-    element.style.pointerEvents = 'auto';
-    const marker = newMarker({ element, anchor: 'bottom' }).setLngLat(position).addTo(this.map);
-    const indicator = makeOffscreenIndicator('focus', label);
-    indicator.element.classList.replace('mission-focus-indicator', 'custom-pin-indicator');
-    indicator.element.style.setProperty('--pin-color', color.main);
-    indicator.element.style.setProperty('--pin-soft', color.soft);
-    indicator.element.style.setProperty('--mission-color', color.main);
-    indicator.element.style.setProperty('--mission-soft', color.soft);
-    this.eventIndicatorLayer.appendChild(indicator.element);
-    const pin = { id, position: [...position] as [number, number], color, marker, indicator };
-    this.customPins.push(pin);
-    this.bindCustomPinDrag(pin, element);
-    this.syncMissionVisuals();
-  }
-
-  /** Drag moves the pin; a short click without drag removes it. */
-  private bindCustomPinDrag(
-    pin: { id: string; position: [number, number]; marker: MapMarker },
-    element: HTMLElement,
-  ) {
-    let drag: { pointerId: number; x: number; y: number; moved: boolean } | null = null;
-    const pointOnMap = (e: PointerEvent): [number, number] => {
-      const rect = this.map.getCanvas().getBoundingClientRect();
-      const hit = this.map.unproject({ x: e.clientX - rect.left, y: e.clientY - rect.top });
-      return [hit.lng, hit.lat];
-    };
-    element.addEventListener('pointerdown', (e) => {
-      if (e.button !== 0 || !this.mapInspecting()) return;
-      e.stopPropagation();
-      e.preventDefault();
-      drag = { pointerId: e.pointerId, x: e.clientX, y: e.clientY, moved: false };
-      element.classList.add('is-dragging');
-      try { element.setPointerCapture(e.pointerId); } catch { /* older engines */ }
-    });
-    element.addEventListener('pointermove', (e) => {
-      if (!drag || e.pointerId !== drag.pointerId) return;
-      if (!drag.moved && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) > 4) drag.moved = true;
-      if (!drag.moved) return;
-      const next = pointOnMap(e);
-      pin.position[0] = next[0];
-      pin.position[1] = next[1];
-      pin.marker.setLngLat(next);
-      this.syncMissionVisuals();
-    });
-    const endDrag = (e: PointerEvent) => {
-      if (!drag || e.pointerId !== drag.pointerId) return;
-      const moved = drag.moved;
-      drag = null;
-      element.classList.remove('is-dragging');
-      try { element.releasePointerCapture(e.pointerId); } catch { /* already released */ }
-      if (!moved) this.removeCustomPin(pin.id);
-      else this.syncMissionVisuals();
-    };
-    element.addEventListener('pointerup', endDrag);
-    element.addEventListener('pointercancel', endDrag);
-  }
-
-  private removeCustomPin(id: string) {
-    const index = this.customPins.findIndex(pin => pin.id === id);
-    if (index < 0) return;
-    const [pin] = this.customPins.splice(index, 1);
-    pin.marker.remove();
-    pin.indicator.element.remove();
-    this.syncMissionVisuals();
-  }
-
-  private clearCustomPins() {
-    if (!this.customPins.length) return;
-    for (const pin of this.customPins) {
-      pin.marker.remove();
-      pin.indicator.element.remove();
-    }
-    this.customPins = [];
-    this.syncMissionVisuals();
-  }
-
-  private syncCustomPinPointers() {
-    const on = this.mapInspecting();
-    for (const pin of this.customPins) {
-      const el = pin.marker.getElement();
-      if (el) el.style.pointerEvents = on ? 'auto' : 'none';
-    }
-  }
-
   private ensureEventMarkers() {
-    if (!this.eventIndicatorLayer) {
-      this.eventIndicatorLayer = document.createElement('div');
-      this.eventIndicatorLayer.className = 'mission-indicators';
-      this.host.appendChild(this.eventIndicatorLayer);
-    }
+    this.indicatorLayer();
     const roaming = this.mode === 'roam' && this.driving && !this.onMission();
     const active = new Set(this.missions.map(mission => mission.id));
     for (const [id, marker] of this.missionMarkers) {
@@ -3218,7 +3118,7 @@ export class GameEngine {
     }
     if (!this.focusIndicator) {
       this.focusIndicator = makeOffscreenIndicator('focus', t('marker.target'));
-      this.eventIndicatorLayer.appendChild(this.focusIndicator.element);
+      this.indicatorLayer().appendChild(this.focusIndicator.element);
     }
   }
 
@@ -3231,11 +3131,7 @@ export class GameEngine {
       if (this.raceGoalIndicator) this.raceGoalIndicator.element.style.display = 'none';
       return;
     }
-    if (!this.eventIndicatorLayer) {
-      this.eventIndicatorLayer = document.createElement('div');
-      this.eventIndicatorLayer.className = 'mission-indicators';
-      this.host.appendChild(this.eventIndicatorLayer);
-    }
+    this.indicatorLayer();
     if (!this.raceGoalMarker) {
       this.raceGoalMarker = newMarker({
         element: makeMapLabel('race-finish-marker', t('marker.finish'), t('marker.finishRace'), MISSION_COLORS.finish),
@@ -3268,7 +3164,7 @@ export class GameEngine {
     if (!this.raceGoalIndicator) {
       const made = makeOffscreenIndicator('finish', t('marker.finish'));
       this.raceGoalIndicator = made;
-      this.eventIndicatorLayer.appendChild(this.raceGoalIndicator.element);
+      this.indicatorLayer().appendChild(this.raceGoalIndicator.element);
     }
   }
 
@@ -3880,16 +3776,12 @@ export class GameEngine {
       if (this.bountyIndicator) this.bountyIndicator.element.style.display = 'none';
       return;
     }
-    if (!this.eventIndicatorLayer) {
-      this.eventIndicatorLayer = document.createElement('div');
-      this.eventIndicatorLayer.className = 'mission-indicators';
-      this.host.appendChild(this.eventIndicatorLayer);
-    }
+    this.indicatorLayer();
     if (!this.bountyIndicator) {
       this.bountyIndicator = makeOffscreenIndicator('focus', '');
       this.bountyIndicator.element.classList.replace('mission-focus-indicator', 'bounty-indicator');
       paintMissionIndicator(this.bountyIndicator.element, 'bounty');
-      this.eventIndicatorLayer.appendChild(this.bountyIndicator.element);
+      this.indicatorLayer().appendChild(this.bountyIndicator.element);
     }
     const bot = this.trafficBots[0];
     const near = bot?.position ?? null;
@@ -3987,7 +3879,7 @@ export class GameEngine {
       if (!tip && mission && this.eventIndicatorLayer) {
         tip = makeOffscreenIndicator('focus', mission.label);
         paintMissionIndicator(tip.element, kind);
-        this.eventIndicatorLayer.appendChild(tip.element);
+        this.indicatorLayer().appendChild(tip.element);
         this.missionTypeIndicators.set(kind, tip);
       }
       this.updateOffscreenMarker(tip ?? null, mission?.position ?? null, roaming && !this.onMission(), mission?.label);
@@ -3995,12 +3887,8 @@ export class GameEngine {
     for (const [kind, tip] of this.missionTypeIndicators) if (!this.missionKinds().includes(kind)) tip.element.style.display = 'none';
     if (!this.focusIndicator && roaming && focused) {
       this.focusIndicator = makeOffscreenIndicator('focus', t('marker.target'));
-      if (!this.eventIndicatorLayer) {
-        this.eventIndicatorLayer = document.createElement('div');
-        this.eventIndicatorLayer.className = 'mission-indicators';
-        this.host.appendChild(this.eventIndicatorLayer);
-      }
-      this.eventIndicatorLayer.appendChild(this.focusIndicator.element);
+      this.indicatorLayer();
+      this.indicatorLayer().appendChild(this.focusIndicator.element);
     }
     if (this.focusIndicator && focused) paintMissionIndicator(this.focusIndicator.element, focused.color);
     this.updateOffscreenMarker(
@@ -4022,8 +3910,8 @@ export class GameEngine {
     for (const [id, tip] of this.errandIndicators) {
       if (!errandPins.some((pin) => pin.id === id)) tip.element.style.display = 'none';
     }
-    this.syncCustomPinPointers();
-    for (const pin of this.customPins) {
+    this.pins.syncPointers();
+    for (const pin of this.pins.list) {
       this.updateOffscreenMarker(pin.indicator, pin.position, this.driving, t('marker.pin'));
       this.setMapPinRange(pin.marker, pin.position, this.driving);
     }
@@ -5506,7 +5394,7 @@ export class GameEngine {
     this.spawnMarker?.remove();
     for (const marker of this.missionMarkers.values()) marker.remove();
     this.missionMarkers.clear();
-    this.clearCustomPins();
+    this.pins.clear();
     this.raceGoalMarker?.remove();
     this.bountyMarker?.remove();
     for (const marker of this.raceCheckpointMarkers.values()) marker.remove();
