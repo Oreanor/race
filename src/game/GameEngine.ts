@@ -4066,9 +4066,10 @@ export class GameEngine {
         .setLngLat(this.raceGoal)
         .addTo(this.map);
     } else this.raceGoalMarker.setLngLat(this.raceGoal);
-    const el = this.raceGoalMarker.getElement();
-    if (el) el.style.display = this.mode === 'race' ? '' : 'none';
     const passed = this.raceProgress?.passed('player') ?? 0;
+    const finishVisible = this.mode === 'race' && Boolean(this.raceCourse) && passed >= (this.raceCourse?.checkpoints.length ?? 0);
+    const el = this.raceGoalMarker.getElement();
+    if (el) el.style.display = finishVisible ? '' : 'none';
     this.raceCourse?.checkpoints.forEach((position, index) => {
       const label = t('race.checkpoint', { n: index + 1, total: this.raceCourse!.checkpoints.length });
       let marker = this.raceCheckpointMarkers.get(index);
@@ -4931,7 +4932,7 @@ export class GameEngine {
       }
       this.setMapPinRange(marker, mission.position, pinRange);
     }
-    this.setMapPinRange(this.raceGoalMarker, this.raceGoal, pinRange && this.mode === 'race');
+    this.setMapPinRange(this.raceGoalMarker, this.raceGoal, pinRange && this.mode === 'race' && (this.raceProgress?.passed('player') ?? 0) >= (this.raceCourse?.checkpoints.length ?? 0));
     if (this.raceCourse) for (const [index, marker] of this.raceCheckpointMarkers) {
       this.setMapPinRange(marker, this.raceCourse.checkpoints[index], pinRange && this.mode === 'race');
     }
