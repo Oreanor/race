@@ -564,14 +564,14 @@ export class WorldParticles {
       ? (options.surface === 'sand' ? [0.32, 0.24, 0.14] : [0.08, 0.05, 0.025])
       : [0.32, 0.31, 0.29];
     if (soil) {
-      // 5-10 big clods flung out sharply to the sides, landing metres away: nothing else
+      // 5-10 big clods dart half a metre to the sides and vanish: nothing else
       const clods = Math.round(rand(5, 10) * s);
       for (let i = 0; i < clods; i++) {
-        const angle = rand(0, Math.PI * 2), kick = rand(9, 15);
+        const angle = rand(0, Math.PI * 2), kick = rand(4.5, 6.5);
         this.add(here, { e: at.e, n: at.n, u: at.u + 0.05 }, {
           kind: 'grit', tint: [tint[0] * rand(0.75, 1.1), tint[1] * rand(0.75, 1.1), tint[2] * rand(0.75, 1.1)],
-          ve: Math.cos(angle) * kick, vn: Math.sin(angle) * kick, vu: rand(1.5, 3),
-          life: rand(600, 850), size0: rand(0.22, 0.34), size1: rand(0.18, 0.28), drag: 0.6, gravity: 9.8, stretch: 0,
+          ve: Math.cos(angle) * kick, vn: Math.sin(angle) * kick, vu: rand(0.5, 1.5),
+          life: rand(90, 130), size0: rand(0.22, 0.34), size1: rand(0.2, 0.3), drag: 0, gravity: 0, stretch: 0,
         }, now);
       }
       // and that is all: no puff
