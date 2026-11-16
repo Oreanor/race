@@ -734,7 +734,7 @@ export class ThreeMap {
 
   private addHole(at: [number, number], altitude: number, normal: [number, number, number]) {
     // its own size, kept for good (from its index it changed on every shot once the oldest went)
-    this.holes.push({ at: [...at], altitude, normal, size: 0.8 + Math.floor(Math.random() * 5) * 0.1 });
+    this.holes.push({ at: [...at], altitude, normal, size: 0.8 + Math.random() * 0.2 });
     if (this.holes.length > MAX_HOLES) this.holes.shift(); // the oldest hole goes
     if (Math.abs(normal[1]) < 0.5) this.addBrokenPane(at, altitude);
     this.holesDirty = true;
@@ -784,7 +784,7 @@ export class ThreeMap {
       q.setFromUnitVectors(z, n);
       // a mark in the ground is a small crater, and it is seen at a grazing angle: at the
       // wall size it shrank to a pixel and most shots into the ground seemed to leave none
-      const grazing = Math.abs(h.normal[1]) > 0.5 ? 2.2 : 1;
+      const grazing = Math.abs(h.normal[1]) > 0.5 ? 1.8 : 1;
       m.compose(p, q, one.setScalar(h.size * grazing));
       this.holeMesh.setMatrixAt(i, m);
     });
