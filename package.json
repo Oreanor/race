@@ -19,7 +19,7 @@
     "@mapbox/vector-tile": "^3.0.0",
     "@photostructure/tz-lookup": "^11.7.0",
     "earcut": "^3.2.4",
-    "next": "^16.0.0",
+    "next": "^16.4.6",
     "pbf": "^5.1.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
