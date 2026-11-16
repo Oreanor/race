@@ -79,6 +79,7 @@ import { MissionBotDriver, type BotDriverHost } from './traffic/MissionBots.ts';
 import { Shops, type ShopsHost } from './economy/Shops.ts';
 import { Dealership, type DealershipHost } from './economy/Dealership.ts';
 import { Ramp, type RampHost } from './Ramp.ts';
+import { Combat } from './Combat.ts';
 import { Places } from './world/Places.ts';
 import { Missions } from './events/Missions.ts';
 import { Coins } from './Coins.ts';
@@ -216,7 +217,7 @@ export class GameEngine {
   private defaultSpawn: { position: [number, number]; heading: number } | null = null;
   private customSpawn: { position: [number, number]; heading: number } | null = null;
   onSpawnSet: (position: [number, number] | null) => void = () => {};
-  private host: HTMLElement;
+  host: HTMLElement;
   private mapShown = false;
   private bootAt = 0;
   private groundHits = 0;
@@ -267,22 +268,17 @@ export class GameEngine {
   private aimScreen: [number, number] | null = null;
   trafficBots: TrafficBot[] = [];
   /** reused by targetVehicles() so the chase tick doesn't allocate every frame */
-  private targetScratch: TargetVehicle[] = [];
+  targetScratch: TargetVehicle[] = [];
   trafficNetwork = new TrafficRoadNetwork();
   /** light traffic shared with the players around */
-  private sharedTraffic!: SharedTraffic;
-  vehicleContactTimes = new Map<string, number>();
-  private trafficMarkerLayer: HTMLElement | null = null;
-  private trafficMarkers = new Map<string, { element: HTMLElement; arrow: HTMLElement; name: HTMLElement; distance: HTMLElement }>();
-  /** health bars over the cars on screen */
-  private healthMeters!: HealthMeters;
+  sharedTraffic!: SharedTraffic;
   mode: 'roam' | 'arena' | 'race' = 'roam';
   lastCompletedAt: [number, number] | null = null;
   eventOffer: MissionKind | null = null;
   /** bounty hunt: the active job (kept across trips), the offer on screen, the fight */
   /** local pin where you drive to take a pending wanted job */
   // ---- multiplayer: other players in the same world (net/NetPlayers)
-  private players!: NetPlayers;
+  players!: NetPlayers;
   /** our police car's lights (F) */
   /** our police lights (F): off by default */
   private beaconsOn = false;
@@ -298,6 +294,8 @@ export class GameEngine {
   readonly board: Missions = new Missions(this);
   /** The places on the map from the real data: fuel stations, car services, dealerships, banks (see Places) */
   readonly places: Places = new Places(this);
+  /** Cars against cars: who is a target, bumps and rams between them, the hunters' guns, damage (see Combat) */
+  readonly combat: Combat = new Combat(this);
   /** the game as its parts see it (see context) */
   private ctx = this.context();
   /** the nitro bar under the speedometer */
@@ -333,7 +331,6 @@ export class GameEngine {
   eventCooldown = 0;
   playerHp = 1000;
   readonly playerMaxHp = 1000;
-  private wins = new Map<string, number>();
   eventIndicatorLayer: HTMLElement | null = null;
   onEventOffer: (offer: EventOffer | null) => void = () => {};
   onEventResult: (result: EventResult | null) => void = () => {};
@@ -454,7 +451,7 @@ export class GameEngine {
     this.vehicle = new VehicleController(startAt?.position ?? city.coords, startAt ? startAt.heading * 180 / Math.PI : city.heading);
     // S: stop first, a second press backs up
     this.vehicle.stopBeforeReverse = true;
-    this.healthMeters = new HealthMeters(el);
+    this.combat.healthMeters = new HealthMeters(el);
     const engine = this;
     this.players = new NetPlayers({
       host: el,
@@ -471,9 +468,9 @@ export class GameEngine {
       online: (list) => this.onOnline(list),
       chat: (line) => this.onChat(line),
       notice: (notice) => this.onNetNotice(notice),
-      hitBy: (name, damage) => this.hitByPlayer(name, damage),
+      hitBy: (name, damage) => this.combat.hitByPlayer(name, damage),
       hp: () => this.playerHp,
-      bumped: (damage) => this.damagePlayer(damage, 180),
+      bumped: (damage) => this.combat.damagePlayer(damage, 180),
       news: (text) => this.say(text, true),
       traffic: (from, cars) => this.sharedTraffic.receive(from, cars),
       trafficHit: (id) => this.sharedTraffic.hitByOther(id),
@@ -493,7 +490,7 @@ export class GameEngine {
         .filter((bot) => bot.id.startsWith('police') && this.combatLayer?.isTargetAlive(bot.id) !== false)
         .map((bot) => ({ id: bot.id, car: bot.car.id, p: bot.position, h: bot.heading, s: bot.controller.speed, hp: Math.round(this.combatLayer?.targetHp(bot.id) ?? 1000) })) : [],
       hitExtra: (id) => { this.combatLayer?.damageTarget(id, HIT_DAMAGE); },
-      provoke: (id) => this.provoke(id),
+      provoke: (id) => this.combat.provoke(id),
       canPark: (at, heading) => !this.collisions.blocked(at, at, heading) && !this.water.covers(at, this.onBridgeDeck(at, this.altitude)),
       hitWalls: (from, to, heading) => this.collisions.resolve(from, to, heading),
       lots: () => [...this.places.parkingLots.values()].filter((lot) => metersBetween(lot, this.vehicle.position) < 600),
@@ -564,7 +561,7 @@ export class GameEngine {
       );
       this.combatLayer.onRemoteHit = (id) => this.players.shot(id);
       this.combatLayer.onTargetHit = (id) => {
-        this.provoke(id);
+        this.combat.provoke(id);
         this.sharedTraffic.ourHit(id);
       };
       this.combatLayer.onTrainCoin = (point, altitude) => this.coins.trainCoin(point, altitude);
@@ -772,7 +769,7 @@ export class GameEngine {
     });
   }
 
-  private placeTargetIndicator(marker: { element: HTMLElement; arrow: HTMLElement; distance: HTMLElement }, target: [number, number], pinMeters = MARKER_PIN_METERS) {
+  placeTargetIndicator(marker: { element: HTMLElement; arrow: HTMLElement; distance: HTMLElement }, target: [number, number], pinMeters = MARKER_PIN_METERS) {
     placeIndicator(this.map, marker, this.vehicle.position, target, pinMeters, this.mapInspecting());
   }
 
@@ -835,7 +832,7 @@ export class GameEngine {
       set trafficBots(bots) { game.trafficBots = bots; },
       say: (text, toast) => game.say(text, toast),
       fall: () => { game.airborne = true; game.climb = 0; },
-      refreshTargets: () => game.combatLayer?.setTargets(game.targetVehicles()),
+      refreshTargets: () => game.combatLayer?.setTargets(game.combat.targetVehicles()),
       get mode() { return game.mode; },
       set mode(mode) { game.mode = mode; },
       get bountyFight() { return game.wanted.fight; },
@@ -857,8 +854,8 @@ export class GameEngine {
       get trafficNetwork() { return game.trafficNetwork; },
       nextDropId: () => game.coins.dropSerial++,
       refreshPickups: () => game.combatLayer?.setPickups(game.coins.pickupVisuals()),
-      botsChanged: () => { game.ensureTrafficMarkers(); game.combatLayer?.setTargets(game.targetVehicles()); },
-      forgetContacts: () => game.vehicleContactTimes.clear(),
+      botsChanged: () => { game.combat.ensureTrafficMarkers(); game.combatLayer?.setTargets(game.combat.targetVehicles()); },
+      forgetContacts: () => game.combat.vehicleContactTimes.clear(),
       hideEventBeacons: () => game.board.hideEventBeacons(),
       showEventBeacons: () => game.board.showEventBeacons(),
       clearEventBots: () => game.clearEventBots(),
@@ -893,7 +890,7 @@ export class GameEngine {
       get disposed() { return game.disposed; },
       rivalCars: (n) => game.rivalCars(n),
       forgetBot: (id) => game.botDriver.forget(id),
-      addWin: (id) => game.addWin(id),
+      addWin: (id) => game.combat.addWin(id),
       completeActiveMission: () => game.board.completeActiveMission(),
       syncMissionVisuals: (showWorld) => game.board.syncMissionVisuals(showWorld),
       onEventOffer: (offer) => game.onEventOffer(offer),
@@ -919,7 +916,7 @@ export class GameEngine {
   isTaxi(id = this.car.id) { return id === TAXI_ID; }
   isAmbulance(id = this.car.id) { return id === AMBULANCE_ID; }
   /** Parked mission props (crash wreck / tow wait) — not racers, no roster / HP / chase arrow. */
-  private isPropBot(id: string) { return isAmbulanceWreckId(id) || id === TOW_CAR_ID; }
+  isPropBot(id: string) { return isAmbulanceWreckId(id) || id === TOW_CAR_ID; }
   isBus(id = this.car.id) { return id === BUS_ID; }
   carShoots(id = this.car.id) { return carShootsGuns(id); }
 
@@ -1052,7 +1049,7 @@ export class GameEngine {
     this.eventOffer = null;
     this.eventCooldown = 0;
     this.race.goal = null;
-    this.wins.clear();
+    this.combat.wins.clear();
     this.clearEventBots();
     this.coins.pickups.clear();
     this.combatLayer?.setPickups([]);
@@ -1086,9 +1083,9 @@ export class GameEngine {
     const roads = this.map.features('transportation') as MapFeature[];
     this.trafficNetwork.addFeatures(roads);
     this.trafficNetwork.flushRebuild();
-    this.vehicleContactTimes.clear();
+    this.combat.vehicleContactTimes.clear();
     this.board.placeEventBeacons();
-    this.ensureTrafficMarkers();
+    this.combat.ensureTrafficMarkers();
     this.combatLayer?.setTargets([]);
     this.combatLayer?.setRaceFinish(null);
     this.coins.syncRoadPickups();
@@ -1174,11 +1171,11 @@ export class GameEngine {
   clearEventBots() {
     this.race.clear();
     this.trafficBots = [];
-    this.hunterGuns.clear();
+    this.combat.hunterGuns.clear();
     this.crime.policeFar.clear();
     this.botDriver.forget();
     this.combatLayer?.setTargets([]);
-    this.ensureTrafficMarkers();
+    this.combat.ensureTrafficMarkers();
   }
 
   pickBeaconSpot(
@@ -1231,178 +1228,14 @@ export class GameEngine {
   }
 
   /** parked cars to shoot at (?testcars=N) */
-  private testCars = new TestTargets((from, at, heading) => {
+  testCars = new TestTargets((from, at, heading) => {
     if (this.collisions.blocked(from, at, heading, 1, this.altitude) || this.water.resolve(from, at, heading, 1, this.onBridgeDeck(at, this.altitude)).stopped) return false;
     // on the same surface as us (not the river beside a bridge, not a roof)
     const ground = this.map.groundAt(at, this.altitude);
     return ground != null && Math.abs(ground - this.altitude) <= 2;
   });
 
-  /** Shared traffic and test cars: targets beside the missions', every frame. */
-  private syncExtraTargets(dt: number, now: number) {
-    const layer = this.combatLayer;
-    if (!layer) return;
-    const tests = this.testCars.update(now, this.driving, this.vehicle, (id) => layer.isTargetAlive(id));
-    layer.setExtraTargets([...this.sharedTraffic.update(dt, now), ...tests]);
-  }
-
-  targetVehicles() {
-    // reuse objects — VehicleLayer only reads id/position/heading each frame
-    const out = this.targetScratch;
-    out.length = this.trafficBots.length;
-    for (let i = 0; i < this.trafficBots.length; i++) {
-      const bot = this.trafficBots[i];
-      const row = out[i] ?? (out[i] = { id: '', driver: '', car: bot.car, position: bot.position, heading: 0 });
-      row.id = bot.id;
-      row.driver = bot.driver;
-      row.car = bot.car;
-      row.position = bot.position;
-      row.heading = bot.heading;
-    }
-    return out;
-  }
-
-  private resolveVehicleContacts(now: number) {
-    // movers vs movers + movers vs parked — never parked×parked (O(n²) waste on kerb props)
-    type Body = { id: string; controller: VehicleController; car: Car };
-    const haulId = this.hauler.haul?.id;
-    const movers: Body[] = [
-      { id: 'player', controller: this.vehicle, car: this.car },
-      ...this.sharedTraffic.drivenBodies(),
-      ...this.trafficBots
-        .filter(bot => !this.combatLayer || this.combatLayer.isTargetAlive(bot.id))
-        .map(bot => ({ id: bot.id, controller: bot.controller, car: bot.car })),
-    ].filter(participant => participant.id !== haulId);
-    const parked: Body[] = this.sharedTraffic.parkedBodies().filter(p => p.id !== haulId);
-
-    const applyPosition = (participant: Body, next: [number, number]) => {
-      const { controller } = participant;
-      if (next === controller.position
-        || this.collisions.blocked(controller.position, next, controller.heading, 1, participant.id === 'player' ? this.altitude : -Infinity)) return;
-      const alt = participant.id === 'player' ? this.altitude : (this.map.groundAt(controller.position) ?? this.altitude);
-      const water = this.water.resolve(controller.position, next, controller.heading, 1, this.onBridgeDeck(controller.position, alt));
-      if (!water.stopped) controller.position = water.position;
-    };
-
-    const pair = (a: Body, b: Body) => {
-      // cheap reject before SAT — most parked cars are hundreds of metres away
-      const reach = (a.car.length + b.car.length) * 0.85;
-      if (metersBetween(a.controller.position, b.controller.position) > reach) return;
-      const collision = resolveVehicleCollision({
-        position: a.controller.position,
-        heading: a.controller.heading,
-        speed: a.controller.speed,
-        length: a.car.length,
-      }, {
-        position: b.controller.position,
-        heading: b.controller.heading,
-        speed: b.controller.speed,
-        length: b.car.length,
-      });
-      if (!collision) return;
-
-      applyPosition(a, collision.a);
-      applyPosition(b, collision.b);
-      if (this.crime.heist && ((a.id === 'player' && b.id.startsWith('police')) || (b.id === 'player' && a.id.startsWith('police')))) {
-        this.crime.heist.caught = true;
-      }
-      const key = `${a.id}:${b.id}`;
-      if (now - (this.vehicleContactTimes.get(key) ?? 0) < 280) return;
-      this.vehicleContactTimes.set(key, now);
-      // every knock that flashes a car red takes health off it: the slower side takes
-      // the knock, a hunting bot ramming at speed hurts whoever it rams, and harder
-      const impact = vehicleImpact(a.controller, b.controller);
-      if (impact < 1.5) return;
-      if (a.id === 'player' || b.id === 'player') this.audio.crash(impact / 40);
-      const hunting = (id: string) => this.findBot(id)?.mood === 'hunt';
-      const ramming = (id: string) => impact > 6 && hunting(id);
-      const hurt = (victim: Body, attacker: Body, slower: boolean) => {
-        const rammed = ramming(attacker.id);
-        if (!slower && !rammed) return;
-        const amount = rammed ? Math.max(bumpDamage(impact), Math.min(55, 12 + impact * 2.2)) : bumpDamage(impact);
-        if (victim.id === 'player') this.damagePlayer(amount, 180);
-        else {
-          this.combatLayer?.damageTarget(victim.id, amount, attacker.id === 'player');
-          // we hit them — they leave the route and come after us
-          if (attacker.id === 'player') this.provoke(victim.id);
-        }
-      };
-      hurt(a, b, collision.slower === 'a' || collision.slower === 'both');
-      hurt(b, a, collision.slower === 'b' || collision.slower === 'both');
-    };
-
-    for (let i = 0; i < movers.length; i++) {
-      for (let j = i + 1; j < movers.length; j++) pair(movers[i], movers[j]);
-      for (const curb of parked) pair(movers[i], curb);
-    }
-
-    for (const bot of this.trafficBots) {
-      bot.position = [...bot.controller.position];
-      bot.heading = bot.controller.heading;
-    }
-  }
-
-  private hudParticipants(): HudParticipant[] {
-    const targetHealth = new Map((this.combatLayer?.targetHealth() ?? []).map(target => [target.id, target]));
-    return [
-      {
-        id: 'player',
-        name: this.playerName || t('you'),
-        color: '#111111',
-        hp: this.playerHp,
-        maxHp: this.playerMaxHp,
-        money: Math.floor(this.playerMoney),
-        wins: this.wins.get('player') ?? 0,
-      },
-      // other players: their health as they report it; money and wins are their own business
-      ...this.players.others().map((p) => ({
-        id: `net:${p.id}`,
-        name: p.name,
-        color: PLAYER_MARKER_COLOR,
-        hp: p.hp,
-        maxHp: PLAYER_HP,
-        money: Number.NaN,
-        wins: Number.NaN,
-      })),
-      ...this.trafficBots
-        // police chase / bounty bandit / parked mission props are not racers
-        .filter((bot) => !bot.id.startsWith('police') && bot.id !== 'wanted' && !this.isPropBot(bot.id))
-        .map((bot, index) => {
-          const target = targetHealth.get(bot.id);
-          const dead = Boolean(target && target.hp <= 0);
-          return {
-            id: bot.id,
-            name: bot.driver,
-            color: dead ? '#8b9198' : TRAFFIC_MARKER_COLORS[index % TRAFFIC_MARKER_COLORS.length],
-            hp: target?.hp ?? 1000,
-            maxHp: target?.maxHp ?? 1000,
-            money: bot.money,
-            wins: this.wins.get(bot.id) ?? 0,
-          };
-        }),
-    ];
-  }
-
-  addWin(id: string) {
-    this.wins.set(id, (this.wins.get(id) ?? 0) + 1);
-  }
-
-  /**
-   * Another player's bullet. Only while roaming (a mission is our own fight); at
-   * zero we blow up, stop dead and come back with full health. True when it got us.
-   */
-  private hitByPlayer(name: string, damage: number): boolean {
-    if (!this.driving || this.mode !== 'roam' || this.wanted.fight || this.playerHp <= 0) return false;
-    this.playerHp = Math.max(0, this.playerHp - damage);
-    this.combatLayer?.flashPlayer(160);
-    const now = performance.now();
-    if (now - this.hitNoticeAt > 3000) { this.hitNoticeAt = now; this.say(t('pvp.hit', { name })); }
-    if (this.playerHp > 0) return false;
-    this.wreck();
-    return true;
-  }
-
-  private hitNoticeAt = 0;
+  hitNoticeAt = 0;
 
   /** the camera keeps north up (compass double-click) until the player turns it */
   private northUp = false;
@@ -1428,105 +1261,6 @@ export class GameEngine {
     step();
   }
 
-  /** each hunting bot's gun: bursts while it has us in front of it */
-  private hunterGuns = new Map<string, { burstUntil: number; nextBurst: number; nextShot: number }>();
-
-  /** Mission props (tow wreck, ambulance pileup) never chase or shoot. */
-  private findBot(id: string): TrafficBot | undefined {
-    if (this.isPropBot(id)) return undefined;
-    return this.trafficBots.find((bot) => bot.id === id)
-      ?? this.sharedTraffic.bots().find((bot) => bot.id === id);
-  }
-
-  /**
-   * Shot or rammed: leave the civilian route and hunt the player. Armed cars
-   * also open fire via `updateHunterGuns`.
-   */
-  private provoke(id: string) {
-    const bot = this.findBot(id);
-    if (!bot || bot.mood === 'hunt') return;
-    bot.mood = 'hunt';
-    bot.huntId = 'player';
-    bot.huntRange = metersBetween(bot.position, this.vehicle.position);
-    bot.goal = [...this.vehicle.position] as Position;
-    bot.route = [];
-    bot.routeIndex = 1;
-    bot.repathAt = 0;
-  }
-
-  /**
-   * Hunters (arena, police, bounty, and anyone we provoked) shoot back: short
-   * bursts when we are within ~70 m, roughly ahead of them and not behind a
-   * building. Close and slow is easy to hit; far and fast mostly misses.
-   */
-  private updateHunterGuns(now: number) {
-    if (this.playerHp <= 0 || !this.combatLayer || !this.driving) return;
-    const me = this.vehicle.position;
-    const hunters = [
-      ...this.trafficBots,
-      ...this.sharedTraffic.bots(),
-    ];
-    for (const bot of hunters) {
-      if (bot.mood !== 'hunt' || !this.carShoots(bot.car.id)) continue;
-      if (!this.combatLayer.isTargetAlive(bot.id)) continue;
-      const d = metersBetween(bot.position, me);
-      if (d > 70 || d < 3) continue;
-      const toMe = Math.atan2((me[0] - bot.position[0]) * Math.cos(me[1] * Math.PI / 180), me[1] - bot.position[1]);
-      const off = Math.abs(((toMe - bot.heading) % (2 * Math.PI) + 3 * Math.PI) % (2 * Math.PI) - Math.PI);
-      if (off > 0.7) continue;
-      let gun = this.hunterGuns.get(bot.id);
-      if (!gun) { gun = { burstUntil: 0, nextBurst: now + 600 + Math.random() * 900, nextShot: 0 }; this.hunterGuns.set(bot.id, gun); }
-      if (now >= gun.nextBurst && now >= gun.burstUntil) {
-        // no shooting through houses: look once per burst, try again soon if a wall is in the way
-        if (this.collisions.sightBlocked(bot.position, me)) { gun.nextBurst = now + 400; continue; }
-        gun.burstUntil = now + 800 + Math.random() * 500;
-        gun.nextBurst = gun.burstUntil + 1100 + Math.random() * 1000;
-      }
-      if (now >= gun.burstUntil || now < gun.nextShot) continue;
-      gun.nextShot = now + 105;
-      const wanted = bot.id === 'wanted';
-      const police = bot.id.startsWith('police');
-      const chance = Math.max(0.12, Math.min(0.85, 0.8 - d / 90)) / (1 + Math.abs(this.vehicle.speed) / 30) * (police ? 1.4 : 1);
-      const hit = Math.random() < chance;
-      this.combatLayer.enemyShot(bot.id, hit);
-      if (hit) this.damagePlayer(wanted ? 11 : police ? 15 : 6);
-    }
-  }
-
-  /**
-   * Health off our car. In a fight (arena, bounty, chase) zero ends it there; anywhere
-   * else at zero we blow up, stop dead and come back with full health.
-   */
-  private damagePlayer(amount: number, flash = 220) {
-    if (!this.driving || amount <= 0 || this.playerHp <= 0) return;
-    this.playerHp = Math.max(0, this.playerHp - amount);
-    this.combatLayer?.flashPlayer(flash);
-    // a bank job ends in an arrest (updateHeist), with its own place and bill
-    if (this.playerHp > 0 || this.crime.heist) return;
-    this.wreck();
-  }
-
-  /**
-   * Our car blew up: the mission we were on is lost, and we come to at the nearest
-   * hospital or filling station, whichever is closer, with the bill for it.
-   */
-  private wreck() {
-    this.combatLayer?.explodePlayer();
-    this.audio.explosion(null);
-    this.hauler.release(null);
-    const failed = this.board.failMission();
-    this.playerHp = this.playerMaxHp;
-    const drop = this.nearestRescue();
-    const kind = drop?.kind ?? 'here';
-    const fine = WRECK_COSTS[kind];
-    this.playerMoney = Math.max(0, this.playerMoney - fine);
-    const wreckSpot = drop ? drop.position : this.nearbyRoadSpot();
-    if (wreckSpot && this.mapLoaded) this.placeCarAt(wreckSpot);
-    else { this.vehicle.speed = 0; this.vehicle.throttle = 0; }
-    const bill = t(`wreck.${kind}`, { fine: formatNumber(fine) });
-    this.say(failed ? `${t('mission.failed')} · ${bill}` : bill, true);
-  }
-
   /** Is the ground round this arrival point already loaded (no wait to land there)? */
   private arrivalReady(position: Position) {
     return this.map.areTilesLoadedAround(position as [number, number], ARRIVAL_M);
@@ -1547,12 +1281,12 @@ export class GameEngine {
   }
 
   /** A free spot on a loaded road near us, for when no fitting place is loaded: no wait. */
-  private nearbyRoadSpot(): Position | null {
+  nearbyRoadSpot(): Position | null {
     return this.findFreeRoad(this.vehicle.position, 800)?.position ?? null;
   }
 
   /** The closest hospital or filling station to us (of those already loaded, if any). */
-  private nearestRescue(): { kind: 'hospital' | 'station'; position: Position } | null {
+  nearestRescue(): { kind: 'hospital' | 'station'; position: Position } | null {
     const places: { kind: 'hospital' | 'station'; position: Position }[] = [];
     const consider = (kind: 'hospital' | 'station', position: Position) => { places.push({ kind, position }); };
     for (const civic of this.places.civics.values()) if (civic.kind === 'hospital') consider('hospital', civic.position);
@@ -1561,7 +1295,7 @@ export class GameEngine {
   }
 
   /** Our car, standing still on the road nearest `position` (or right on it). */
-  private placeCarAt(position: Position, after?: () => void) {
+  placeCarAt(position: Position, after?: () => void) {
     if (this.transfer.pending) return;
     const commit = () => { this.commitCarPlacement(position); after?.(); };
     // Only the ground under the arrival has to be in (its tile and the ones touching ARRIVAL_M
@@ -1651,7 +1385,7 @@ export class GameEngine {
    * Bridge water exemptions only apply up here — must be true as soon as XY is on
    * the deck ribbon at deck height, or the water edge walls off the on-ramp.
    */
-  private onBridgeDeck(at: Position, altitude: number) {
+  onBridgeDeck(at: Position, altitude: number) {
     return this.map.isDeckAt(at, altitude);
   }
 
@@ -1706,33 +1440,6 @@ export class GameEngine {
       [pool[i], pool[j]] = [pool[j], pool[i]];
     }
     return Array.from({ length: n }, (_, i) => pool[i % pool.length] ?? carsConfig[0]);
-  }
-
-  /** Everybody with a health meter over the car: us, mission bots, other players, shared traffic and test cars. */
-  private meterTargets(): Meter[] {
-    const layer = this.combatLayer;
-    const out: Meter[] = [{ id: 'player', name: t('you'), hp: this.playerHp, maxHp: this.playerMaxHp, position: this.renderVehicle.position }];
-    // named cars carry their name above the bar, in their marker's colour
-    for (const p of this.players.others()) out.push({ id: `net:${p.id}`, name: p.name, hp: p.hp, maxHp: PLAYER_HP, position: p.position, color: PLAYER_MARKER_COLOR });
-    const health = new Map((layer?.targetHealth() ?? []).map((h) => [h.id, h]));
-    this.trafficBots.forEach((bot, index) => {
-      if (this.isPropBot(bot.id)) return;
-      if (layer && !layer.isTargetAlive(bot.id)) return;
-      const h = health.get(bot.id);
-      out.push({ id: bot.id, name: bot.driver, hp: h?.hp ?? 1000, maxHp: h?.maxHp ?? 1000, position: bot.position, color: TRAFFIC_MARKER_COLORS[index % TRAFFIC_MARKER_COLORS.length] });
-    });
-    for (const e of layer?.extraHealth() ?? []) {
-      if (e.id.includes(':k') && e.hp >= e.maxHp) continue; // a parked car shows no meter until it is hit
-      out.push({ id: e.id, name: e.driver, hp: e.hp, maxHp: e.maxHp, position: e.position });
-    }
-    return out;
-  }
-
-  private updateHealthMarkers(refill = true) {
-    // M map: no floating HP bars (they read as green stripes over every car / traffic).
-    if (!this.driving || this.mapInspecting()) { this.healthMeters.hide(); return; }
-    const canvas = this.map.getCanvas();
-    this.healthMeters.update(this.meterTargets(), (p) => this.map.project(p), canvas.clientWidth, canvas.clientHeight, refill);
   }
 
   /** Train cars near `around` as flat capsules in metres east/north of it, with their ground height. */
@@ -1811,59 +1518,12 @@ export class GameEngine {
   chat(text: string) { this.players.say(text); }
 
   /** our name on the roster and in multiplayer */
-  private playerName = '';
+  playerName = '';
 
   /** Join the shared world under this name (again: just a rename). */
   joinNetwork(name: string) {
     this.playerName = name.trim();
     this.players.join(this.playerName);
-  }
-
-  ensureTrafficMarkers() {
-    if (!this.trafficMarkerLayer) {
-      this.trafficMarkerLayer = document.createElement('div');
-      this.trafficMarkerLayer.className = 'traffic-indicators';
-      this.host.appendChild(this.trafficMarkerLayer);
-    }
-    const markerLayer = this.trafficMarkerLayer;
-    const active = new Set(
-      this.trafficBots.filter((bot) => bot.id !== 'wanted' && !this.isPropBot(bot.id)).map((bot) => bot.id),
-    );
-    for (const [id, marker] of this.trafficMarkers) {
-      if (active.has(id)) continue;
-      marker.element.remove();
-      this.trafficMarkers.delete(id);
-    }
-    this.trafficBots.forEach((bot, index) => {
-      // bounty bandit: chase arrow is bounty-indicator only (no second name tag)
-      if (bot.id === 'wanted' || this.isPropBot(bot.id)) return;
-      if (this.trafficMarkers.has(bot.id)) return;
-      const marker = nameIndicator('traffic-indicator', TRAFFIC_MARKER_COLORS[index % TRAFFIC_MARKER_COLORS.length]);
-      marker.name.textContent = bot.driver;
-      markerLayer.appendChild(marker.element);
-      this.trafficMarkers.set(bot.id, marker);
-    });
-  }
-
-  private updateTrafficMarkers() {
-    for (const marker of this.trafficMarkers.values()) marker.element.style.display = 'none';
-    // Named mission bots (arena / race / …) — on the HUD and on the M map.
-    // Wanted uses bounty-indicator; ambient shared traffic stays unmarked.
-    if (!this.driving || !this.trafficBots.length) return;
-    this.ensureTrafficMarkers();
-    this.trafficBots.forEach((bot, index) => {
-      if (bot.id === 'wanted' || this.isPropBot(bot.id)) return;
-      const marker = this.trafficMarkers.get(bot.id);
-      if (!marker) return;
-      const dead = !(this.combatLayer?.isTargetAlive(bot.id) ?? true);
-      marker.element.style.setProperty(
-        '--traffic-color',
-        dead ? '#8b9198' : TRAFFIC_MARKER_COLORS[index % TRAFFIC_MARKER_COLORS.length],
-      );
-      marker.element.classList.toggle('is-dead', dead);
-      marker.name.textContent = bot.driver;
-      this.placeTargetIndicator(marker, bot.position, MARKER_PIN_METERS);
-    });
   }
 
   /** Where we are on the M map — same pin as the intro spawn marker. */
@@ -1945,7 +1605,7 @@ export class GameEngine {
     // clear smolder unless the fire truck owns a live call
     if (!this.jobs.fire.active) this.combatLayer?.setFireHouse(null);
     if (!kind || !at) {
-      this.combatLayer?.setTargets(this.targetVehicles());
+      this.combatLayer?.setTargets(this.combat.targetVehicles());
       return null;
     }
     if (kind === 'burn') {
@@ -1960,7 +1620,7 @@ export class GameEngine {
           on: p.on,
         }));
         this.combatLayer?.setFireHouse({ panes, available: Math.max(facades.panes.length, n) });
-        this.combatLayer?.setTargets(this.targetVehicles());
+        this.combatLayer?.setTargets(this.combat.targetVehicles());
         return { site: 'burn', cars: 0 };
       }
       // no façade nearby — fall back to a roadside crash at the same pin
@@ -2006,7 +1666,7 @@ export class GameEngine {
       bots.push({ bot, overturned, burning });
     }
     this.trafficBots = [...this.trafficBots, ...bots.map((b) => b.bot)];
-    this.combatLayer?.setTargets(this.targetVehicles());
+    this.combatLayer?.setTargets(this.combat.targetVehicles());
     for (const { bot, overturned, burning } of bots) {
       this.combatLayer?.plantPropWreck(bot.id, { overturned, burning });
     }
@@ -2983,15 +2643,15 @@ export class GameEngine {
         for (const bot of this.trafficBots) {
           if (this.trainBlock(bot.controller, this.map.groundAt(bot.position) ?? this.altitude)) bot.position = [...bot.controller.position];
         }
-        this.resolveVehicleContacts(now);
+        this.combat.resolveVehicleContacts(now);
         this.players.bump(now);
         this.coins.collectRoadPickups();
         this.accumulator -= 1 / 60;
       }
-      if (this.trafficBots.length) this.combatLayer?.updateTargets(this.targetVehicles());
-      this.updateHunterGuns(now);
+      if (this.trafficBots.length) this.combatLayer?.updateTargets(this.combat.targetVehicles());
+      this.combat.updateHunterGuns(now);
       this.crime.hijackHint();
-      this.syncExtraTargets(dt, now);
+      this.combat.syncExtraTargets(dt, now);
       this.updateFuel(dt);
       this.travel.update();
       if (blocked) this.say(t('hint.building'));
@@ -3098,8 +2758,8 @@ export class GameEngine {
       // players first: the bars must sit where their cars are drawn this frame, not the last one
       this.players.update();
       // Offscreen arrows must track every frame — 10 Hz made them stutter on turn
-      this.updateHealthMarkers(now - this.overlayTime > 100);
-      this.updateTrafficMarkers();
+      this.combat.updateHealthMarkers(now - this.overlayTime > 100);
+      this.combat.updateTrafficMarkers();
       this.board.updateEventMarkers();
       if (now - this.overlayTime > 100) {
         this.overlayTime = now;
@@ -3111,7 +2771,7 @@ export class GameEngine {
     if (now - this.hudTime > 100) {
       this.hudTime = now;
       if (!this.approachFrom) this.saveCamera(now);
-      this.hud(this.vehicle.speed * 3.6, this.vehicle.distance, this.fps, this.hudParticipants());
+      this.hud(this.vehicle.speed * 3.6, this.vehicle.distance, this.fps, this.combat.hudParticipants());
       if (!this.approachFrom) {
         const near = nearestStation(this.vehicle.position, [...this.places.stations.values()]);
         const hub = nearestHub(this.vehicle.position, [...this.travel.hubs.values()]);
@@ -3213,11 +2873,11 @@ export class GameEngine {
     this.places.serviceMarkers.clear();
     this.coins.pickups.clear();
     this.combatLayer?.setPickups([]);
-    this.trafficMarkerLayer?.remove();
-    this.trafficMarkers.clear();
+    this.combat.trafficMarkerLayer?.remove();
+    this.combat.trafficMarkers.clear();
     this.offLang();
     this.selfMarker?.remove();
-    this.healthMeters.dispose();
+    this.combat.healthMeters.dispose();
     this.cleanups.forEach((fn) => fn());
     this.map.remove();
   }

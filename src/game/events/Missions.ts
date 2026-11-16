@@ -13,7 +13,7 @@ import { ARENA_FEE, ARENA_PRIZE, RACE_FEE, RACE_PRIZE, randomDriverNames, ERRAND
 import type { GameEngine } from '../GameEngine.ts';
 
 /** What this part reads and drives in the game. */
-export type MissionsGame = Pick<GameEngine, 'addWin' | 'canHuntBounty' | 'carShoots' | 'clearEventBots' | 'coins' | 'combatLayer' | 'crime' | 'driving' | 'ensureTrafficMarkers' | 'eventCooldown' | 'eventIndicatorLayer' | 'eventOffer' | 'indicatorLayer' | 'isAmbulance' | 'isBus' | 'isFireTruck' | 'isHauler' | 'isTaxi' | 'jobs' | 'lastCompletedAt' | 'map' | 'mapInspecting' | 'mode' | 'onEventOffer' | 'onEventResult' | 'pins' | 'playerHp' | 'playerMaxHp' | 'playerMoney' | 'race' | 'rivalCars' | 'say' | 'setMapPinRange' | 'targetVehicles' | 'trafficBots' | 'trafficNetwork' | 'transfer' | 'updateOffscreenMarker' | 'vehicle' | 'vehicleContactTimes' | 'wanted'>;
+export type MissionsGame = Pick<GameEngine, 'canHuntBounty' | 'carShoots' | 'clearEventBots' | 'coins' | 'combat' | 'combatLayer' | 'crime' | 'driving' | 'eventCooldown' | 'eventIndicatorLayer' | 'eventOffer' | 'indicatorLayer' | 'isAmbulance' | 'isBus' | 'isFireTruck' | 'isHauler' | 'isTaxi' | 'jobs' | 'lastCompletedAt' | 'map' | 'mapInspecting' | 'mode' | 'onEventOffer' | 'onEventResult' | 'pins' | 'playerHp' | 'playerMaxHp' | 'playerMoney' | 'race' | 'rivalCars' | 'say' | 'setMapPinRange' | 'trafficBots' | 'trafficNetwork' | 'transfer' | 'updateOffscreenMarker' | 'vehicle' | 'wanted'>;
 
 /**
  * The mission board: the four kinds of start on the map (race, arena, delivery, boxes), their
@@ -462,10 +462,10 @@ export class Missions {
     for (let i = 0; i < this.game.trafficBots.length; i++) this.game.trafficBots[i].repathAt = performance.now() + i * 160;
     this.game.mode = 'arena';
     this.game.playerHp = this.game.playerMaxHp;
-    this.game.vehicleContactTimes.clear();
+    this.game.combat.vehicleContactTimes.clear();
     this.hideEventBeacons();
-    this.game.ensureTrafficMarkers();
-    this.game.combatLayer?.setTargets(this.game.targetVehicles());
+    this.game.combat.ensureTrafficMarkers();
+    this.game.combatLayer?.setTargets(this.game.combat.targetVehicles());
     this.game.say(t('arena.start'), true);
   }
 
@@ -476,7 +476,7 @@ export class Missions {
     // losing costs only the entry fee already paid
     if (won) {
       this.game.playerMoney += ARENA_PRIZE;
-      this.game.addWin('player');
+      this.game.combat.addWin('player');
       this.game.say(t('arena.won'), true);
     } else {
       this.game.say(t('arena.lost'), true);
@@ -614,7 +614,7 @@ export class Missions {
 
   finishErrand(reward: number, text: string, result: EventResult) {
     this.game.playerMoney += reward;
-    this.game.addWin('player');
+    this.game.combat.addWin('player');
     this.clearErrand();
     this.completeActiveMission();
     this.game.eventCooldown = performance.now() + 8000;

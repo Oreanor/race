@@ -15,7 +15,7 @@ import { AMBULANCE_HOSPITAL_M, isAmbulanceWreckId, BUS_ID, FIRE_TRUCK_ID, HAULER
 import type { GameEngine } from '../GameEngine.ts';
 
 /** What this part reads and drives in the game. */
-export type JobsGame = Pick<GameEngine, 'board' | 'combatLayer' | 'dialogOpen' | 'driving' | 'hauler' | 'isAmbulance' | 'isBus' | 'isFireTruck' | 'isHauler' | 'isTaxi' | 'map' | 'mode' | 'onEventResult' | 'pickBeaconSpot' | 'places' | 'playerMoney' | 'say' | 'setAmbulanceScene' | 'targetVehicles' | 'trafficBots' | 'trafficNetwork' | 'vehicle' | 'wanted'>;
+export type JobsGame = Pick<GameEngine, 'board' | 'combat' | 'combatLayer' | 'dialogOpen' | 'driving' | 'hauler' | 'isAmbulance' | 'isBus' | 'isFireTruck' | 'isHauler' | 'isTaxi' | 'map' | 'mode' | 'onEventResult' | 'pickBeaconSpot' | 'places' | 'playerMoney' | 'say' | 'setAmbulanceScene' | 'trafficBots' | 'trafficNetwork' | 'vehicle' | 'wanted'>;
 
 /**
  * The special cars' jobs: fire calls for the fire truck, fares for the taxi, crash and fire
@@ -353,7 +353,7 @@ export class Jobs {
     bot.route = [];
     bot.goal = null;
     this.game.trafficBots = [...this.game.trafficBots.filter((b) => b.id !== TOW_CAR_ID), bot];
-    this.game.combatLayer?.setTargets(this.game.targetVehicles());
+    this.game.combatLayer?.setTargets(this.game.combat.targetVehicles());
     this.game.board.syncMissionVisuals(true);
     this.game.say(t('impound.start', { car: car.name, reward: formatNumber(IMPOUND_REWARD) }), true);
   }
@@ -367,7 +367,7 @@ export class Jobs {
     if (this.game.hauler.haul?.id === TOW_CAR_ID) this.game.hauler.lose();
     else {
       this.game.trafficBots = this.game.trafficBots.filter((b) => b.id !== TOW_CAR_ID);
-      this.game.combatLayer?.setTargets(this.game.targetVehicles());
+      this.game.combatLayer?.setTargets(this.game.combat.targetVehicles());
     }
     this.game.playerMoney += IMPOUND_REWARD;
     this.impoundOfferAt = performance.now() + 50000;
@@ -379,7 +379,7 @@ export class Jobs {
     this.impoundActive = false;
     this.impoundSpot = null;
     this.game.trafficBots = this.game.trafficBots.filter((b) => b.id !== TOW_CAR_ID);
-    this.game.combatLayer?.setTargets(this.game.targetVehicles());
+    this.game.combatLayer?.setTargets(this.game.combat.targetVehicles());
     this.impoundOfferAt = performance.now() + 20000;
     this.game.board.syncMissionVisuals(true);
     this.game.say(t('impound.lost'), true);
@@ -391,7 +391,7 @@ export class Jobs {
       this.impoundActive = false;
       this.impoundSpot = null;
       this.game.trafficBots = this.game.trafficBots.filter((b) => b.id !== TOW_CAR_ID);
-      this.game.combatLayer?.setTargets(this.game.targetVehicles());
+      this.game.combatLayer?.setTargets(this.game.combat.targetVehicles());
       this.impoundOfferAt = performance.now() + 12000;
       this.game.say(t('impound.aborted'), true);
     }
