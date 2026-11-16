@@ -105,7 +105,7 @@ function endFade(mats: FadeMat[]) {
 }
 
 /** how long a taken coin hops and falls before it is gone (ms) */
-const POP_MS = 820;
+const POP_MS = 560;
 
 export function vehicleLayer(
   car: Car,
@@ -1012,15 +1012,13 @@ export function vehicleLayer(
       fx.muzzle(here, muzzleAt, shotDir, now);
       fx.tracer(here, muzzleAt, hitAt, now);
       tracer.visible = false;
-      // Family Sedan: vacuum road coins along the tracer (before impact FX)
-      if (family) {
-        shotCoinHandler(
-          offsetPosition(here, gunEast, gunNorth) as Position,
-          carAlt + gunUp,
-          end,
-          carAlt + hitUp,
-        );
-      }
+      // a shot takes the coins it passes (the Family Sedan's vacuums a wide swath)
+      shotCoinHandler(
+        offsetPosition(here, gunEast, gunNorth) as Position,
+        carAlt + gunUp,
+        end,
+        carAlt + hitUp,
+      );
       if (remoteHit) {
         fx.impact(here, hitAt, bounce, now, { scale: 1 });
         const struck = remotes.get(remoteHit);
@@ -1602,8 +1600,8 @@ export function vehicleLayer(
           pickup.mesh.rotation.y = now * 0.0007;
         }
       }
-      // a taken coin: jumps ~0.9 m up spinning fast, falls back past its hover onto the road
-      // and shrinks away there (POP_MS in all)
+      // a taken coin: jumps ~0.9 m up spinning fast and vanishes on the way down (POP_MS in
+      // all), before it is back at its hover
       for (let i = popping.length - 1; i >= 0; i--) {
         const pop = popping[i];
         const t = (now - pop.born) / 1000;
@@ -1617,7 +1615,7 @@ export function vehicleLayer(
         const up = Math.max(0.05, 0.78 + 5.5 * t - 9 * t * t);
         pop.mesh.position.copy(scenePoint(here, pop.position, heading, lift + up));
         pop.mesh.rotation.y = pop.phase + t * 22;
-        const fade = Math.min(1, Math.max(0, (POP_MS / 1000 - t) / 0.18));
+        const fade = Math.min(1, Math.max(0, (POP_MS / 1000 - t) / 0.22));
         pop.mesh.scale.setScalar(Math.max(0.001, fade));
       }
       // the coins' transforms into the shared instances

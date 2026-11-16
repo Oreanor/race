@@ -2541,11 +2541,11 @@ export class GameEngine {
   }
 
   /**
-   * Family Sedan machine gun: any coin / cash near the bullet path is vacuumed
-   * into the purse (road coins stay gone after a reload).
+   * A shot takes the coins and cash it passes (within a metre); the Family Sedan's machine
+   * gun vacuums anything within 2.8 m of the bullet path. Road coins stay gone after a reload.
    */
   private shotCollectCoins(from: Position, fromAlt: number, to: Position, toAlt: number) {
-    if (this.car.id !== FAMILY_SEDAN_ID) return;
+    const reach = this.car.id === FAMILY_SEDAN_ID ? 2.8 : 1;
     const kx = METERS_PER_DEGREE * Math.cos(from[1] * Math.PI / 180), ky = METERS_PER_DEGREE;
     const ex = (to[0] - from[0]) * kx, ey = (to[1] - from[1]) * ky, eu = toAlt - fromAlt;
     const len = Math.hypot(ex, ey, eu);
@@ -2561,7 +2561,7 @@ export class GameEngine {
       const ground = this.map.groundAt(pickup.position) ?? fromAlt;
       const du = ground + 1 - fromAlt;
       const t = Math.max(0, Math.min(len, dx * ux + dy * uy + du * uu));
-      if (Math.hypot(ux * t - dx, uy * t - dy, uu * t - du) > 2.8) continue;
+      if (Math.hypot(ux * t - dx, uy * t - dy, uu * t - du) > reach) continue;
       this.pickups.delete(id);
       if (!pickup.drop) this.collectedPickups.set(id, [...pickup.position] as Position);
       this.audio.coin();
