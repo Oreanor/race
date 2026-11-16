@@ -74,9 +74,14 @@ export class MapCamera {
     // Near plane in *meters*, not raw screen px. `height/N` grows on tall canvases
     // and clips bumper-cam façades → a floating far wall / roof with a gap to the street.
     const nearMeters = 0.75;
+    // High up (the map view, a far zoom) nothing is that close: the near plane follows the
+    // height, else the depth buffer had no precision left at the ground and roads flickered
+    const heightMeters = this.cameraAltitude() - s.elevation;
+    const highNear = heightMeters > 150 ? heightMeters * 0.1 * this.pixelsPerMeter : 0;
     const nearZ = Math.max(
       0.8,
       Math.min(this.cameraToCenterDistance * 0.025, nearMeters * this.pixelsPerMeter),
+      Math.min(this.cameraToCenterDistance * 0.5, highNear),
     );
 
     const top = nearZ * Math.tan(fovRad / 2);
