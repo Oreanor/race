@@ -79,6 +79,7 @@ import { MissionBotDriver, type BotDriverHost } from './traffic/MissionBots.ts';
 import { Shops, type ShopsHost } from './economy/Shops.ts';
 import { Dealership, type DealershipHost } from './economy/Dealership.ts';
 import { Ramp, type RampHost } from './Ramp.ts';
+import { Ground } from './Ground.ts';
 import { Spawn } from './world/Spawn.ts';
 import { Combat } from './Combat.ts';
 import { Places } from './world/Places.ts';
@@ -216,7 +217,6 @@ export class GameEngine {
   mapShown = false;
   private bootAt = 0;
   private groundHits = 0;
-  private lastGround: number | null = null;
   private settleFrames = 0;
   /** boot camera already parked on chase pose to finish GPU uploads before "ready" */
   private bootChaseWarmed = false;
@@ -252,14 +252,7 @@ export class GameEngine {
   private fullScoopAt = 0;
   private focusTime = 0;
   private overlayTime = 0;
-  private wheelSampleTime = 0;
-  private wheelTargets = { altitude: 0, pitch: 0, roll: 0, ready: false };
-  /** vertical motion: the car flies off crests and ramps under gravity */
-  private climb = 0;
-  private airborne = false;
-  private wasOnRamp = false;
-  /** fell in the river: splash → sink → respawn on the nearest shore road */
-  private plunge: { at: number; waterAlt: number } | null = null;
+  wheelSampleTime = 0;
   private aimScreen: [number, number] | null = null;
   trafficBots: TrafficBot[] = [];
   /** reused by targetVehicles() so the chase tick doesn't allocate every frame */
@@ -293,6 +286,8 @@ export class GameEngine {
   readonly combat: Combat = new Combat(this);
   /** Where the car starts: the player's own spot (clicked on the menu map) or a free road near the (see Spawn) */
   readonly spawn: Spawn = new Spawn(this);
+  /** Our car against the ground: the wheels planted on the terrain (height, pitch, roll), flying (see Ground) */
+  readonly ground: Ground = new Ground(this);
   /** the game as its parts see it (see context) */
   private ctx = this.context();
   /** the nitro bar under the speedometer */
@@ -306,7 +301,7 @@ export class GameEngine {
   /** ports, airports and railway stations: a ticket to any city (see TravelDesk) */
   readonly travel = new TravelDesk(this.ctx);
   /** J: the ramp we put down (see Ramp) */
-  private rampTool = new Ramp(this.ctx);
+  rampTool = new Ramp(this.ctx);
   /** the car dealership and the garage swap (see Dealership) */
   readonly dealer = new Dealership(this.ctx);
   /** the fuel station, the car service and the bank: their dialogs and the loan (see Shops) */
@@ -323,8 +318,8 @@ export class GameEngine {
   private offLang = onLangChange(() => this.relabel());
   /** trains and trams on the real tracks */
   private rails = new RailNetwork();
-  private trainTraffic = new TrainTraffic(this.rails);
-  private trainLayer: ReturnType<typeof trainsLayer> | null = null;
+  trainTraffic = new TrainTraffic(this.rails);
+  trainLayer: ReturnType<typeof trainsLayer> | null = null;
   eventCooldown = 0;
   playerHp = 1000;
   readonly playerMaxHp = 1000;
@@ -461,7 +456,7 @@ export class GameEngine {
       driving: () => this.driving,
       mapView: () => this.mapInspecting(),
       busy: () => this.mode !== 'roam' || this.wanted.fight,
-      canMove: (from, to, heading) => !this.collisions.blocked(from, to, heading, 1, this.altitude) && !this.water.resolve(from, to, heading, 1, this.onBridgeDeck(to, this.altitude)).stopped,
+      canMove: (from, to, heading) => !this.collisions.blocked(from, to, heading, 1, this.altitude) && !this.water.resolve(from, to, heading, 1, this.ground.onBridgeDeck(to, this.altitude)).stopped,
       online: (list) => this.onOnline(list),
       chat: (line) => this.onChat(line),
       notice: (notice) => this.onNetNotice(notice),
@@ -488,7 +483,7 @@ export class GameEngine {
         .map((bot) => ({ id: bot.id, car: bot.car.id, p: bot.position, h: bot.heading, s: bot.controller.speed, hp: Math.round(this.combatLayer?.targetHp(bot.id) ?? 1000) })) : [],
       hitExtra: (id) => { this.combatLayer?.damageTarget(id, HIT_DAMAGE); },
       provoke: (id) => this.combat.provoke(id),
-      canPark: (at, heading) => !this.collisions.blocked(at, at, heading) && !this.water.covers(at, this.onBridgeDeck(at, this.altitude)),
+      canPark: (at, heading) => !this.collisions.blocked(at, at, heading) && !this.water.covers(at, this.ground.onBridgeDeck(at, this.altitude)),
       hitWalls: (from, to, heading) => this.collisions.resolve(from, to, heading),
       lots: () => [...this.places.parkingLots.values()].filter((lot) => metersBetween(lot, this.vehicle.position) < 600),
       take: (id) => this.players.takeTraffic(id),
@@ -554,7 +549,7 @@ export class GameEngine {
           return hit;
         },
         (point, altitude) => this.map.markGround(point, altitude),
-        (from, fromAlt, to, toAlt) => this.trainShot(from, fromAlt, to, toAlt),
+        (from, fromAlt, to, toAlt) => this.ground.trainShot(from, fromAlt, to, toAlt),
       );
       this.combatLayer.onRemoteHit = (id) => this.players.shot(id);
       this.combatLayer.onTargetHit = (id) => {
@@ -828,7 +823,7 @@ export class GameEngine {
       get trafficBots() { return game.trafficBots; },
       set trafficBots(bots) { game.trafficBots = bots; },
       say: (text, toast) => game.say(text, toast),
-      fall: () => { game.airborne = true; game.climb = 0; },
+      fall: () => { game.ground.airborne = true; game.ground.climb = 0; },
       refreshTargets: () => game.combatLayer?.setTargets(game.combat.targetVehicles()),
       get mode() { return game.mode; },
       set mode(mode) { game.mode = mode; },
@@ -868,13 +863,13 @@ export class GameEngine {
       nearestCivic: () => game.nearestCivic(),
       nearbyRoadSpot: () => game.spawn.nearbyRoadSpot(),
       placeCarAt: (position) => game.placeCarAt(position),
-      onBridgeDeck: (at, altitude) => game.onBridgeDeck(at, altitude),
+      onBridgeDeck: (at, altitude) => game.ground.onBridgeDeck(at, altitude),
       get keys() { return game.keys; },
       get runReady() { return game.runReady; },
       counterOpen: () => Boolean(game.shops.serviceOpen || game.travel.open || game.fuelOut),
       get dealerships() { return game.places.dealerships; },
       offered: (id) => { game.offeredService = id; },
-      get airborne() { return game.airborne; },
+      get airborne() { return game.ground.airborne; },
       get fuelOut() { return game.fuelOut; },
       mapViewOpen: () => game.mapViewOpen(),
       labelOn: (kind) => game.places.mapLabelOn(kind),
@@ -1204,7 +1199,7 @@ export class GameEngine {
 
   /** parked cars to shoot at (?testcars=N) */
   testCars = new TestTargets((from, at, heading) => {
-    if (this.collisions.blocked(from, at, heading, 1, this.altitude) || this.water.resolve(from, at, heading, 1, this.onBridgeDeck(at, this.altitude)).stopped) return false;
+    if (this.collisions.blocked(from, at, heading, 1, this.altitude) || this.water.resolve(from, at, heading, 1, this.ground.onBridgeDeck(at, this.altitude)).stopped) return false;
     // on the same surface as us (not the river beside a bridge, not a roof)
     const ground = this.map.groundAt(at, this.altitude);
     return ground != null && Math.abs(ground - this.altitude) <= 2;
@@ -1320,10 +1315,10 @@ export class GameEngine {
     this.accumulator = 0;
     this.collisionDirty = true;
     this.syncedAt = null;
-    this.airborne = false;
-    this.climb = 0;
-    this.plunge = null;
-    this.wheelTargets.ready = false;
+    this.ground.airborne = false;
+    this.ground.climb = 0;
+    this.ground.plunge = null;
+    this.ground.wheelTargets.ready = false;
     this.modelPitch = 0;
     this.modelRoll = 0;
     if (this.settings.terrain) {
@@ -1351,48 +1346,6 @@ export class GameEngine {
   }
 
   /**
-   * True when the car is riding an overpass deck (not the road / river under it).
-   * Bridge water exemptions only apply up here — must be true as soon as XY is on
-   * the deck ribbon at deck height, or the water edge walls off the on-ramp.
-   */
-  onBridgeDeck(at: Position, altitude: number) {
-    return this.map.isDeckAt(at, altitude);
-  }
-
-  /** Splash, sink under the surface, then appear on the nearest dry road. */
-  private beginPlunge(waterAlt: number) {
-    if (this.plunge) return;
-    this.audio.splash();
-    this.plunge = { at: performance.now(), waterAlt };
-    this.airborne = false;
-    this.climb = 0;
-    this.vehicle.speed = 0;
-    this.vehicle.throttle = 0;
-    this.combatLayer?.plungeSplash();
-    this.say(t('hint.sank'), true);
-  }
-
-  private tickPlunge(now: number) {
-    const plunge = this.plunge;
-    if (!plunge) return false;
-    const age = now - plunge.at;
-    // nose down and drop below the surface
-    const t = Math.min(1, age / 1600);
-    this.altitude = plunge.waterAlt - t * 3.2;
-    this.modelPitch = 0.55 * t;
-    this.modelRoll = 0.22 * Math.sin(t * Math.PI) * (t > 0.15 ? 1 : 0);
-    if (age < 1700) return true;
-    // wide rivers: search farther than a normal wreck drop
-    const start = this.spawn.findFreeRoad(this.vehicle.position, 280)
-      ?? roadStart(this.map, this.vehicle.position, () => false, 280);
-    if (start) this.placeCarAt(start.position);
-    else this.placeCarAt(this.vehicle.position);
-    this.modelPitch = 0;
-    this.modelRoll = 0;
-    return false;
-  }
-
-  /**
    * Rivals for a race or the arena: `n` different cars priced close to ours — picked at random
    * from the nearest few by price (a ratio, so cheap and dear cars are matched alike).
    * Police, emergency and odd vehicles stay out.
@@ -1410,69 +1363,6 @@ export class GameEngine {
       [pool[i], pool[j]] = [pool[j], pool[i]];
     }
     return Array.from({ length: n }, (_, i) => pool[i % pool.length] ?? carsConfig[0]);
-  }
-
-  /** Train cars near `around` as flat capsules in metres east/north of it, with their ground height. */
-  private trainBoxes(around: [number, number], reach: number) {
-    const kx = METERS_PER_DEGREE * Math.cos(around[1] * Math.PI / 180), ky = METERS_PER_DEGREE;
-    const out: { ax: number; ay: number; bx: number; by: number; half: number; alt: number; vintage: boolean }[] = [];
-    for (const car of this.trainTraffic.poses()) {
-      const ax = (car.front[0] - around[0]) * kx, ay = (car.front[1] - around[1]) * ky;
-      const bx = (car.back[0] - around[0]) * kx, by = (car.back[1] - around[1]) * ky;
-      if (Math.min(Math.hypot(ax, ay), Math.hypot(bx, by)) > reach) continue;
-      const alt = this.trainLayer?.carAltitude(car.trainId, car.index) ?? this.map.groundAt([(car.front[0] + car.back[0]) / 2, (car.front[1] + car.back[1]) / 2]) ?? this.altitude;
-      out.push({ ax, ay, bx, by, half: car.kind === 'tram' ? 1.3 : 1.6, alt, vintage: isVintageTrain(car.trainId) });
-    }
-    return out;
-  }
-
-  /** First train car a shot meets (sampled every 0.5 m), for the gun. */
-  private trainShot(from: [number, number], fromAlt: number, to: [number, number], toAlt: number) {
-    const kx = METERS_PER_DEGREE * Math.cos(from[1] * Math.PI / 180), ky = METERS_PER_DEGREE;
-    const ex = (to[0] - from[0]) * kx, ey = (to[1] - from[1]) * ky;
-    const length = Math.hypot(ex, ey);
-    if (length < 1) return null;
-    const boxes = this.trainBoxes(from, length + 30);
-    if (!boxes.length) return null;
-    const steps = Math.ceil(length / 0.5);
-    for (let s = 1; s <= steps; s++) {
-      const f = s / steps, x = ex * f, y = ey * f, alt = fromAlt + (toAlt - fromAlt) * f;
-      for (const box of boxes) {
-        const dx = box.bx - box.ax, dy = box.by - box.ay, l2 = dx * dx + dy * dy || 1;
-        const t = Math.max(0, Math.min(1, ((x - box.ax) * dx + (y - box.ay) * dy) / l2));
-        if (Math.hypot(x - box.ax - dx * t, y - box.ay - dy * t) > box.half) continue;
-        if (alt < box.alt - 0.3 || alt > box.alt + 4.2) continue;
-        return { point: offsetPosition(from, x, y) as [number, number], altitude: alt, vintage: box.vintage };
-      }
-    }
-    return null;
-  }
-
-  /** Trains don't give way: a car touching one is pushed back out beside it and loses its speed. */
-  private trainBlock(controller: { position: [number, number] | Position; speed: number }, altitude: number) {
-    const at = controller.position as [number, number];
-    const boxes = this.trainBoxes(at, 40);
-    if (!boxes.length) return false;
-    let pushed = false;
-    let px = 0, py = 0;
-    for (const box of boxes) {
-      if (Math.abs(box.alt - altitude) > 3) continue;
-      const dx = box.bx - box.ax, dy = box.by - box.ay, l2 = dx * dx + dy * dy || 1;
-      const t = Math.max(0, Math.min(1, ((px - box.ax) * dx + (py - box.ay) * dy) / l2));
-      const cx = box.ax + dx * t, cy = box.ay + dy * t;
-      const ox = px - cx, oy = py - cy, dist = Math.hypot(ox, oy);
-      const clear = box.half + 1.1;
-      if (dist >= clear) continue;
-      // out along the shortest way (sideways off the car); dead centre: off to its left
-      const nx = dist > 1e-3 ? ox / dist : -dy / Math.sqrt(l2), ny = dist > 1e-3 ? oy / dist : dx / Math.sqrt(l2);
-      px = cx + nx * clear;
-      py = cy + ny * clear;
-      pushed = true;
-    }
-    if (!pushed) return false;
-    controller.position = offsetPosition(at, px, py) as [number, number];
-    controller.speed *= -0.2;
-    return true;
   }
 
   /** Closest police station, prison, courthouse or hospital to the wreck. */
@@ -1815,9 +1705,9 @@ export class GameEngine {
         this.say(t('status.terrain'));
         if (waited < 10000) return;
       } else {
-        const stable = this.lastGround != null && Math.abs(ground - this.lastGround) < 0.35;
+        const stable = this.ground.lastGround != null && Math.abs(ground - this.ground.lastGround) < 0.35;
         this.groundHits = stable ? this.groundHits + 1 : 0;
-        this.lastGround = ground;
+        this.ground.lastGround = ground;
         this.altitude = ground;
         if (this.groundHits < 10 && waited < 10000) {
           this.say(t('status.terrain'));
@@ -2012,143 +1902,6 @@ export class GameEngine {
     this.fps = Math.round(this.fpsFrames * 1000 / span);
     this.fpsFrames = 0;
     this.fpsStamp = now;
-  }
-
-  plantWheels(dt: number, now = performance.now()) {
-    const settle = (current: number, target: number) => {
-      const gap = target - current;
-      const rate = 14 + Math.min(22, Math.abs(gap) * 8);
-      return current + gap * (1 - Math.exp(-dt * rate));
-    };
-    // A moving car needs the surface every frame. Reusing a 48 ms old wheel
-    // target turns a continuous incline into a series of vertical steps.
-    if (!this.wheelTargets.ready || Math.abs(this.vehicle.speed) > 0.5 || now - this.wheelSampleTime >= 48) {
-      this.wheelSampleTime = now;
-      const heading = this.renderVehicle.heading;
-      const forwardEast = Math.sin(heading);
-      const forwardNorth = Math.cos(heading);
-      const rightEast = Math.cos(heading);
-      const rightNorth = -Math.sin(heading);
-      const reach = this.car.length * 0.38;
-      const track = 0.85;
-      // terrain and roofs both support the car; clear a building only above its skin
-      const sample = (along: number, side: number) => {
-        const at = offsetPosition(this.renderVehicle.position, forwardEast * along + rightEast * side, forwardNorth * along + rightNorth * side);
-        // pass altitude so overpass seams keep the deck (bare groundAt drops to the road below)
-        const terrain = this.map.groundAt(at, this.altitude);
-        // a roof carries the car only if it came from above (a jump, a landing): one far above
-        // its wheels is a wall it is touching — long cars' bumpers reach past the wall
-        // test, and taking that roof as ground used to lift them onto houses like a ramp
-        const top = this.collisions.supportAt(at);
-        const roof = top != null && top <= this.altitude + 0.6 ? top : null;
-        if (terrain == null && roof == null) return null;
-        return Math.max(terrain ?? -Infinity, roof ?? -Infinity);
-      };
-      const frontLeft = sample(reach, -track);
-      const frontRight = sample(reach, track);
-      const rearLeft = sample(-reach, -track);
-      const rearRight = sample(-reach, track);
-      const known = [frontLeft, frontRight, rearLeft, rearRight].filter((value): value is number => value != null);
-      if (known.length) {
-        const pair = (a: number | null, b: number | null) => a != null && b != null ? (a + b) / 2 : a ?? b;
-        const front = pair(frontLeft, frontRight);
-        const rear = pair(rearLeft, rearRight);
-        const left = pair(frontLeft, rearLeft);
-        const right = pair(frontRight, rearRight);
-        const clamp = (value: number) => Math.max(-0.42, Math.min(0.42, value));
-        const pitch = front != null && rear != null ? clamp(Math.atan2(front - rear, reach * 2)) : this.modelPitch;
-        const roll = left != null && right != null ? clamp(Math.atan2(left - right, track * 2)) : this.modelRoll;
-        const supports: GroundSample[] = [];
-        const add = (along: number, side: number, height: number | null) => {
-          if (height != null) supports.push({ along, side, height });
-        };
-        add(reach, -track, frontLeft);
-        add(reach, track, frontRight);
-        add(-reach, -track, rearLeft);
-        add(-reach, track, rearRight);
-        // Include the belly and bumpers when crossing a crest or a sharp bank.
-        const center = sample(0, 0);
-        add(0, 0, center);
-        const bumper = this.car.length * 0.5;
-        add(bumper, 0, sample(bumper, 0));
-        add(-bumper, 0, sample(-bumper, 0));
-        this.wheelTargets = {
-          // Once the centre of mass is outside the deck, a bumper or a wheel
-          // still over its edge cannot cantilever the entire car in the air.
-          altitude: center != null && this.altitude - center > 1 ? center : supportAltitude(supports, pitch, roll),
-          pitch: this.settings.terrain ? pitch : 0,
-          roll: this.settings.terrain ? roll : 0,
-          ready: true,
-        };
-      }
-    }
-    if (!this.wheelTargets.ready) return;
-    const clamp = (value: number) => Math.max(-0.5, Math.min(0.5, value));
-    const lift = this.driving ? this.rampTool.lift(this.renderVehicle.position) : null;
-    let ground = this.wheelTargets.altitude + (lift ?? 0);
-    const speed = Math.abs(this.vehicle.speed);
-    if (this.hauler.hangAltitude != null) {
-      // on the cable: held up there, no gravity
-      this.altitude = this.hauler.hangAltitude;
-      this.airborne = false;
-      this.climb = 0;
-      this.modelPitch = settle(this.modelPitch, 0);
-      this.modelRoll = settle(this.modelRoll, 0);
-      return;
-    }
-    if (this.plunge) return;
-    if (!this.airborne && lift == null && this.altitude <= ground + 0.7
-      && !this.onBridgeDeck(this.vehicle.position, this.altitude) && this.water.covers(this.vehicle.position)) {
-      this.beginPlunge(ground);
-      return;
-    }
-    if (this.airborne) {
-      // flying: gravity only; the nose follows the flight path
-      this.climb -= GRAVITY * dt;
-      this.altitude += this.climb * dt;
-      this.modelPitch = settle(this.modelPitch, clamp(Math.atan2(this.climb, Math.max(4, speed)) * 0.8));
-      this.modelRoll = settle(this.modelRoll, 0);
-      if (this.altitude <= ground) {
-        // touchdown: a thump as hard as the fall (climb is the vertical speed, m/s)
-        if (this.climb < -2) this.audio.land(-this.climb / 14);
-        this.altitude = ground;
-        this.airborne = false;
-        this.climb = 0;
-        // landed in the river (not on a bridge deck) → splash and pull out on shore
-        const elevated = this.onBridgeDeck(this.vehicle.position, this.altitude);
-        if (this.water.covers(this.vehicle.position, elevated)) this.beginPlunge(ground);
-      }
-      return;
-    }
-    // the ground falls away faster than gravity can pull the car down: it flies
-    const predicted = this.altitude + this.climb * dt - 0.5 * GRAVITY * dt * dt;
-    if (lift == null && leavesSupport(this.altitude, ground, this.climb, dt, speed, this.wasOnRamp)) {
-      this.airborne = true;
-      this.altitude = predicted;
-      this.climb -= GRAVITY * dt;
-      if (this.wasOnRamp && this.rampTool.ramp) this.rampTool.ramp.usedAt = now;
-      this.wasOnRamp = false;
-      return;
-    }
-    const before = this.altitude;
-    if (lift != null) {
-      // on the ramp: straight up its slope
-      this.altitude = ground;
-      // up its slope — bigger ramps throw higher
-      const ramp = this.rampTool.ramp!;
-      const kick = Math.sqrt(2 * GRAVITY * Math.max(0.8, ramp.height * 1.4));
-      this.climb = Math.min(kick, this.vehicle.speed * Math.cos(this.vehicle.heading - ramp.heading) * RAMP.grade);
-      this.modelPitch = settle(this.modelPitch, Math.atan2(ramp.height, ramp.length));
-    } else {
-      this.altitude = Math.max(ground, settle(this.altitude, ground));
-      // a step in the surface (deck seam, curb) is not a launch: the car only gains as much
-      // upward speed as a steep road could give it, else a 5 m seam threw it ~90 m up
-      const measured = Math.min((this.altitude - before) / Math.max(dt, 1e-3), 1 + speed * 0.3);
-      this.climb += (measured - this.climb) * (1 - Math.exp(-dt * 8));
-      this.modelPitch = settle(this.modelPitch, this.wheelTargets.pitch);
-    }
-    this.modelRoll = settle(this.modelRoll, this.wheelTargets.roll);
-    this.wasOnRamp = lift != null;
   }
 
   readSourceLayer(layer: string) {
@@ -2379,7 +2132,7 @@ export class GameEngine {
       this.accumulator += dt;
       let blocked = false;
       let shore = false;
-      this.tickPlunge(now);
+      this.ground.tickPlunge(now);
       const gridded = this.race.countdown(now);
       this.trafficNetwork.beginFrame();
       while (this.accumulator >= 1 / 60) {
@@ -2392,7 +2145,7 @@ export class GameEngine {
         const driveKeys = this.fuel.empty ? new Set([...held].filter(key => !NO_FUEL_KEYS.has(key))) : held;
         const travelled = this.vehicle.distance;
         this.vehicle.step(1 / 60, driveKeys, { ...vehicleConfig, acceleration: this.car.acceleration, maxSpeed: this.car.maxSpeed });
-        if (gridded || this.hauler.hangAltitude != null || this.hauler.towed || this.plunge) {
+        if (gridded || this.hauler.hangAltitude != null || this.hauler.towed || this.ground.plunge) {
           // on the grid: revs may build (clutch launch), the car stays put; on the cable it hangs
           this.vehicle.position = previous;
           this.vehicle.heading = oldHeading;
@@ -2404,9 +2157,9 @@ export class GameEngine {
         // At ~250 km/h the centre point tunnels past trunks / skips while airborne over bumps;
         // stretch nose→tail and keep testing while still near the ground.
         const intended: [number, number] = [...this.vehicle.position];
-        if (!this.plunge && !gridded && Math.abs(this.vehicle.speed) > 1.5) {
+        if (!this.ground.plunge && !gridded && Math.abs(this.vehicle.speed) > 1.5) {
           const ground = this.map.groundAt(intended, this.altitude) ?? this.altitude;
-          const nearGround = !this.airborne || this.altitude - ground < 3.5;
+          const nearGround = !this.ground.airborne || this.altitude - ground < 3.5;
           if (nearGround) {
             const len = this.car.length;
             const se = Math.sin(this.vehicle.heading), ne = Math.cos(this.vehicle.heading);
@@ -2428,7 +2181,7 @@ export class GameEngine {
           }
         }
         // airborne: let the car fly into the river; water only stops surface driving
-        if (!this.plunge && !this.airborne) {
+        if (!this.ground.plunge && !this.ground.airborne) {
           const building = this.collisions.resolve(previous, this.vehicle.position, this.vehicle.heading, 1, this.altitude);
           // how hard the wall hit: the speed it took off our step (m/s); a head-on hit at speed
           // often comes back as a slide along the wall, so both cases are measured the same way
@@ -2457,8 +2210,8 @@ export class GameEngine {
             // its lip into the air (from there the jump decides: the far bank, or a splash)
           } else {
             // either end of the step on the deck → water must not wall or drown us
-            const elevated = this.onBridgeDeck(this.vehicle.position, this.altitude)
-              || this.onBridgeDeck(previous, this.altitude);
+            const elevated = this.ground.onBridgeDeck(this.vehicle.position, this.altitude)
+              || this.ground.onBridgeDeck(previous, this.altitude);
             const hit = this.water.resolve(previous, this.vehicle.position, this.vehicle.heading, 1, elevated);
             this.vehicle.position = hit.position;
             if (hit.stopped) {
@@ -2466,7 +2219,7 @@ export class GameEngine {
               shore = true;
             } else if (this.water.covers(this.vehicle.position, elevated)) {
               // under a bridge / already in the bath — splash and pull out on shore
-              this.beginPlunge(this.altitude);
+              this.ground.beginPlunge(this.altitude);
             }
           }
         }
@@ -2474,9 +2227,9 @@ export class GameEngine {
         this.botDriver.step(now, (bot) => gridded || bot.id === this.hauler.haul?.id
           || (bot.id === TOW_CAR_ID && this.jobs.impoundActive && this.hauler.haul?.id !== TOW_CAR_ID)
           || isAmbulanceWreckId(bot.id));
-        this.trainBlock(this.vehicle, this.altitude);
+        this.ground.trainBlock(this.vehicle, this.altitude);
         for (const bot of this.trafficBots) {
-          if (this.trainBlock(bot.controller, this.map.groundAt(bot.position) ?? this.altitude)) bot.position = [...bot.controller.position];
+          if (this.ground.trainBlock(bot.controller, this.map.groundAt(bot.position) ?? this.altitude)) bot.position = [...bot.controller.position];
         }
         this.combat.resolveVehicleContacts(now);
         this.players.bump(now);
@@ -2494,7 +2247,7 @@ export class GameEngine {
       else if ([t('hint.building'), t('hint.shore')].includes(this.message)) this.say('');
       this.board.updateEvents();
       this.renderVehicle.update(this.vehicle, this.accumulator * 60);
-      this.plantWheels(dt, now);
+      this.ground.plantWheels(dt, now);
       this.hauler.update(now);
       this.rampTool.update(now, dt);
       this.nudgeCamera(dt);
@@ -2664,7 +2417,7 @@ export class GameEngine {
         : POLICE_IDS.has(this.car.id) || this.car.id === FIRE_TRUCK_ID ? 'police' as const : null;
     const travel = this.vehicle.heading - this.vehicle.slip;
     this.audio.frame({
-      active: this.driving && !this.paused && !this.approachFrom && !this.plunge,
+      active: this.driving && !this.paused && !this.approachFrom && !this.ground.plunge,
       revs: this.vehicle.revs,
       speed: this.vehicle.speed,
       throttle: this.keys.has('KeyW'),

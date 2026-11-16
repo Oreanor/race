@@ -240,7 +240,7 @@ test('a paused tow commits the loaded camera, car and payment together', () => {
     transfer: new PreparedTransfer(),
     vehicle: { position: origin, heading: 0, speed: 0, throttle: 0 },
     settings: { terrain: true }, keys: new Set(), renderVehicle: { reset() {} },
-    wheelTargets: { ready: true }, paused: true,
+    ground: { wheelTargets: { ready: true } }, paused: true,
     map: {
       loadRadius: 2800, areTilesLoadedAround: () => ready,
       setStreamDestination: p => { streamAt = p; }, features: () => [], groundAt: () => 20,

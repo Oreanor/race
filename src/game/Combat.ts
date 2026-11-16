@@ -13,7 +13,7 @@ import { TRAFFIC_MARKER_COLORS, WRECK_COSTS } from './tuning.ts';
 import type { GameEngine } from './GameEngine.ts';
 
 /** What this part reads and drives in the game. */
-export type CombatGame = Pick<GameEngine, 'altitude' | 'audio' | 'board' | 'car' | 'carShoots' | 'collisions' | 'combatLayer' | 'crime' | 'driving' | 'hauler' | 'hitNoticeAt' | 'host' | 'isPropBot' | 'map' | 'mapInspecting' | 'mapLoaded' | 'mode' | 'nearestRescue' | 'onBridgeDeck' | 'placeCarAt' | 'placeTargetIndicator' | 'playerHp' | 'playerMaxHp' | 'playerMoney' | 'playerName' | 'players' | 'renderVehicle' | 'say' | 'sharedTraffic' | 'spawn' | 'targetScratch' | 'testCars' | 'trafficBots' | 'vehicle' | 'wanted' | 'water'>;
+export type CombatGame = Pick<GameEngine, 'altitude' | 'audio' | 'board' | 'car' | 'carShoots' | 'collisions' | 'combatLayer' | 'crime' | 'driving' | 'ground' | 'hauler' | 'hitNoticeAt' | 'host' | 'isPropBot' | 'map' | 'mapInspecting' | 'mapLoaded' | 'mode' | 'nearestRescue' | 'placeCarAt' | 'placeTargetIndicator' | 'playerHp' | 'playerMaxHp' | 'playerMoney' | 'playerName' | 'players' | 'renderVehicle' | 'say' | 'sharedTraffic' | 'spawn' | 'targetScratch' | 'testCars' | 'trafficBots' | 'vehicle' | 'wanted' | 'water'>;
 
 /**
  * Cars against cars: who is a target, bumps and rams between them, the hunters' guns, damage
@@ -78,7 +78,7 @@ export class Combat {
       if (next === controller.position
         || this.game.collisions.blocked(controller.position, next, controller.heading, 1, participant.id === 'player' ? this.game.altitude : -Infinity)) return;
       const alt = participant.id === 'player' ? this.game.altitude : (this.game.map.groundAt(controller.position) ?? this.game.altitude);
-      const water = this.game.water.resolve(controller.position, next, controller.heading, 1, this.game.onBridgeDeck(controller.position, alt));
+      const water = this.game.water.resolve(controller.position, next, controller.heading, 1, this.game.ground.onBridgeDeck(controller.position, alt));
       if (!water.stopped) controller.position = water.position;
     };
 
